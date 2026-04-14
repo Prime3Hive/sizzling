@@ -1,0 +1,4 @@
+project_id = "kqnqzyklwfrhtywimsjm"
+
+[functions.inventory-operations]
+verify_jwt = true
