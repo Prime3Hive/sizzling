@@ -28,7 +28,8 @@ export const initSentry = () => {
     // Only send events from own origins
     tracePropagationTargets: [
       "localhost",
-      /^https:\/\/sizzling-spices-portal\.netlify\.app/,
+      /^https:\/\/sizzling-spices-portal\.vercel\.app/,
+      /^https:\/\/.*\.vercel\.app/,
     ],
   });
 };

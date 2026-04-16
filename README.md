@@ -48,6 +48,18 @@ This project is built with:
 
 ## How can I deploy this project?
 
-This project can be deployed to various platforms like Netlify, Vercel, or any static hosting service.
+This project is configured for **Vercel** deployment. A `vercel.json` is included with SPA routing, security headers, and asset caching pre-configured.
 
-For Netlify deployment, see the `README-DEPLOYMENT.md` file for detailed instructions.
+### Deploy to Vercel
+
+1. Push to GitHub
+2. Import the repo at [vercel.com/new](https://vercel.com/new)
+3. Vercel auto-detects Vite — just set environment variables:
+   - `VITE_SUPABASE_URL`
+   - `VITE_SUPABASE_PUBLISHABLE_KEY`
+   - `VITE_SUPABASE_PROJECT_ID`
+   - `VITE_SENTRY_DSN` *(optional)*
+   - `VITE_CLOUDFLARE_TURNSTILE_SITE_KEY` *(optional)*
+4. Click **Deploy**
+
+See `.env.example` for all required variables.
