@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./hooks/useAuth";
 import { RoleProvider, useRoles } from "./hooks/useRoles";
+import * as Sentry from "@sentry/react";
 import Layout from "./components/Layout";
 import Dashboard from "./pages/Dashboard";
 import Auth from "./pages/Auth";
@@ -28,6 +29,8 @@ import ProfitLoss from "./pages/ProfitLoss";
 import Payroll from "./pages/Payroll";
 import MyProfile from "./pages/MyProfile";
 import StaffPortal from "./pages/StaffPortal";
+import BirthdayCalendar from "./pages/BirthdayCalendar";
+import MyPayslip from "./pages/MyPayslip";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -163,6 +166,16 @@ const App = () => (
                     <StaffPortal />
                   </ProtectedRoute>
                 } />
+                <Route path="birthdays" element={
+                  <ProtectedRoute>
+                    <BirthdayCalendar />
+                  </ProtectedRoute>
+                } />
+                <Route path="my-payslip" element={
+                  <ProtectedRoute>
+                    <MyPayslip />
+                  </ProtectedRoute>
+                } />
               </Route>
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
               <Route path="*" element={<NotFound />} />
@@ -174,4 +187,23 @@ const App = () => (
   </QueryClientProvider>
 );
 
-export default App;
+const SentryApp = Sentry.withErrorBoundary(App, {
+  fallback: ({ error, resetError }) => (
+    <div className="min-h-screen flex flex-col items-center justify-center gap-4 p-8 text-center">
+      <div className="text-4xl">⚠️</div>
+      <h1 className="text-2xl font-bold">Something went wrong</h1>
+      <p className="text-muted-foreground max-w-md text-sm">
+        {(error as Error)?.message || "An unexpected error occurred. Our team has been notified."}
+      </p>
+      <button
+        onClick={resetError}
+        className="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:opacity-90"
+      >
+        Try Again
+      </button>
+    </div>
+  ),
+  showDialog: false,
+});
+
+export default SentryApp;

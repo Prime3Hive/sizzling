@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -7,12 +7,22 @@ import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
+import { Turnstile } from '@marsidev/react-turnstile';
+import type { TurnstileInstance } from '@marsidev/react-turnstile';
+
+// Use Cloudflare's always-pass test key if no real site key is configured
+const TURNSTILE_SITE_KEY =
+  import.meta.env.VITE_CLOUDFLARE_TURNSTILE_SITE_KEY || '1x00000000000000000000AA';
 
 const Auth = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
+  const [signInToken, setSignInToken] = useState('');
+  const [signUpToken, setSignUpToken] = useState('');
+  const signInRef = useRef<TurnstileInstance>(null);
+  const signUpRef = useRef<TurnstileInstance>(null);
   const navigate = useNavigate();
   const { signIn, signUp, user } = useAuth();
   const { toast } = useToast();
@@ -27,6 +37,12 @@ const Auth = () => {
     e.preventDefault();
     setIsLoading(true);
 
+    if (!signInToken) {
+      toast({ title: 'Security check required', description: 'Please complete the verification challenge.', variant: 'destructive' });
+      setIsLoading(false);
+      return;
+    }
+
     try {
       const { error } = await signIn(email, password);
       if (error) {
@@ -35,12 +51,13 @@ const Auth = () => {
           description: error.message,
           variant: 'destructive',
         });
+        signInRef.current?.reset();
+        setSignInToken('');
       } else {
         toast({
           title: 'Signed in successfully',
           description: 'Welcome back! You are now logged in.',
         });
-        // Clear form
         setEmail('');
         setPassword('');
       }
@@ -50,6 +67,8 @@ const Auth = () => {
         description: 'An unexpected error occurred during sign in.',
         variant: 'destructive',
       });
+      signInRef.current?.reset();
+      setSignInToken('');
     } finally {
       setIsLoading(false);
     }
@@ -59,6 +78,12 @@ const Auth = () => {
     e.preventDefault();
     setIsLoading(true);
 
+    if (!signUpToken) {
+      toast({ title: 'Security check required', description: 'Please complete the verification challenge.', variant: 'destructive' });
+      setIsLoading(false);
+      return;
+    }
+
     try {
       const { error } = await signUp(email, password, fullName);
       if (error) {
@@ -67,15 +92,18 @@ const Auth = () => {
           description: error.message,
           variant: 'destructive',
         });
+        signUpRef.current?.reset();
+        setSignUpToken('');
       } else {
         toast({
           title: 'Account created successfully!',
           description: 'Please check your email and click the verification link to activate your account.',
         });
-        // Clear form
         setEmail('');
         setPassword('');
         setFullName('');
+        signUpRef.current?.reset();
+        setSignUpToken('');
       }
     } catch (error) {
       toast({
@@ -83,6 +111,8 @@ const Auth = () => {
         description: 'An unexpected error occurred during account creation.',
         variant: 'destructive',
       });
+      signUpRef.current?.reset();
+      setSignUpToken('');
     } finally {
       setIsLoading(false);
     }
@@ -94,10 +124,10 @@ const Auth = () => {
       <Card className="w-full max-w-md shadow-elegant bg-card/95 backdrop-blur-sm border-border/50 relative z-10">
         <CardHeader className="text-center pb-8">
           <CardTitle className="text-3xl font-bold bg-gradient-primary bg-clip-text text-transparent">
-            Expense Tracker
+            Sizzling Spices Portal
           </CardTitle>
           <CardDescription className="text-lg">
-            Manage your expenses and budgets with ease
+            Sign in to your staff portal
           </CardDescription>
         </CardHeader>
         <CardContent className="pt-0">
@@ -135,7 +165,15 @@ const Auth = () => {
                     required
                   />
                 </div>
-                <Button type="submit" className="w-full bg-gradient-primary hover:shadow-primary transition-all duration-300" disabled={isLoading}>
+                <Turnstile
+                  ref={signInRef}
+                  siteKey={TURNSTILE_SITE_KEY}
+                  onSuccess={setSignInToken}
+                  onExpire={() => setSignInToken('')}
+                  onError={() => setSignInToken('')}
+                  options={{ theme: 'auto', size: 'flexible' }}
+                />
+                <Button type="submit" className="w-full bg-gradient-primary hover:shadow-primary transition-all duration-300" disabled={isLoading || !signInToken}>
                   {isLoading ? 'Signing in...' : 'Sign In'}
                 </Button>
               </form>
@@ -176,7 +214,15 @@ const Auth = () => {
                     required
                   />
                 </div>
-                <Button type="submit" className="w-full bg-gradient-primary hover:shadow-primary transition-all duration-300" disabled={isLoading}>
+                <Turnstile
+                  ref={signUpRef}
+                  siteKey={TURNSTILE_SITE_KEY}
+                  onSuccess={setSignUpToken}
+                  onExpire={() => setSignUpToken('')}
+                  onError={() => setSignUpToken('')}
+                  options={{ theme: 'auto', size: 'flexible' }}
+                />
+                <Button type="submit" className="w-full bg-gradient-primary hover:shadow-primary transition-all duration-300" disabled={isLoading || !signUpToken}>
                   {isLoading ? 'Creating account...' : 'Sign Up'}
                 </Button>
               </form>

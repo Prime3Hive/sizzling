@@ -6,8 +6,13 @@
   publish = "dist"
 
 [build.environment]
-  # Node.js version
   NODE_VERSION = "18"
+  VITE_SUPABASE_URL = "https://kqnqzyklwfrhtywimsjm.supabase.co"
+  VITE_SUPABASE_PUBLISHABLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtxbnF6eWtsd2ZyaHR5d2ltc2ptIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc0MTI0MDcsImV4cCI6MjA3Mjk4ODQwN30.pu_nmWzA2SyPUc5yC5TokNu7ki-c4cCjOHxk7DKY4k8"
+  VITE_SUPABASE_PROJECT_ID = "kqnqzyklwfrhtywimsjm"
+  # Set these in the Netlify dashboard (Site settings → Environment variables)
+  # VITE_SENTRY_DSN = ""
+  # VITE_CLOUDFLARE_TURNSTILE_SITE_KEY = ""
 
 # Redirect rules for SPA routing
 [[redirects]]

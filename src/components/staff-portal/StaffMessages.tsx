@@ -11,9 +11,9 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Mail, MailOpen, Send, Plus, Lightbulb, ThumbsUp, Eye, AlertTriangle, MessageSquare } from 'lucide-react';
+import { Mail, MailOpen, Send, Plus, Lightbulb, ThumbsUp, Eye, AlertTriangle, MessageSquare, Pencil, Trash2 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
 const messageCategories = [
@@ -42,6 +42,9 @@ export default function StaffMessages() {
   const [composeOpen, setComposeOpen] = useState(false);
   const [selectedMsg, setSelectedMsg] = useState<any>(null);
   const [form, setForm] = useState({ recipient_id: '', subject: '', message: '', category: 'general' });
+  const [editOpen, setEditOpen] = useState(false);
+  const [editForm, setEditForm] = useState({ subject: '', message: '', category: 'general' });
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   const isBroadcast = form.recipient_id === '__all__';
 
@@ -183,6 +186,110 @@ export default function StaffMessages() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['staff-messages'] }),
   });
 
+  const updateMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedMsg) return;
+      const catLabel = messageCategories.find(c => c.value === editForm.category)?.label || 'General';
+      const isBroadcastMsg = selectedMsg.subject.includes('[Broadcast]');
+
+      // Build new subject (preserve [Broadcast] prefix if applicable)
+      const newSubject = isBroadcastMsg
+        ? `[Broadcast][${catLabel}] ${editForm.subject}`
+        : `[${catLabel}] ${editForm.subject}`;
+
+      if (isBroadcastMsg) {
+        // Find all messages from same sender with same old cleaned subject and update them all
+        const oldClean = cleanSubject(selectedMsg.subject);
+        const { data: siblings } = await supabase
+          .from('staff_messages')
+          .select('id, recipient_id')
+          .eq('sender_id', selectedMsg.sender_id)
+          .ilike('subject', `%[Broadcast]%${oldClean}%`);
+
+        for (const sibling of siblings || []) {
+          await supabase.from('staff_messages').update({
+            subject: newSubject,
+            message: editForm.message,
+            read: false,
+          }).eq('id', sibling.id);
+
+          // Re-notify each recipient
+          await supabase.from('notifications').insert({
+            user_id: sibling.recipient_id,
+            title: '📢 Broadcast Updated',
+            message: `A broadcast message has been updated: ${editForm.subject}`,
+            type: 'message',
+          });
+        }
+      } else {
+        // Single message update
+        const { error } = await supabase.from('staff_messages').update({
+          subject: newSubject,
+          message: editForm.message,
+          read: false,
+        }).eq('id', selectedMsg.id);
+        if (error) throw error;
+
+        // Re-notify the recipient
+        await supabase.from('notifications').insert({
+          user_id: selectedMsg.recipient_id,
+          title: '✏️ Message Updated',
+          message: `A message sent to you has been updated: ${editForm.subject}`,
+          type: 'message',
+        });
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['staff-messages'] });
+      setEditOpen(false);
+      setSelectedMsg(null);
+      toast({ title: isBroadcast ? 'Broadcast updated & all staff re-notified' : 'Message updated & recipient re-notified' });
+    },
+    onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedMsg) return;
+      const isBroadcastMsg = selectedMsg.subject.includes('[Broadcast]');
+
+      if (isBroadcastMsg && isAdmin) {
+        // Delete all broadcast copies from same sender with same subject
+        const oldClean = cleanSubject(selectedMsg.subject);
+        const { data: siblings } = await supabase
+          .from('staff_messages')
+          .select('id')
+          .eq('sender_id', selectedMsg.sender_id)
+          .ilike('subject', `%[Broadcast]%${oldClean}%`);
+        const ids = (siblings || []).map((s: any) => s.id);
+        if (ids.length) {
+          const { error } = await supabase.from('staff_messages').delete().in('id', ids);
+          if (error) throw error;
+        }
+      } else {
+        const { error } = await supabase.from('staff_messages').delete().eq('id', selectedMsg.id);
+        if (error) throw error;
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['staff-messages'] });
+      setDeleteOpen(false);
+      setSelectedMsg(null);
+      toast({ title: 'Message deleted' });
+    },
+    onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+  });
+
+  const openEdit = () => {
+    if (!selectedMsg) return;
+    setEditForm({
+      subject: cleanSubject(selectedMsg.subject),
+      message: selectedMsg.message,
+      category: getCategory(selectedMsg.subject),
+    });
+    setEditOpen(true);
+  };
+
   const handleViewMessage = (msg: any) => {
     setSelectedMsg(msg);
     if (!msg.read && msg.recipient_id === user?.id) {
@@ -315,11 +422,27 @@ export default function StaffMessages() {
           <CardContent>
             {selectedMsg ? (
               <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <Badge variant="outline" className={categoryColors[getCategory(selectedMsg.subject)] || ''}>
-                    {messageCategories.find(c => c.value === getCategory(selectedMsg.subject))?.label || 'General'}
-                  </Badge>
-                  <h3 className="font-semibold">{cleanSubject(selectedMsg.subject)}</h3>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Badge variant="outline" className={categoryColors[getCategory(selectedMsg.subject)] || ''}>
+                      {messageCategories.find(c => c.value === getCategory(selectedMsg.subject))?.label || 'General'}
+                    </Badge>
+                    {selectedMsg.subject.includes('[Broadcast]') && (
+                      <Badge variant="secondary" className="text-[10px]">📢 Broadcast</Badge>
+                    )}
+                    <h3 className="font-semibold">{cleanSubject(selectedMsg.subject)}</h3>
+                  </div>
+                  {/* Edit / Delete — only for sender or admin */}
+                  {(selectedMsg.sender_id === user?.id || isAdmin) && (
+                    <div className="flex gap-1 flex-shrink-0">
+                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={openEdit} title="Edit message">
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => setDeleteOpen(true)} title="Delete message">
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  )}
                 </div>
                 <div className="flex gap-4 text-xs text-muted-foreground">
                   <span>{selectedMsg.sender_id === user?.id ? 'Sent by you' : 'Received'}</span>
@@ -333,6 +456,78 @@ export default function StaffMessages() {
           </CardContent>
         </Card>
       </div>
+
+      {/* ── Edit Dialog ── */}
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Message</DialogTitle>
+            <DialogDescription>
+              {selectedMsg?.subject?.includes('[Broadcast]')
+                ? 'This is a broadcast — all copies will be updated and every recipient re-notified.'
+                : 'The recipient will be re-notified with the updated content.'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Category</Label>
+              <Select value={editForm.category} onValueChange={v => setEditForm({ ...editForm, category: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {messageCategories.map(c => (
+                    <SelectItem key={c.value} value={c.value}>
+                      <span className="flex items-center gap-2"><c.icon className="h-3.5 w-3.5" />{c.label}</span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Subject</Label>
+              <Input value={editForm.subject} onChange={e => setEditForm({ ...editForm, subject: e.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <Label>Message</Label>
+              <Textarea value={editForm.message} onChange={e => setEditForm({ ...editForm, message: e.target.value })} rows={5} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditOpen(false)}>Cancel</Button>
+            <Button
+              onClick={() => updateMutation.mutate()}
+              disabled={!editForm.subject || !editForm.message || updateMutation.isPending}
+            >
+              <Send className="h-4 w-4 mr-2" />
+              {updateMutation.isPending ? 'Saving...' : 'Save & Re-notify'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Delete Confirm Dialog ── */}
+      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Message</DialogTitle>
+            <DialogDescription>
+              {selectedMsg?.subject?.includes('[Broadcast]') && isAdmin
+                ? 'This is a broadcast — all copies sent to every staff member will be permanently deleted.'
+                : 'This message will be permanently deleted and cannot be recovered.'}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteOpen(false)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              onClick={() => deleteMutation.mutate()}
+              disabled={deleteMutation.isPending}
+            >
+              <Trash2 className="h-4 w-4 mr-2" />
+              {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

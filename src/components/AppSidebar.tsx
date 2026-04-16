@@ -19,6 +19,8 @@ import {
   AlertTriangle,
   Mail,
   ShieldCheck,
+  Cake,
+  FileText,
 } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { useRoles } from "@/hooks/useRoles";
@@ -61,6 +63,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const isStaff = !isAdmin && !isHR && !isManager && !isEmployee;
 
   const hasBusinessAccess = isAdmin
+    || isHR
+    || isManager
     || hasPermission('inventory', 'view')
     || hasPermission('sales', 'view')
     || hasPermission('budgets', 'view')
@@ -114,8 +118,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             <SidebarGroupLabel>Business Management</SidebarGroupLabel>
             <SidebarMenu>
 
-              {/* Overview */}
-              {(isAdmin || hasPermission('inventory', 'view') || hasPermission('sales', 'view')) && (
+              {/* Overview — admin, HR, manager, or inventory/sales permission */}
+              {(isAdmin || isHR || isManager || hasPermission('inventory', 'view') || hasPermission('sales', 'view')) && (
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild>
                     <Link to="/business">
@@ -170,8 +174,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 </SidebarMenuItem>
               )}
 
-              {/* Sales & Payments */}
-              {(isAdmin || hasPermission('sales', 'view')) && (
+              {/* Sales & Payments — admin, HR, manager, or sales permission */}
+              {(isAdmin || isHR || isManager || hasPermission('sales', 'view')) && (
                 <>
                   <SidebarMenuItem>
                     <SidebarMenuButton asChild>
@@ -186,20 +190,22 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 </>
               )}
 
-              {/* Expenses & Budgets */}
+              {/* Expenses — admin, HR, manager, or budgets permission */}
+              {(isAdmin || isHR || isManager || hasPermission('budgets', 'view')) && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
+                    <Link to="/expenses"><Receipt className="h-4 w-4" />Expenses</Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+
+              {/* Budgets — admin or budgets permission only */}
               {(isAdmin || hasPermission('budgets', 'view')) && (
-                <>
-                  <SidebarMenuItem>
-                    <SidebarMenuButton asChild>
-                      <Link to="/expenses"><Receipt className="h-4 w-4" />Expenses</Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                  <SidebarMenuItem>
-                    <SidebarMenuButton asChild>
-                      <Link to="/budgets"><Target className="h-4 w-4" />Budgets</Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                </>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
+                    <Link to="/budgets"><Target className="h-4 w-4" />Budgets</Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
               )}
 
               {/* Reports */}
@@ -293,6 +299,20 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                   </SidebarMenuSub>
                 </CollapsibleContent>
               </Collapsible>
+            </SidebarMenuItem>
+
+            {/* Birthday Calendar — everyone */}
+            <SidebarMenuItem>
+              <SidebarMenuButton asChild>
+                <Link to="/birthdays"><Cake className="h-4 w-4" />Birthday Calendar</Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+
+            {/* My Payslip — everyone */}
+            <SidebarMenuItem>
+              <SidebarMenuButton asChild>
+                <Link to="/my-payslip"><FileText className="h-4 w-4" />My Payslip</Link>
+              </SidebarMenuButton>
             </SidebarMenuItem>
 
             {/* My Profile — everyone */}

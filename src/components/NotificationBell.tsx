@@ -4,6 +4,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { Bell } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useNavigate } from 'react-router-dom';
 import {
   Popover, PopoverContent, PopoverTrigger,
 } from '@/components/ui/popover';
@@ -17,11 +18,24 @@ interface Notification {
   type: string;
   read: boolean;
   created_at: string;
+  related_id: string | null;
 }
+
+const getNotificationRoute = (type: string): string => {
+  switch (type) {
+    case 'message': return '/staff-portal?tab=messages';
+    case 'payroll': return '/my-payslip';
+    case 'birthday': return '/birthdays';
+    case 'leave_request': return '/staff-portal?tab=leave';
+    case 'complaint': return '/staff-portal?tab=complaints';
+    default: return '';
+  }
+};
 
 export default function NotificationBell() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
 
   const { data: notifications = [] } = useQuery({
@@ -107,7 +121,11 @@ export default function NotificationBell() {
               <button
                 key={n.id}
                 className={`w-full text-left px-4 py-3 border-b last:border-0 hover:bg-muted/50 transition-colors ${!n.read ? 'bg-primary/5' : ''}`}
-                onClick={() => { if (!n.read) markReadMutation.mutate(n.id); }}
+                onClick={() => {
+                  if (!n.read) markReadMutation.mutate(n.id);
+                  const route = getNotificationRoute(n.type);
+                  if (route) { setOpen(false); navigate(route); }
+                }}
               >
                 <div className="flex gap-2">
                   <span className="text-lg">{getTypeIcon(n.type)}</span>

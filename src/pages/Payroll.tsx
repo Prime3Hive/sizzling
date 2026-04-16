@@ -30,6 +30,7 @@ interface StaffProfile {
   bank_name: string | null;
   account_number: string | null;
   account_name: string | null;
+  linked_user_id: string | null;
   departments?: { name: string } | null;
 }
 
@@ -75,7 +76,7 @@ const Payroll = () => {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('staff_profiles')
-        .select('id, full_name, salary, position, department_id, bank_name, account_number, account_name, departments(name)')
+        .select('id, full_name, salary, position, department_id, bank_name, account_number, account_name, linked_user_id, departments(name)')
         .order('full_name');
       if (error) throw error;
       return (data || []) as StaffProfile[];
@@ -146,6 +147,19 @@ const Payroll = () => {
 
       const { error } = await supabase.from('payroll_records').insert(records);
       if (error) throw error;
+
+      // Notify each staff member
+      for (let i = 0; i < newStaff.length; i++) {
+        const staff = newStaff[i];
+        if (!staff.linked_user_id) continue;
+        const rec = records[i];
+        await supabase.from('notifications').insert({
+          user_id: staff.linked_user_id,
+          title: '💰 Payslip Ready',
+          message: `Your payslip for ${formData.period_start} – ${formData.period_end} has been generated. Basic: ₦${Number(rec.basic_salary).toLocaleString()}, Allowances: ₦${Number(rec.allowances).toLocaleString()}, Deductions: ₦${Number(rec.deductions).toLocaleString()}, Net Pay: ₦${Number(rec.net_pay).toLocaleString()}. View details in My Payslip.`,
+          type: 'payroll',
+        });
+      }
       return { created: newStaff.length, skipped: skippedCount };
     },
     onSuccess: (result) => {
@@ -172,6 +186,7 @@ const Payroll = () => {
         throw new Error(`Payroll for ${staff.full_name} already exists for this period (${formData.period_start} to ${formData.period_end}).`);
       }
 
+      const netPay = formData.basic_salary + formData.allowances - formData.deductions;
       const { error } = await supabase.from('payroll_records').insert({
         user_id: user.id,
         staff_profile_id: staff.id,
@@ -185,13 +200,23 @@ const Payroll = () => {
         basic_salary: formData.basic_salary,
         allowances: formData.allowances,
         deductions: formData.deductions,
-        net_pay: formData.basic_salary + formData.allowances - formData.deductions,
+        net_pay: netPay,
         bank_name: staff.bank_name,
         account_number: staff.account_number,
         account_name: staff.account_name,
         status: 'pending',
       });
       if (error) throw error;
+
+      // Notify the staff member
+      if (staff.linked_user_id) {
+        await supabase.from('notifications').insert({
+          user_id: staff.linked_user_id,
+          title: '💰 Payslip Ready',
+          message: `Your payslip for ${formData.period_start} – ${formData.period_end} has been generated. Basic: ₦${Number(formData.basic_salary).toLocaleString()}, Allowances: ₦${Number(formData.allowances).toLocaleString()}, Deductions: ₦${Number(formData.deductions).toLocaleString()}, Net Pay: ₦${Number(netPay).toLocaleString()}. View details in My Payslip.`,
+          type: 'payroll',
+        });
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['payroll-records'] });
@@ -493,7 +518,7 @@ const Payroll = () => {
                     <TableCell className="text-muted-foreground">{r.department || '-'}</TableCell>
                     <TableCell>
                       <div className="text-sm">
-                        <Badge variant="outline" className="text-xs">{r.salary_period}</Badge>
+                        <Badge variant="outline" className="text-xs uppercase">{r.salary_period}</Badge>
                         <p className="text-xs text-muted-foreground mt-1">{format(new Date(r.period_start), 'dd MMM')} – {format(new Date(r.period_end), 'dd MMM yyyy')}</p>
                       </div>
                     </TableCell>

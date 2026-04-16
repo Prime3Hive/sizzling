@@ -50,10 +50,12 @@ export const printStaffProfile = (profileElement: HTMLElement) => {
         <head>
           <title>Staff Profile</title>
           <style>
-            body { margin: 0; padding: 0; }
+            * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            body { margin: 0; padding: 0; background: #fff; }
+            @page { size: A4 portrait; margin: 0; }
             @media print {
               body { margin: 0; }
-              @page { size: A4; margin: 0; }
+              html, body { width: 210mm; height: 297mm; }
             }
           </style>
         </head>

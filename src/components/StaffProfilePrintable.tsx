@@ -1,5 +1,5 @@
+import React from "react";
 import { formatNairaCompact } from "@/lib/currency";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 interface Department {
   id: string;
@@ -109,209 +109,268 @@ const StaffProfilePrintable = ({ profile, passportUrl }: StaffProfilePrintablePr
   const documentNumber = `SS-${new Date().getFullYear()}-${profile.id.slice(0, 3).toUpperCase()}`;
 
   return (
-    <div 
-      className="bg-white relative overflow-hidden" 
-      style={{ 
-        width: "210mm", 
-        minHeight: "297mm", 
-        fontFamily: "'Inter', 'Segoe UI', sans-serif",
-        padding: "48px"
+    <div
+      style={{
+        width: "210mm",
+        minHeight: "297mm",
+        fontFamily: "'Segoe UI', 'Inter', Arial, sans-serif",
+        backgroundColor: "#ffffff",
+        display: "flex",
+        flexDirection: "row",
+        overflow: "hidden",
+        position: "relative",
       }}
     >
-      {/* Confidential Watermark */}
-      <div className="absolute top-10 right-10 pointer-events-none opacity-10 rotate-12">
-        <p className="text-6xl font-black text-slate-900 tracking-widest uppercase">Confidential</p>
+      {/* ── LEFT ACCENT SIDEBAR ── */}
+      <div
+        style={{
+          width: "52px",
+          background: "linear-gradient(180deg, #ea580c 0%, #c2410c 100%)",
+          flexShrink: 0,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          paddingTop: "32px",
+          paddingBottom: "32px",
+          gap: "8px",
+        }}
+      >
+        <img src="/favicon.png" alt="Logo" style={{ width: "28px", height: "28px", objectFit: "contain", filter: "brightness(10)" }} />
+        <div style={{ width: "1px", flex: 1, background: "rgba(255,255,255,0.2)", margin: "12px 0" }} />
+        <p style={{
+          color: "rgba(255,255,255,0.7)",
+          fontSize: "8px",
+          fontWeight: 700,
+          letterSpacing: "3px",
+          textTransform: "uppercase",
+          writingMode: "vertical-rl",
+          transform: "rotate(180deg)",
+        }}>CONFIDENTIAL</p>
       </div>
 
-      {/* Header */}
-      <div className="flex justify-between items-start border-b-2 border-slate-100 pb-8 mb-8">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-orange-500 rounded flex items-center justify-center">
-            <img 
-              src="/favicon.png" 
-              alt="Logo" 
-              className="w-7 h-7 object-contain"
-            />
-          </div>
+      {/* ── MAIN CONTENT ── */}
+      <div style={{ flex: 1, padding: "36px 40px 28px 36px", display: "flex", flexDirection: "column", gap: "0" }}>
+
+        {/* ── HEADER ── */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "28px", paddingBottom: "20px", borderBottom: "2px solid #f1f5f9" }}>
           <div>
-            <h1 className="text-xl font-bold text-slate-900">Sizzling Spices</h1>
-            <p className="text-xs text-slate-500 font-medium uppercase tracking-wider">Human Resources Department</p>
+            <p style={{ fontSize: "11px", color: "#94a3b8", fontWeight: 600, textTransform: "uppercase", letterSpacing: "2px", marginBottom: "2px" }}>
+              Sizzling Spices Ltd.
+            </p>
+            <h1 style={{ fontSize: "20px", fontWeight: 800, color: "#0f172a", margin: 0, letterSpacing: "-0.5px" }}>
+              Employee Profile
+            </h1>
+            <p style={{ fontSize: "10px", color: "#94a3b8", marginTop: "4px" }}>Human Resources Department</p>
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div style={{
+              background: "#fff7ed",
+              border: "1px solid #fed7aa",
+              borderRadius: "6px",
+              padding: "6px 12px",
+              marginBottom: "8px",
+              display: "inline-block",
+            }}>
+              <p style={{ fontSize: "9px", color: "#9a3412", fontWeight: 700, textTransform: "uppercase", letterSpacing: "1px", margin: 0 }}>
+                Document No.
+              </p>
+              <p style={{ fontSize: "12px", color: "#ea580c", fontWeight: 800, margin: "2px 0 0" }}>{documentNumber}</p>
+            </div>
+            <p style={{ fontSize: "9px", color: "#94a3b8", display: "block" }}>
+              Generated: {new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}
+            </p>
           </div>
         </div>
-        <div className="text-right">
-          <p className="text-sm font-bold text-slate-900">Document No: {documentNumber}</p>
-          <p className="text-xs text-slate-500">
-            Date Generated: {new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
-          </p>
-          <span className="inline-block mt-2 px-2 py-1 bg-red-50 text-red-600 text-[10px] font-bold rounded uppercase border border-red-100">
-            Confidential
-          </span>
-        </div>
-      </div>
 
-      {/* Employee Identity Section */}
-      <div className="flex gap-8 mb-10">
-        <div 
-          className="rounded-xl w-40 h-40 border-4 border-slate-50 shadow-sm overflow-hidden flex-shrink-0"
-        >
-          <Avatar className="w-full h-full rounded-none">
-            <AvatarImage src={passportUrl || undefined} alt={profile.full_name} className="object-cover" />
-            <AvatarFallback className="text-5xl bg-orange-100 text-orange-600 rounded-none w-full h-full">
-              {profile.full_name.charAt(0)}
-            </AvatarFallback>
-          </Avatar>
-        </div>
-        <div className="flex flex-col justify-center">
-          <h2 className="text-3xl font-bold text-slate-900 tracking-tight">{profile.full_name}</h2>
-          <p className="text-xl text-orange-500 font-semibold mb-2">{positionLabels[profile.position] || profile.position}</p>
-          <div className="flex flex-col gap-1">
-            <p className="text-slate-600 text-sm flex items-center gap-2">
-              <span className="text-slate-400">●</span>
-              Employee ID: <span className="font-bold text-slate-900">{generateEmployeeId(profile.id)}</span>
-            </p>
-            {profile.departments && (
-              <p className="text-slate-600 text-sm flex items-center gap-2">
-                <span className="text-slate-400">●</span>
-                Department: <span className="font-bold text-slate-900">{profile.departments.name}</span>
-              </p>
+        {/* ── EMPLOYEE IDENTITY ── */}
+        <div style={{ display: "flex", gap: "24px", marginBottom: "28px", alignItems: "stretch" }}>
+          {/* Photo */}
+          <div style={{
+            width: "110px",
+            height: "130px",
+            borderRadius: "8px",
+            overflow: "hidden",
+            flexShrink: 0,
+            border: "3px solid #f1f5f9",
+            background: "#fff7ed",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}>
+            {passportUrl ? (
+              <img src={passportUrl} alt={profile.full_name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+            ) : (
+              <span style={{ fontSize: "44px", fontWeight: 700, color: "#ea580c" }}>{profile.full_name.charAt(0)}</span>
             )}
-            <p className="text-slate-600 text-[11px] font-medium leading-normal mt-2 italic">
-              INTERNAL USE ONLY - NOT FOR EXTERNAL DISTRIBUTION
+          </div>
+
+          {/* Identity Info */}
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center" }}>
+            <h2 style={{ fontSize: "24px", fontWeight: 800, color: "#0f172a", margin: "0 0 4px", letterSpacing: "-0.5px" }}>
+              {profile.full_name}
+            </h2>
+            <p style={{ fontSize: "14px", color: "#ea580c", fontWeight: 600, margin: "0 0 12px" }}>
+              {positionLabels[profile.position] || profile.position}
             </p>
-          </div>
-        </div>
-      </div>
-
-      {/* Two Column Grid */}
-      <div className="grid grid-cols-2 gap-x-12 gap-y-10">
-        {/* Employment Details */}
-        <div>
-          <h3 className="text-xs font-bold text-orange-500 uppercase tracking-widest border-b border-slate-100 pb-2 mb-4">
-            Employment Details
-          </h3>
-          <div className="space-y-3">
-            <DetailRow label="Status" value={employmentTypeLabels[profile.employment_type || ''] || 'N/A'} />
-            <DetailRow 
-              label="Hire Date" 
-              value={profile.employment_date 
-                ? new Date(profile.employment_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) 
-                : profile.year_of_joining?.toString() || 'N/A'
-              } 
-            />
-            <DetailRow label="Education" value={educationLabels[profile.level_of_education || ''] || 'N/A'} />
-            <DetailRow label="State of Origin" value={profile.state_of_origin || 'N/A'} />
-          </div>
-        </div>
-
-        {/* Contact Information */}
-        <div>
-          <h3 className="text-xs font-bold text-orange-500 uppercase tracking-widest border-b border-slate-100 pb-2 mb-4">
-            Contact Information
-          </h3>
-          <div className="space-y-3">
-            <DetailRow label="Email Address" value={profile.email_address || 'N/A'} />
-            <DetailRow label="Mobile Phone" value={profile.phone_number || 'N/A'} />
-            <DetailRow label="LGA" value={profile.lga || 'N/A'} />
-            <DetailRow label="NIN" value={profile.nin || 'N/A'} />
-          </div>
-        </div>
-
-        {/* Performance & Summary - Full Width */}
-        <div className="col-span-2">
-          <h3 className="text-xs font-bold text-orange-500 uppercase tracking-widest border-b border-slate-100 pb-2 mb-4">
-            Employee Summary
-          </h3>
-          <div className="grid grid-cols-4 gap-4">
-            <SummaryCard label="Gender" value={genderLabels[profile.gender || ''] || 'N/A'} />
-            <SummaryCard label="Marital Status" value={maritalStatusLabels[profile.marital_status || ''] || 'N/A'} />
-            <SummaryCard label="Tenure" value={tenure || 'N/A'} />
-            <SummaryCard label="Monthly Salary" value={profile.salary ? formatNairaCompact(profile.salary) : 'N/A'} highlight />
-          </div>
-        </div>
-
-        {/* Bank Details */}
-        <div>
-          <h3 className="text-xs font-bold text-orange-500 uppercase tracking-widest border-b border-slate-100 pb-2 mb-4">
-            Bank Details
-          </h3>
-          <div className="space-y-3">
-            <DetailRow label="Bank Name" value={profile.bank_name || 'N/A'} />
-            <DetailRow label="Account Number" value={profile.account_number || 'N/A'} />
-            <DetailRow label="Account Name" value={profile.account_name || 'N/A'} />
-          </div>
-        </div>
-
-        {/* Emergency Contact */}
-        <div>
-          <h3 className="text-xs font-bold text-orange-500 uppercase tracking-widest border-b border-slate-100 pb-2 mb-4">
-            Emergency Contact
-          </h3>
-          <div className="space-y-3">
-            <DetailRow label="Contact Name" value={profile.emergency_contact_name || 'N/A'} />
-            <DetailRow label="Phone Number" value={profile.emergency_contact_phone || 'N/A'} />
-            <DetailRow label="Relationship" value={profile.emergency_contact_relationship || 'N/A'} />
-          </div>
-        </div>
-
-        {/* Skills & Experience - Full Width */}
-        {profile.skills_experience && (
-          <div className="col-span-2 mt-2">
-            <h3 className="text-xs font-bold text-orange-500 uppercase tracking-widest border-b border-slate-100 pb-2 mb-4">
-              Skills & Experience
-            </h3>
-            <div className="p-4 border-l-4 border-orange-500 bg-orange-50/30">
-              <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">
-                {profile.skills_experience}
-              </p>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+              <InfoPill label="ID" value={generateEmployeeId(profile.id)} accent />
+              {profile.departments && <InfoPill label="Dept" value={profile.departments.name} />}
+              {profile.employment_type && <InfoPill label="Type" value={employmentTypeLabels[profile.employment_type] || profile.employment_type} />}
+              {tenure && <InfoPill label="Tenure" value={tenure} />}
             </div>
           </div>
-        )}
 
-        {/* Residential Address - Full Width */}
-        {profile.residential_address && (
-          <div className="col-span-2">
-            <h3 className="text-xs font-bold text-orange-500 uppercase tracking-widest border-b border-slate-100 pb-2 mb-4">
-              Residential Address
-            </h3>
-            <p className="text-sm text-slate-700">{profile.residential_address}</p>
+          {/* Summary Stats */}
+          <div style={{ display: "flex", flexDirection: "column", gap: "8px", flexShrink: 0 }}>
+            <StatBox label="Gender" value={genderLabels[profile.gender || ''] || '—'} />
+            <StatBox label="Marital" value={maritalStatusLabels[profile.marital_status || ''] || '—'} />
+            {profile.salary && <StatBox label="Salary" value={formatNairaCompact(profile.salary)} accent />}
           </div>
-        )}
-      </div>
+        </div>
 
-      {/* Footer with Signatures */}
-      <div className="absolute bottom-10 left-12 right-12 flex justify-between items-end border-t border-slate-100 pt-6">
-        <div className="flex gap-12">
-          <SignatureLine label="Manager Signature" />
-          <SignatureLine label="HR Representative" />
+        {/* ── DIVIDER ── */}
+        <div style={{ height: "1px", background: "#f1f5f9", marginBottom: "24px" }} />
+
+        {/* ── TWO COLUMN SECTIONS ── */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px 40px", flex: 1 }}>
+
+          {/* Employment Details */}
+          <Section title="Employment Details">
+            <Row label="Hire Date" value={profile.employment_date
+              ? new Date(profile.employment_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+              : profile.year_of_joining?.toString() || '—'} />
+            <Row label="Employment Type" value={employmentTypeLabels[profile.employment_type || ''] || '—'} />
+            <Row label="Education Level" value={educationLabels[profile.level_of_education || ''] || '—'} />
+            <Row label="Year Joined" value={profile.year_of_joining?.toString() || '—'} />
+          </Section>
+
+          {/* Contact Information */}
+          <Section title="Contact Information">
+            <Row label="Email" value={profile.email_address || '—'} />
+            <Row label="Phone" value={profile.phone_number || '—'} />
+            <Row label="State of Origin" value={profile.state_of_origin || '—'} />
+            <Row label="LGA" value={profile.lga || '—'} />
+          </Section>
+
+          {/* Bank Details */}
+          <Section title="Bank Details">
+            <Row label="Bank Name" value={profile.bank_name || '—'} />
+            <Row label="Account Number" value={profile.account_number || '—'} />
+            <Row label="Account Name" value={profile.account_name || '—'} />
+          </Section>
+
+          {/* Emergency Contact */}
+          <Section title="Emergency Contact">
+            <Row label="Full Name" value={profile.emergency_contact_name || '—'} />
+            <Row label="Phone" value={profile.emergency_contact_phone || '—'} />
+            <Row label="Relationship" value={profile.emergency_contact_relationship || '—'} />
+          </Section>
+
+          {/* Personal / NIN */}
+          <Section title="Personal Details">
+            <Row label="Date of Birth" value={profile.date_of_birth
+              ? new Date(profile.date_of_birth).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+              : '—'} />
+            <Row label="NIN" value={profile.nin || '—'} />
+            {profile.residential_address && (
+              <Row label="Address" value={profile.residential_address} />
+            )}
+          </Section>
+
+          {/* Skills – spans full width if present */}
+          {profile.skills_experience && (
+            <div style={{ gridColumn: "1 / -1" }}>
+              <Section title="Skills & Experience">
+                <p style={{ fontSize: "11px", color: "#475569", lineHeight: "1.7", whiteSpace: "pre-wrap", margin: 0 }}>
+                  {profile.skills_experience}
+                </p>
+              </Section>
+            </div>
+          )}
         </div>
-        <div className="text-[10px] text-slate-400 text-right">
-          <p>Generated by HR Portal System v1.0</p>
-          <p>© {new Date().getFullYear()} Sizzling Spices Ltd.</p>
+
+        {/* ── FOOTER ── */}
+        <div style={{
+          marginTop: "28px",
+          paddingTop: "16px",
+          borderTop: "1px solid #f1f5f9",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "flex-end",
+        }}>
+          <div style={{ display: "flex", gap: "48px" }}>
+            <SigLine label="Authorised By" />
+            <SigLine label="HR Representative" />
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <p style={{ fontSize: "9px", color: "#cbd5e1", margin: 0 }}>INTERNAL USE ONLY — NOT FOR EXTERNAL DISTRIBUTION</p>
+            <p style={{ fontSize: "9px", color: "#cbd5e1", margin: "2px 0 0" }}>© {new Date().getFullYear()} Sizzling Spices Ltd. · HR Portal</p>
+          </div>
         </div>
+
       </div>
     </div>
   );
 };
 
-// Helper Components
-const DetailRow = ({ label, value }: { label: string; value: string }) => (
-  <div className="flex justify-between border-b border-slate-50 pb-1">
-    <span className="text-sm text-slate-500">{label}</span>
-    <span className="text-sm font-bold text-slate-900 text-right max-w-[55%] truncate">{value}</span>
+// ── Sub-components ────────────────────────────────────────────────────────────
+
+const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
+  <div>
+    <p style={{
+      fontSize: "9px",
+      fontWeight: 700,
+      color: "#ea580c",
+      textTransform: "uppercase",
+      letterSpacing: "2px",
+      borderBottom: "1.5px solid #fed7aa",
+      paddingBottom: "5px",
+      marginBottom: "10px",
+    }}>{title}</p>
+    <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>{children}</div>
   </div>
 );
 
-const SummaryCard = ({ label, value, highlight = false }: { label: string; value: string; highlight?: boolean }) => (
-  <div className={`p-4 rounded-lg ${highlight ? 'bg-orange-50 border border-orange-100' : 'bg-slate-50'}`}>
-    <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">{label}</p>
-    <p className={`text-lg font-bold ${highlight ? 'text-orange-600' : 'text-slate-900'}`}>{value}</p>
+const Row = ({ label, value }: { label: string; value: string }) => (
+  <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", paddingBottom: "5px", borderBottom: "1px solid #f8fafc" }}>
+    <span style={{ color: "#94a3b8", fontWeight: 500 }}>{label}</span>
+    <span style={{ color: "#1e293b", fontWeight: 600, textAlign: "right", maxWidth: "60%" }}>{value}</span>
   </div>
 );
 
-const SignatureLine = ({ label }: { label: string }) => (
-  <div className="w-32">
-    <div className="h-10 border-b border-slate-300 mb-1"></div>
-    <p className="text-[10px] text-slate-400 text-center uppercase font-bold">{label}</p>
+const InfoPill = ({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) => (
+  <span style={{
+    fontSize: "10px",
+    padding: "3px 10px",
+    borderRadius: "20px",
+    background: accent ? "#fff7ed" : "#f1f5f9",
+    color: accent ? "#ea580c" : "#475569",
+    fontWeight: 600,
+    border: accent ? "1px solid #fed7aa" : "1px solid #e2e8f0",
+    display: "inline-block",
+  }}>
+    <span style={{ color: "#94a3b8", fontWeight: 500 }}>{label}: </span>{value}
+  </span>
+);
+
+const StatBox = ({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) => (
+  <div style={{
+    background: accent ? "#fff7ed" : "#f8fafc",
+    border: accent ? "1px solid #fed7aa" : "1px solid #f1f5f9",
+    borderRadius: "8px",
+    padding: "8px 14px",
+    textAlign: "center",
+    minWidth: "90px",
+  }}>
+    <p style={{ fontSize: "8px", color: "#94a3b8", fontWeight: 700, textTransform: "uppercase", letterSpacing: "1px", margin: "0 0 2px" }}>{label}</p>
+    <p style={{ fontSize: "13px", fontWeight: 700, color: accent ? "#ea580c" : "#0f172a", margin: 0 }}>{value}</p>
+  </div>
+);
+
+const SigLine = ({ label }: { label: string }) => (
+  <div style={{ width: "120px" }}>
+    <div style={{ height: "36px", borderBottom: "1.5px solid #cbd5e1", marginBottom: "4px" }} />
+    <p style={{ fontSize: "9px", color: "#94a3b8", textAlign: "center", fontWeight: 600, textTransform: "uppercase", letterSpacing: "1px", margin: 0 }}>{label}</p>
   </div>
 );
 

@@ -3,8 +3,6 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const allowedOrigins = [
-  'https://wisp-expense-hub.lovable.app',
-  'https://id-preview--2f10c326-4039-4537-9498-056b99d9b1f4.lovable.app',
   'http://localhost:5173',
   'http://localhost:8080',
 ];

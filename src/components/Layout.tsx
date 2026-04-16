@@ -6,9 +6,11 @@ import { AppSidebar } from '@/components/AppSidebar';
 import { useAuth } from '@/hooks/useAuth';
 import { PlusCircle, Home, BarChart3, Settings, LogOut, Building2 } from 'lucide-react';
 import NotificationBell from '@/components/NotificationBell';
+import { useBirthdayNotifications } from '@/hooks/useBirthdayNotifications';
 
 const Layout = () => {
   const { user, signOut } = useAuth();
+  useBirthdayNotifications();
   const navigate = useNavigate();
 
   const handleSignOut = async () => {
@@ -38,7 +40,7 @@ const Layout = () => {
                   />
                 </div>
                 <h1 className="text-xl font-bold bg-gradient-primary bg-clip-text text-transparent">
-                  Sizzling Spices Expense Tracker
+                  Sizzling Spices Portal
                 </h1>
               </div>
 
