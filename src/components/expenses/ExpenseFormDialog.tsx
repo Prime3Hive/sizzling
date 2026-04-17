@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { z } from 'zod';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -24,15 +24,35 @@ const expenseSchema = z.object({
   paymentMethod: z.string().max(50).optional(),
 });
 
+interface EditingExpense {
+  id: string;
+  amount: number;
+  description: string;
+  category: string;
+  date: string;
+  budget_id: string;
+  account_type: string | null;
+  cost_center: string | null;
+  bank_account: string | null;
+  payment_method: string | null;
+}
+
 interface ExpenseFormDialogProps {
   budgets: { id: string; title: string }[];
   onExpenseAdded: () => void;
+  editingExpense?: EditingExpense | null;
+  isEditOpen?: boolean;
+  onEditOpenChange?: (open: boolean) => void;
+  onExpenseUpdated?: () => void;
 }
 
-const ExpenseFormDialog = ({ budgets, onExpenseAdded }: ExpenseFormDialogProps) => {
+const ExpenseFormDialog = ({ budgets, onExpenseAdded, editingExpense, isEditOpen, onEditOpenChange, onExpenseUpdated }: ExpenseFormDialogProps) => {
   const { user } = useAuth();
   const { toast } = useToast();
   const [isOpen, setIsOpen] = useState(false);
+  const isEditMode = !!editingExpense;
+  const currentOpen = isEditMode ? (isEditOpen ?? false) : undefined;
+  const handleOpenChange = isEditMode ? (onEditOpenChange ?? (() => {})) : setIsOpen;
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
@@ -48,6 +68,24 @@ const ExpenseFormDialog = ({ budgets, onExpenseAdded }: ExpenseFormDialogProps) 
     bankAccount: '',
     paymentMethod: '',
   });
+
+  useEffect(() => {
+    if (editingExpense) {
+      setFormData({
+        amount: String(editingExpense.amount),
+        description: editingExpense.description,
+        category: editingExpense.category,
+        date: editingExpense.date,
+        budgetId: editingExpense.budget_id,
+        accountType: editingExpense.account_type || 'COGS',
+        costCenter: editingExpense.cost_center || 'Daily Orders',
+        bankAccount: editingExpense.bank_account || '',
+        paymentMethod: editingExpense.payment_method || '',
+      });
+      setReceiptFile(null);
+      setReceiptPreview(null);
+    }
+  }, [editingExpense]);
 
   const handleInputChange = (field: string, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
@@ -126,28 +164,46 @@ const ExpenseFormDialog = ({ budgets, onExpenseAdded }: ExpenseFormDialogProps) 
 
     setIsSubmitting(true);
     try {
-      let receiptPath = null;
-      if (receiptFile) {
-        receiptPath = await uploadReceipt();
-        if (!receiptPath) return;
+      if (isEditMode && editingExpense) {
+        const { error } = await supabase.from('expenses').update({
+          amount: validation.data.amount,
+          description: validation.data.description,
+          category: validation.data.category,
+          date: validation.data.date,
+          budget_id: validation.data.budgetId,
+          account_type: validation.data.accountType || 'COGS',
+          cost_center: validation.data.costCenter || 'Daily Orders',
+          bank_account: validation.data.bankAccount || null,
+          payment_method: validation.data.paymentMethod || null,
+        }).eq('id', editingExpense.id);
+        if (error) throw error;
+        toast({ title: 'Expense updated!', description: 'Changes have been saved.' });
+        onEditOpenChange?.(false);
+        onExpenseUpdated?.();
+      } else {
+        let receiptPath = null;
+        if (receiptFile) {
+          receiptPath = await uploadReceipt();
+          if (!receiptPath) return;
+        }
+        const { error } = await supabase.from('expenses').insert({
+          amount: validation.data.amount,
+          description: validation.data.description,
+          category: validation.data.category,
+          date: validation.data.date,
+          budget_id: validation.data.budgetId,
+          receipt_path: receiptPath,
+          account_type: validation.data.accountType || 'COGS',
+          cost_center: validation.data.costCenter || 'Daily Orders',
+          bank_account: validation.data.bankAccount || null,
+          payment_method: validation.data.paymentMethod || null,
+        });
+        if (error) throw error;
+        toast({ title: 'Expense added!', description: 'Your expense has been recorded.' });
+        setIsOpen(false);
+        resetForm();
+        onExpenseAdded();
       }
-      const { error } = await supabase.from('expenses').insert({
-        amount: validation.data.amount,
-        description: validation.data.description,
-        category: validation.data.category,
-        date: validation.data.date,
-        budget_id: validation.data.budgetId,
-        receipt_path: receiptPath,
-        account_type: validation.data.accountType || 'COGS',
-        cost_center: validation.data.costCenter || 'Daily Orders',
-        bank_account: validation.data.bankAccount || null,
-        payment_method: validation.data.paymentMethod || null,
-      });
-      if (error) throw error;
-      toast({ title: 'Expense added!', description: 'Your expense has been recorded.' });
-      setIsOpen(false);
-      resetForm();
-      onExpenseAdded();
     } catch (error: any) {
       toast({ title: 'Error adding expense', description: error.message, variant: 'destructive' });
     } finally {
@@ -156,14 +212,16 @@ const ExpenseFormDialog = ({ budgets, onExpenseAdded }: ExpenseFormDialogProps) 
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={setIsOpen}>
-      <DialogTrigger asChild>
-        <Button><Plus className="mr-2 h-4 w-4" />Add Expense</Button>
-      </DialogTrigger>
+    <Dialog open={isEditMode ? currentOpen : isOpen} onOpenChange={isEditMode ? onEditOpenChange : setIsOpen}>
+      {!isEditMode && (
+        <DialogTrigger asChild>
+          <Button><Plus className="mr-2 h-4 w-4" />Add Expense</Button>
+        </DialogTrigger>
+      )}
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Add Expense</DialogTitle>
-          <DialogDescription>Record a new expense to track your spending</DialogDescription>
+          <DialogTitle>{isEditMode ? 'Edit Expense' : 'Add Expense'}</DialogTitle>
+          <DialogDescription>{isEditMode ? 'Update the expense details below' : 'Record a new expense to track your spending'}</DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -251,9 +309,9 @@ const ExpenseFormDialog = ({ budgets, onExpenseAdded }: ExpenseFormDialogProps) 
             </div>
           )}
           <div className="flex gap-4">
-            <Button type="button" variant="outline" onClick={() => setIsOpen(false)} className="flex-1">Cancel</Button>
-            <Button type="submit" disabled={isSubmitting || isUploading || budgets.length === 0} className="flex-1">
-              {isSubmitting ? 'Adding...' : isUploading ? 'Uploading...' : 'Add Expense'}
+            <Button type="button" variant="outline" onClick={() => isEditMode ? onEditOpenChange?.(false) : setIsOpen(false)} className="flex-1">Cancel</Button>
+            <Button type="submit" disabled={isSubmitting || (!isEditMode && (isUploading || budgets.length === 0))} className="flex-1">
+              {isEditMode ? (isSubmitting ? 'Saving...' : 'Save Changes') : (isSubmitting ? 'Adding...' : isUploading ? 'Uploading...' : 'Add Expense')}
             </Button>
           </div>
         </form>

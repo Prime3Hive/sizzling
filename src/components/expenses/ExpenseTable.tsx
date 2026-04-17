@@ -3,7 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Eye, Download, Plus } from 'lucide-react';
+import { Eye, Download, Plus, Pencil, Trash2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { formatNairaCompact } from '@/lib/currency';
 import { supabase } from '@/integrations/supabase/client';
@@ -18,6 +18,10 @@ interface Expense {
   budget_id: string;
   receipt_path: string | null;
   created_at: string;
+  account_type: string | null;
+  cost_center: string | null;
+  bank_account: string | null;
+  payment_method: string | null;
   budgets: { title: string } | null;
 }
 
@@ -27,6 +31,8 @@ interface ExpenseTableProps {
   hasActiveFilters: boolean;
   onClearFilters: () => void;
   onAddExpense: () => void;
+  onEdit?: (expense: Expense) => void;
+  onDelete?: (id: string) => void;
 }
 
 const getCategoryColor = (category: string) => {
@@ -40,7 +46,7 @@ const getCategoryColor = (category: string) => {
   return colors[category] || 'bg-muted text-muted-foreground';
 };
 
-const ExpenseTable = ({ expenses, totalCount, hasActiveFilters, onClearFilters, onAddExpense }: ExpenseTableProps) => {
+const ExpenseTable = ({ expenses, totalCount, hasActiveFilters, onClearFilters, onAddExpense, onEdit, onDelete }: ExpenseTableProps) => {
   const { toast } = useToast();
 
   const viewReceipt = async (receiptPath: string) => {
@@ -101,6 +107,7 @@ const ExpenseTable = ({ expenses, totalCount, hasActiveFilters, onClearFilters, 
                   <TableHead className="w-[120px] min-w-[120px]">Budget</TableHead>
                   <TableHead className="w-[110px] min-w-[110px] text-right">Amount</TableHead>
                   <TableHead className="w-[100px] min-w-[100px] text-center">Receipt</TableHead>
+                  <TableHead className="w-[90px] min-w-[90px] text-center">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -127,6 +134,12 @@ const ExpenseTable = ({ expenses, totalCount, hasActiveFilters, onClearFilters, 
                       ) : (
                         <span className="text-xs text-muted-foreground text-center block">—</span>
                       )}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex gap-1 justify-center">
+                        {onEdit && <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-primary" onClick={() => onEdit(expense)}><Pencil className="h-3.5 w-3.5" /></Button>}
+                        {onDelete && <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => onDelete(expense.id)}><Trash2 className="h-3.5 w-3.5" /></Button>}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}

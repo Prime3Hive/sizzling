@@ -1,7 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Card, CardHeader, CardContent } from '@/components/ui/card';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import ExpenseFormDialog from '@/components/expenses/ExpenseFormDialog';
@@ -12,6 +13,9 @@ import ExpenseSummary from '@/components/expenses/ExpenseSummary';
 const Expenses = () => {
   const { user } = useAuth();
   const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const [editingExpense, setEditingExpense] = React.useState<any | null>(null);
+  const [isEditOpen, setIsEditOpen] = React.useState(false);
 
   const [filterStartDate, setFilterStartDate] = useState<Date | undefined>();
   const [filterEndDate, setFilterEndDate] = useState<Date | undefined>();
@@ -70,6 +74,29 @@ const Expenses = () => {
     queryClient.invalidateQueries({ queryKey: ['pl-expenses'] });
   };
 
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from('expenses').delete().eq('id', id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['expenses'] });
+      queryClient.invalidateQueries({ queryKey: ['pl-expenses'] });
+      toast({ title: 'Expense deleted' });
+    },
+    onError: (error: any) => toast({ title: 'Error', description: error.message, variant: 'destructive' }),
+  });
+
+  const handleEdit = (expense: any) => {
+    setEditingExpense(expense);
+    setIsEditOpen(true);
+  };
+
+  const handleDelete = (id: string) => {
+    if (!window.confirm('Delete this expense? This cannot be undone.')) return;
+    deleteMutation.mutate(id);
+  };
+
   if (isLoading) {
     return (
       <div className="space-y-6">
@@ -112,7 +139,24 @@ const Expenses = () => {
         hasActiveFilters={hasActiveFilters}
         onClearFilters={clearFilters}
         onAddExpense={() => {}}
+        onEdit={handleEdit}
+        onDelete={handleDelete}
       />
+
+      {editingExpense && (
+        <ExpenseFormDialog
+          budgets={budgets}
+          onExpenseAdded={handleExpenseAdded}
+          editingExpense={editingExpense}
+          isEditOpen={isEditOpen}
+          onEditOpenChange={(open) => { setIsEditOpen(open); if (!open) setEditingExpense(null); }}
+          onExpenseUpdated={() => {
+            queryClient.invalidateQueries({ queryKey: ['expenses'] });
+            queryClient.invalidateQueries({ queryKey: ['pl-expenses'] });
+            setEditingExpense(null);
+          }}
+        />
+      )}
 
       <ExpenseSummary expenses={filteredExpenses} />
     </div>
