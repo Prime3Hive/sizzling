@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -64,10 +64,15 @@ export default function NJCSupplyDialog({
 }: NJCSupplyDialogProps) {
   const [form, setForm] = useState<SupplyFormData>(initialData || defaultFormData());
 
-  // Reset form when dialog opens with new data
+  // Sync form whenever the dialog is opened — Radix does NOT fire onOpenChange
+  // when the parent sets open=true programmatically, so useState init is stale.
+  useEffect(() => {
+    if (open) {
+      setForm(initialData ? initialData : defaultFormData());
+    }
+  }, [open, initialData]);
+
   const handleOpenChange = (val: boolean) => {
-    if (val && initialData) setForm(initialData);
-    if (val && !initialData) setForm(defaultFormData());
     onOpenChange(val);
   };
 
