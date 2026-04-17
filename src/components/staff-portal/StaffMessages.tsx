@@ -263,12 +263,22 @@ export default function StaffMessages() {
           .ilike('subject', `%[Broadcast]%${oldClean}%`);
         const ids = (siblings || []).map((s: any) => s.id);
         if (ids.length) {
-          const { error } = await supabase.from('staff_messages').delete().in('id', ids);
+          const { data: deleted, error } = await supabase
+            .from('staff_messages')
+            .delete()
+            .in('id', ids)
+            .select('id');
           if (error) throw error;
+          if (!deleted || deleted.length === 0) throw new Error('Delete failed — no rows removed. Check permissions.');
         }
       } else {
-        const { error } = await supabase.from('staff_messages').delete().eq('id', selectedMsg.id);
+        const { data: deleted, error } = await supabase
+          .from('staff_messages')
+          .delete()
+          .eq('id', selectedMsg.id)
+          .select('id');
         if (error) throw error;
+        if (!deleted || deleted.length === 0) throw new Error('Delete failed — no rows removed. Check permissions.');
       }
     },
     onSuccess: () => {
