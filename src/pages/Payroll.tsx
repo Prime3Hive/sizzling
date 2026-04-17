@@ -378,6 +378,24 @@ const Payroll = () => {
           <Button variant="outline" onClick={exportToExcel} disabled={filteredRecords.length === 0}>
             <FileSpreadsheet className="h-4 w-4 mr-2" />Export Excel
           </Button>
+          <Button variant="outline" disabled={filteredRecords.filter(r => r.status === 'pending').length === 0} onClick={() => {
+            const rows = filteredRecords.filter(r => r.status === 'pending');
+            const header = 'Staff Name,Staff ID,Department,Bank Name,Account Number,Account Name,Net Pay (NGN),Period\n';
+            const csv = rows.map(r => [
+              `"${r.staff_name}"`,
+              r.staff_id_number || '',
+              `"${r.department || ''}"`,
+              `"${r.bank_name || ''}"`,
+              r.account_number || '',
+              `"${r.account_name || ''}"`,
+              Number(r.net_pay).toFixed(2),
+              `"${format(new Date(r.period_start), 'dd MMM')} - ${format(new Date(r.period_end), 'dd MMM yyyy')}"`,
+            ].join(',')).join('\n');
+            const blob = new Blob([header + csv], { type: 'text/csv;charset=utf-8;' });
+            saveAs(blob, `bank-transfers-${format(new Date(), 'yyyy-MM-dd')}.csv`);
+          }}>
+            <FileSpreadsheet className="h-4 w-4 mr-2" />Bank Transfers
+          </Button>
           <Dialog open={showDialog} onOpenChange={setShowDialog}>
             <DialogTrigger asChild>
               <Button><Plus className="h-4 w-4 mr-2" />Generate Payroll</Button>

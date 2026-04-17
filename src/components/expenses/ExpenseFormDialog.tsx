@@ -35,6 +35,7 @@ interface EditingExpense {
   cost_center: string | null;
   bank_account: string | null;
   payment_method: string | null;
+  receipt_path: string | null;
 }
 
 interface ExpenseFormDialogProps {
@@ -165,6 +166,12 @@ const ExpenseFormDialog = ({ budgets, onExpenseAdded, editingExpense, isEditOpen
     setIsSubmitting(true);
     try {
       if (isEditMode && editingExpense) {
+        let updatedReceiptPath = editingExpense.receipt_path;
+        if (receiptFile) {
+          const newPath = await uploadReceipt();
+          if (!newPath) return;
+          updatedReceiptPath = newPath;
+        }
         const { error } = await supabase.from('expenses').update({
           amount: validation.data.amount,
           description: validation.data.description,
@@ -175,6 +182,7 @@ const ExpenseFormDialog = ({ budgets, onExpenseAdded, editingExpense, isEditOpen
           cost_center: validation.data.costCenter || 'Daily Orders',
           bank_account: validation.data.bankAccount || null,
           payment_method: validation.data.paymentMethod || null,
+          receipt_path: updatedReceiptPath,
         }).eq('id', editingExpense.id);
         if (error) throw error;
         toast({ title: 'Expense updated!', description: 'Changes have been saved.' });

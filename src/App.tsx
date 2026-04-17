@@ -1,4 +1,4 @@
-import React from "react";
+import React, { lazy, Suspense } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -8,32 +8,46 @@ import { AuthProvider, useAuth } from "./hooks/useAuth";
 import { RoleProvider, useRoles } from "./hooks/useRoles";
 import * as Sentry from "@sentry/react";
 import Layout from "./components/Layout";
-import Dashboard from "./pages/Dashboard";
-import Auth from "./pages/Auth";
 
-import Expenses from "./pages/Expenses";
-import Budgets from "./pages/Budgets";
-import Reports from "./pages/Reports";
-import BusinessManagement from "./pages/BusinessManagement";
-import Inventory from "./pages/business/Inventory";
-import InventoryRequests from "./pages/business/InventoryRequests";
-import Sales from "./pages/business/Sales";
-import Payments from "./pages/business/Payments";
-import Analytics from "./pages/business/Analytics";
-import KPIDashboard from "./pages/business/KPIDashboard";
-import SKUManagement from "./pages/SKUManagement";
-import UserManagement from "./pages/UserManagement";
-import StaffProfiles from "./pages/StaffProfiles";
-import NJCSupplies from "./pages/NJCSupplies";
-import ProfitLoss from "./pages/ProfitLoss";
-import Payroll from "./pages/Payroll";
-import MyProfile from "./pages/MyProfile";
-import StaffPortal from "./pages/StaffPortal";
-import BirthdayCalendar from "./pages/BirthdayCalendar";
-import MyPayslip from "./pages/MyPayslip";
-import NotFound from "./pages/NotFound";
+const Dashboard         = lazy(() => import("./pages/Dashboard"));
+const Auth              = lazy(() => import("./pages/Auth"));
+const Expenses          = lazy(() => import("./pages/Expenses"));
+const Budgets           = lazy(() => import("./pages/Budgets"));
+const Reports           = lazy(() => import("./pages/Reports"));
+const BusinessManagement = lazy(() => import("./pages/BusinessManagement"));
+const Inventory         = lazy(() => import("./pages/business/Inventory"));
+const InventoryRequests = lazy(() => import("./pages/business/InventoryRequests"));
+const Sales             = lazy(() => import("./pages/business/Sales"));
+const Payments          = lazy(() => import("./pages/business/Payments"));
+const Analytics         = lazy(() => import("./pages/business/Analytics"));
+const KPIDashboard      = lazy(() => import("./pages/business/KPIDashboard"));
+const SKUManagement     = lazy(() => import("./pages/SKUManagement"));
+const UserManagement    = lazy(() => import("./pages/UserManagement"));
+const StaffProfiles     = lazy(() => import("./pages/StaffProfiles"));
+const NJCSupplies       = lazy(() => import("./pages/NJCSupplies"));
+const ProfitLoss        = lazy(() => import("./pages/ProfitLoss"));
+const Payroll           = lazy(() => import("./pages/Payroll"));
+const MyProfile         = lazy(() => import("./pages/MyProfile"));
+const StaffPortal       = lazy(() => import("./pages/StaffPortal"));
+const BirthdayCalendar  = lazy(() => import("./pages/BirthdayCalendar"));
+const MyPayslip         = lazy(() => import("./pages/MyPayslip"));
+const NotFound          = lazy(() => import("./pages/NotFound"));
 
-const queryClient = new QueryClient();
+const PageLoader = () => (
+  <div className="min-h-screen flex items-center justify-center">
+    <div className="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full" />
+  </div>
+);
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 5 * 60 * 1000,
+      gcTime: 10 * 60 * 1000,
+      retry: 1,
+    },
+  },
+});
 
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { user, loading } = useAuth();
@@ -68,12 +82,18 @@ const App = () => (
           <Toaster />
           <Sonner />
           <BrowserRouter>
+            <Suspense fallback={<PageLoader />}>
             <Routes>
               <Route path="/auth" element={<Auth />} />
               <Route path="/" element={<Layout />}>
                 <Route index element={
                   <ProtectedRoute>
-                    <Navigate to="/staff-portal" replace />
+                    <Navigate to="/dashboard" replace />
+                  </ProtectedRoute>
+                } />
+                <Route path="dashboard" element={
+                  <ProtectedRoute>
+                    <Dashboard />
                   </ProtectedRoute>
                 } />
                 <Route path="expenses" element={
@@ -180,6 +200,7 @@ const App = () => (
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
               <Route path="*" element={<NotFound />} />
             </Routes>
+            </Suspense>
           </BrowserRouter>
         </RoleProvider>
       </AuthProvider>

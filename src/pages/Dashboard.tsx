@@ -2,7 +2,7 @@ import React from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { PlusCircle, DollarSign, TrendingUp, TrendingDown, Receipt, Settings, BarChart3, Users, Wallet, LineChart, User, CalendarDays, AlertTriangle, Mail, Send } from 'lucide-react';
+import { PlusCircle, DollarSign, TrendingUp, TrendingDown, Receipt, Settings, BarChart3, Users, Wallet, LineChart, User, CalendarDays, AlertTriangle, Mail, Send, Cake, ClipboardList, PackageX } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
@@ -107,6 +107,55 @@ const Dashboard = () => {
   });
 
   const isLoading = expLoading || salesLoading || ytdExpLoading || payrollLoading;
+
+  // Admin: upcoming birthdays in next 7 days
+  const { data: upcomingBirthdays = [] } = useQuery({
+    queryKey: ['dashboard-upcoming-birthdays'],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('staff_profiles')
+        .select('full_name, date_of_birth')
+        .not('date_of_birth', 'is', null);
+      if (!data) return [];
+      const today = new Date();
+      return data.filter(s => {
+        const dob = new Date(s.date_of_birth!);
+        const next = new Date(today.getFullYear(), dob.getMonth(), dob.getDate());
+        if (next < today) next.setFullYear(today.getFullYear() + 1);
+        const diff = (next.getTime() - today.getTime()) / (1000 * 60 * 60 * 24);
+        return diff <= 7;
+      }).map(s => {
+        const dob = new Date(s.date_of_birth!);
+        const next = new Date(today.getFullYear(), dob.getMonth(), dob.getDate());
+        if (next < today) next.setFullYear(today.getFullYear() + 1);
+        return { name: s.full_name, date: next };
+      }).sort((a, b) => a.date.getTime() - b.date.getTime());
+    },
+    enabled: !!user && isAdmin,
+  });
+
+  // Admin: all-staff pending leave count
+  const { data: allPendingLeave = 0 } = useQuery({
+    queryKey: ['dashboard-admin-pending-leave'],
+    queryFn: async () => {
+      const { count } = await supabase
+        .from('staff_leave_requests')
+        .select('id', { count: 'exact', head: true })
+        .eq('status', 'pending');
+      return count || 0;
+    },
+    enabled: !!user && isAdmin,
+  });
+
+  // Admin: low-stock SKU count
+  const { data: lowStockCount = 0 } = useQuery({
+    queryKey: ['dashboard-low-stock'],
+    queryFn: async () => {
+      const { data } = await supabase.from('skus').select('stock_quantity, reorder_level').gt('reorder_level', 0);
+      return (data || []).filter((s: any) => Number(s.stock_quantity) <= Number(s.reorder_level)).length;
+    },
+    enabled: !!user && isAdmin,
+  });
 
   // Admin: unread staff messages count
   const { data: unreadMsgCount = 0 } = useQuery({
@@ -443,6 +492,59 @@ const Dashboard = () => {
           </Link>
         )}
       </div>
+
+      {/* Admin alert widgets */}
+      {(allPendingLeave > 0 || lowStockCount > 0 || upcomingBirthdays.length > 0) && (
+        <div className="grid gap-4 md:grid-cols-3">
+          {allPendingLeave > 0 && (
+            <Link to="/staff-portal">
+              <Card className="border-yellow-200 bg-yellow-50 dark:bg-yellow-900/10 hover:shadow-md transition-all cursor-pointer">
+                <CardContent className="pt-4 pb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-yellow-500/10 rounded-lg"><ClipboardList className="h-5 w-5 text-yellow-600" /></div>
+                    <div>
+                      <p className="text-sm font-semibold text-yellow-800 dark:text-yellow-400">{allPendingLeave} Pending Leave{allPendingLeave !== 1 ? 's' : ''}</p>
+                      <p className="text-xs text-yellow-600 dark:text-yellow-500">Awaiting approval — click to review</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </Link>
+          )}
+          {lowStockCount > 0 && (
+            <Link to="/business/inventory">
+              <Card className="border-red-200 bg-red-50 dark:bg-red-900/10 hover:shadow-md transition-all cursor-pointer">
+                <CardContent className="pt-4 pb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-red-500/10 rounded-lg"><PackageX className="h-5 w-5 text-red-600" /></div>
+                    <div>
+                      <p className="text-sm font-semibold text-red-800 dark:text-red-400">{lowStockCount} Low Stock Item{lowStockCount !== 1 ? 's' : ''}</p>
+                      <p className="text-xs text-red-600 dark:text-red-500">At or below reorder point</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </Link>
+          )}
+          {upcomingBirthdays.length > 0 && (
+            <Link to="/birthdays">
+              <Card className="border-pink-200 bg-pink-50 dark:bg-pink-900/10 hover:shadow-md transition-all cursor-pointer">
+                <CardContent className="pt-4 pb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-pink-500/10 rounded-lg"><Cake className="h-5 w-5 text-pink-600" /></div>
+                    <div>
+                      <p className="text-sm font-semibold text-pink-800 dark:text-pink-400">
+                        {upcomingBirthdays[0].name.split(' ')[0]}{upcomingBirthdays.length > 1 ? ` +${upcomingBirthdays.length - 1} more` : ''}
+                      </p>
+                      <p className="text-xs text-pink-600 dark:text-pink-500">Birthday{upcomingBirthdays.length !== 1 ? 's' : ''} in next 7 days 🎂</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </Link>
+          )}
+        </div>
+      )}
 
       {/* P/L Summary + Recent Expenses */}
       <div className="grid gap-6 md:grid-cols-2">

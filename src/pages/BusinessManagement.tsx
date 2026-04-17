@@ -1,6 +1,6 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Package, ShoppingCart, DollarSign, BarChart3, AlertTriangle, TrendingUp } from "lucide-react";
+import { Package, ShoppingCart, DollarSign, BarChart3, TrendingUp } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 const BusinessManagement = () => {
@@ -27,13 +27,6 @@ const BusinessManagement = () => {
       icon: DollarSign,
       route: "/business/payments",
       color: "from-purple-500 to-purple-600"
-    },
-    {
-      title: "Reconciliation Engine",
-      description: "Automated matching and discrepancy detection",
-      icon: AlertTriangle,
-      route: "/business/reconciliation",
-      color: "from-orange-500 to-orange-600"
     },
     {
       title: "Analytics & Reports",

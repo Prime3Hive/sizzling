@@ -121,7 +121,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               {/* Overview — admin, HR, manager, or inventory/sales permission */}
               {(isAdmin || isHR || isManager || hasPermission('inventory', 'view') || hasPermission('sales', 'view')) && (
                 <SidebarMenuItem>
-                  <SidebarMenuButton asChild>
+                  <SidebarMenuButton asChild isActive={location.pathname === '/business'}>
                     <Link to="/business">
                       <Building2 className="h-4 w-4" />
                       Overview
@@ -144,27 +144,27 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                     <CollapsibleContent>
                       <SidebarMenuSub>
                         <SidebarMenuSubItem>
-                          <SidebarMenuSubButton asChild>
+                          <SidebarMenuSubButton asChild isActive={location.pathname === '/business/inventory'}>
                             <Link to="/business/inventory"><span>Inventory Management</span></Link>
                           </SidebarMenuSubButton>
                         </SidebarMenuSubItem>
                         <SidebarMenuSubItem>
-                          <SidebarMenuSubButton asChild>
+                          <SidebarMenuSubButton asChild isActive={location.pathname === '/business/sku-management'}>
                             <Link to="/business/sku-management"><Boxes className="h-3 w-3" /><span>SKU Management</span></Link>
                           </SidebarMenuSubButton>
                         </SidebarMenuSubItem>
                         <SidebarMenuSubItem>
-                          <SidebarMenuSubButton asChild>
+                          <SidebarMenuSubButton asChild isActive={location.pathname === '/business/inventory-requests'}>
                             <Link to="/business/inventory-requests"><span>Inventory Requests</span></Link>
                           </SidebarMenuSubButton>
                         </SidebarMenuSubItem>
                         <SidebarMenuSubItem>
-                          <SidebarMenuSubButton asChild>
+                          <SidebarMenuSubButton asChild isActive={location.pathname === '/business/analytics'}>
                             <Link to="/business/analytics"><TrendingUp className="h-3 w-3" /><span>Analytics</span></Link>
                           </SidebarMenuSubButton>
                         </SidebarMenuSubItem>
                         <SidebarMenuSubItem>
-                          <SidebarMenuSubButton asChild>
+                          <SidebarMenuSubButton asChild isActive={location.pathname === '/business/kpi'}>
                             <Link to="/business/kpi"><PieChart className="h-3 w-3" /><span>KPI Dashboard</span></Link>
                           </SidebarMenuSubButton>
                         </SidebarMenuSubItem>
@@ -178,12 +178,12 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               {(isAdmin || isHR || isManager || hasPermission('sales', 'view')) && (
                 <>
                   <SidebarMenuItem>
-                    <SidebarMenuButton asChild>
+                    <SidebarMenuButton asChild isActive={location.pathname === '/business/sales'}>
                       <Link to="/business/sales"><ShoppingCart className="h-4 w-4" />Sales</Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                   <SidebarMenuItem>
-                    <SidebarMenuButton asChild>
+                    <SidebarMenuButton asChild isActive={location.pathname === '/business/payments'}>
                       <Link to="/business/payments"><CreditCard className="h-4 w-4" />Payments</Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
@@ -193,7 +193,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               {/* Expenses — admin, HR, manager, or budgets permission */}
               {(isAdmin || isHR || isManager || hasPermission('budgets', 'view')) && (
                 <SidebarMenuItem>
-                  <SidebarMenuButton asChild>
+                  <SidebarMenuButton asChild isActive={location.pathname === '/expenses'}>
                     <Link to="/expenses"><Receipt className="h-4 w-4" />Expenses</Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -202,7 +202,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               {/* Budgets — admin or budgets permission only */}
               {(isAdmin || hasPermission('budgets', 'view')) && (
                 <SidebarMenuItem>
-                  <SidebarMenuButton asChild>
+                  <SidebarMenuButton asChild isActive={location.pathname === '/budgets'}>
                     <Link to="/budgets"><Target className="h-4 w-4" />Budgets</Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -211,7 +211,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               {/* Reports */}
               {(isAdmin || hasPermission('reports', 'view')) && (
                 <SidebarMenuItem>
-                  <SidebarMenuButton asChild>
+                  <SidebarMenuButton asChild isActive={location.pathname === '/reports'}>
                     <Link to="/reports"><BarChart3 className="h-4 w-4" />Reports</Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -221,12 +221,12 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               {isAdmin && (
                 <>
                   <SidebarMenuItem>
-                    <SidebarMenuButton asChild>
+                    <SidebarMenuButton asChild isActive={location.pathname === '/profit-loss'}>
                       <Link to="/profit-loss"><LineChart className="h-4 w-4" />Profit & Loss</Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                   <SidebarMenuItem>
-                    <SidebarMenuButton asChild>
+                    <SidebarMenuButton asChild isActive={location.pathname === '/njc-supplies'}>
                       <Link to="/njc-supplies"><Package className="h-4 w-4" />NJC Supplies</Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
@@ -245,7 +245,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             {/* User Management — admin only */}
             {isAdmin && (
               <SidebarMenuItem>
-                <SidebarMenuButton asChild>
+                <SidebarMenuButton asChild isActive={location.pathname === '/users'}>
                   <Link to="/users"><Users className="h-4 w-4" />User Management</Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
@@ -254,7 +254,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             {/* Staff Profiles — admin + HR */}
             {(isAdmin || isHR) && (
               <SidebarMenuItem>
-                <SidebarMenuButton asChild>
+                <SidebarMenuButton asChild isActive={location.pathname === '/staff-profiles'}>
                   <Link to="/staff-profiles"><UserCog className="h-4 w-4" />Staff Profiles</Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
@@ -263,7 +263,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             {/* Payroll — admin only */}
             {isAdmin && (
               <SidebarMenuItem>
-                <SidebarMenuButton asChild>
+                <SidebarMenuButton asChild isActive={location.pathname === '/payroll'}>
                   <Link to="/payroll"><Wallet className="h-4 w-4" />Payroll</Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
@@ -282,17 +282,17 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 <CollapsibleContent>
                   <SidebarMenuSub>
                     <SidebarMenuSubItem>
-                      <SidebarMenuSubButton asChild>
+                      <SidebarMenuSubButton asChild isActive={location.pathname === '/staff-portal'}>
                         <Link to="/staff-portal"><CalendarDays className="h-3 w-3" /><span>Leave Requests</span></Link>
                       </SidebarMenuSubButton>
                     </SidebarMenuSubItem>
                     <SidebarMenuSubItem>
-                      <SidebarMenuSubButton asChild>
+                      <SidebarMenuSubButton asChild isActive={location.pathname === '/staff-portal'}>
                         <Link to="/staff-portal"><AlertTriangle className="h-3 w-3" /><span>Complaints</span></Link>
                       </SidebarMenuSubButton>
                     </SidebarMenuSubItem>
                     <SidebarMenuSubItem>
-                      <SidebarMenuSubButton asChild>
+                      <SidebarMenuSubButton asChild isActive={location.pathname === '/staff-portal'}>
                         <Link to="/staff-portal"><Mail className="h-3 w-3" /><span>Messages</span></Link>
                       </SidebarMenuSubButton>
                     </SidebarMenuSubItem>
@@ -303,21 +303,21 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 
             {/* Birthday Calendar — everyone */}
             <SidebarMenuItem>
-              <SidebarMenuButton asChild>
+              <SidebarMenuButton asChild isActive={location.pathname === '/birthdays'}>
                 <Link to="/birthdays"><Cake className="h-4 w-4" />Birthday Calendar</Link>
               </SidebarMenuButton>
             </SidebarMenuItem>
 
             {/* My Payslip — everyone */}
             <SidebarMenuItem>
-              <SidebarMenuButton asChild>
+              <SidebarMenuButton asChild isActive={location.pathname === '/my-payslip'}>
                 <Link to="/my-payslip"><FileText className="h-4 w-4" />My Payslip</Link>
               </SidebarMenuButton>
             </SidebarMenuItem>
 
             {/* My Profile — everyone */}
             <SidebarMenuItem>
-              <SidebarMenuButton asChild>
+              <SidebarMenuButton asChild isActive={location.pathname === '/my-profile'}>
                 <Link to="/my-profile"><UserCog className="h-4 w-4" />My Profile</Link>
               </SidebarMenuButton>
             </SidebarMenuItem>
