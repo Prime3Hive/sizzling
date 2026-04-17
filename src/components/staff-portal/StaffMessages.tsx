@@ -272,6 +272,19 @@ export default function StaffMessages() {
       }
     },
     onSuccess: () => {
+      if (selectedMsg) {
+        const isBroadcastMsg = selectedMsg.subject.includes('[Broadcast]');
+        queryClient.setQueryData(
+          ['staff-messages', user?.id, isAdmin],
+          (old: any[] = []) => {
+            if (isBroadcastMsg && isAdmin) {
+              const oldClean = cleanSubject(selectedMsg.subject);
+              return old.filter(m => !(m.subject.includes('[Broadcast]') && cleanSubject(m.subject) === oldClean));
+            }
+            return old.filter(m => m.id !== selectedMsg.id);
+          }
+        );
+      }
       queryClient.invalidateQueries({ queryKey: ['staff-messages'] });
       setDeleteOpen(false);
       setSelectedMsg(null);
