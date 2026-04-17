@@ -14,9 +14,10 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Edit, Trash2, Package, FileSpreadsheet, FileText, Filter, X } from "lucide-react";
+import { Plus, Edit, Trash2, Package, FileSpreadsheet, FileText, Filter, X, Eye, TrendingUp, CheckCircle2, Clock, AlertCircle } from "lucide-react";
 import { formatNairaCompact } from "@/lib/currency";
 import NJCSupplyDialog, { defaultFormData } from "@/components/njc/NJCSupplyDialog";
+import NJCViewDialog from "@/components/njc/NJCViewDialog";
 import { exportToExcel, exportToWord, type NJCSupplyWithItems, type NJCSupplyItem } from "@/lib/njcExport";
 
 const NJCSupplies = () => {
@@ -26,6 +27,7 @@ const NJCSupplies = () => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editFormData, setEditFormData] = useState<ReturnType<typeof defaultFormData> | undefined>();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [viewingSupply, setViewingSupply] = useState<NJCSupplyWithItems | null>(null);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -301,6 +303,56 @@ const NJCSupplies = () => {
         </div>
       </div>
 
+      {/* Summary cards */}
+      {supplies && supplies.length > 0 && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <Card>
+            <CardContent className="pt-5 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-blue-500/10 rounded-lg"><TrendingUp className="h-5 w-5 text-blue-500" /></div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Total Invoiced</p>
+                  <p className="text-lg font-bold">{formatNairaCompact(supplies.reduce((s, x) => s + x.total_amount, 0))}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-5 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-green-500/10 rounded-lg"><CheckCircle2 className="h-5 w-5 text-green-500" /></div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Paid</p>
+                  <p className="text-lg font-bold">{formatNairaCompact(supplies.filter(x => x.payment_status === "paid").reduce((s, x) => s + x.total_amount, 0))}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-5 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-yellow-500/10 rounded-lg"><Clock className="h-5 w-5 text-yellow-500" /></div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Pending</p>
+                  <p className="text-lg font-bold">{formatNairaCompact(supplies.filter(x => x.payment_status === "pending").reduce((s, x) => s + x.total_amount, 0))}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-5 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-orange-500/10 rounded-lg"><AlertCircle className="h-5 w-5 text-orange-500" /></div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Partial / Failed</p>
+                  <p className="text-lg font-bold">{formatNairaCompact(supplies.filter(x => ["partial","failed"].includes(x.payment_status)).reduce((s, x) => s + x.total_amount, 0))}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
       {/* Filters */}
       <Card>
         <CardHeader className="pb-3">
@@ -390,11 +442,14 @@ const NJCSupplies = () => {
                       </span>
                     </TableCell>
                     <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
-                        <Button variant="outline" size="sm" onClick={() => handleEdit(supply)}>
+                      <div className="flex justify-end gap-1.5">
+                        <Button variant="ghost" size="sm" onClick={() => setViewingSupply(supply)} title="View invoice">
+                          <Eye className="h-4 w-4" />
+                        </Button>
+                        <Button variant="outline" size="sm" onClick={() => handleEdit(supply)} title="Edit invoice">
                           <Edit className="h-4 w-4" />
                         </Button>
-                        <Button variant="destructive" size="sm" onClick={() => handleDelete(supply.id)}>
+                        <Button variant="destructive" size="sm" onClick={() => handleDelete(supply.id)} title="Delete invoice">
                           <Trash2 className="h-4 w-4" />
                         </Button>
                       </div>
@@ -418,6 +473,13 @@ const NJCSupplies = () => {
         isEditing={!!editingId}
         isPending={createMutation.isPending || updateMutation.isPending}
         onSubmit={handleSubmit}
+      />
+
+      <NJCViewDialog
+        supply={viewingSupply}
+        open={!!viewingSupply}
+        onOpenChange={(v) => { if (!v) setViewingSupply(null); }}
+        onEdit={(supply) => handleEdit(supply)}
       />
     </div>
   );

@@ -241,7 +241,7 @@ const ExpenseFormDialog = ({ budgets, onExpenseAdded, editingExpense, isEditOpen
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label>Category</Label>
-              <Select value={formData.category} onValueChange={(v) => handleInputChange('category', v)} required>
+              <Select value={formData.category || undefined} onValueChange={(v) => handleInputChange('category', v)}>
                 <SelectTrigger><SelectValue placeholder="Select category" /></SelectTrigger>
                 <SelectContent>{EXPENSE_CATEGORIES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
               </Select>
