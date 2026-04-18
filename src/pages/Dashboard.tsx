@@ -14,13 +14,14 @@ const Dashboard = () => {
   const { user } = useAuth();
   const { isAdmin, isHR, isManager, isEmployee, isPending, userRole } = useRoles();
   const isStaff = !isAdmin && !isHR && !isManager && !isEmployee;
+  const canViewFinancials = isAdmin || isManager;
   const now = new Date();
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
   const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
   const yearStart = `${now.getFullYear()}-01-01`;
   const yearEnd = `${now.getFullYear()}-12-31`;
 
-  // Monthly expenses
+  // Monthly expenses — admin/manager only (financial data)
   const { data: monthlyExpenses = [], isLoading: expLoading } = useQuery({
     queryKey: ['dashboard-expenses', monthStart, monthEnd],
     queryFn: async () => {
@@ -32,10 +33,10 @@ const Dashboard = () => {
       if (error) throw error;
       return data || [];
     },
-    enabled: !!user,
+    enabled: !!user && canViewFinancials,
   });
 
-  // YTD Sales
+  // YTD Sales — admin/manager only
   const { data: ytdSales = [], isLoading: salesLoading } = useQuery({
     queryKey: ['dashboard-sales', yearStart, yearEnd],
     queryFn: async () => {
@@ -47,10 +48,10 @@ const Dashboard = () => {
       if (error) throw error;
       return data || [];
     },
-    enabled: !!user,
+    enabled: !!user && canViewFinancials,
   });
 
-  // YTD Expenses for P/L
+  // YTD Expenses for P/L — admin/manager only
   const { data: ytdExpenses = [], isLoading: ytdExpLoading } = useQuery({
     queryKey: ['dashboard-ytd-expenses', yearStart, yearEnd],
     queryFn: async () => {
@@ -62,10 +63,10 @@ const Dashboard = () => {
       if (error) throw error;
       return data || [];
     },
-    enabled: !!user,
+    enabled: !!user && canViewFinancials,
   });
 
-  // Payroll summary
+  // Payroll summary — admin only (sensitive salary data)
   const { data: payrollRecords = [], isLoading: payrollLoading } = useQuery({
     queryKey: ['dashboard-payroll'],
     queryFn: async () => {
@@ -77,7 +78,7 @@ const Dashboard = () => {
       if (error) throw error;
       return data || [];
     },
-    enabled: !!user,
+    enabled: !!user && isAdmin,
   });
 
   // Budgets
@@ -91,15 +92,17 @@ const Dashboard = () => {
     enabled: !!user,
   });
 
-  // Recent expenses
+  // Recent expenses — filtered by user for non-admins to prevent cross-user data exposure
   const { data: recentExpenses = [] } = useQuery({
-    queryKey: ['dashboard-recent-expenses', user?.id],
+    queryKey: ['dashboard-recent-expenses', canViewFinancials ? 'all' : user?.id],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let q = supabase
         .from('expenses')
         .select('id, description, category, date, amount')
         .order('created_at', { ascending: false })
         .limit(5);
+      if (!canViewFinancials) q = q.eq('user_id', user!.id);
+      const { data, error } = await q;
       if (error) throw error;
       return data || [];
     },

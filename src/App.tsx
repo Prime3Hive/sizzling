@@ -51,7 +51,7 @@ const queryClient = new QueryClient({
 
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { user, loading } = useAuth();
-  if (loading) return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
+  if (loading) return <PageLoader />;
   if (!user) return <Navigate to="/auth" replace />;
   return <>{children}</>;
 };
@@ -59,18 +59,28 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
 const AdminRoute = ({ children }: { children: React.ReactNode }) => {
   const { user, loading: authLoading } = useAuth();
   const { isAdmin, loading: roleLoading } = useRoles();
-  if (authLoading || roleLoading) return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
+  if (authLoading || roleLoading) return <PageLoader />;
   if (!user) return <Navigate to="/auth" replace />;
-  if (!isAdmin) return <Navigate to="/" replace />;
+  if (!isAdmin) return <Navigate to="/dashboard" replace />;
   return <>{children}</>;
 };
 
 const AdminOrHRRoute = ({ children }: { children: React.ReactNode }) => {
   const { user, loading: authLoading } = useAuth();
   const { isAdmin, isHR, loading: roleLoading } = useRoles();
-  if (authLoading || roleLoading) return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
+  if (authLoading || roleLoading) return <PageLoader />;
   if (!user) return <Navigate to="/auth" replace />;
-  if (!isAdmin && !isHR) return <Navigate to="/" replace />;
+  if (!isAdmin && !isHR) return <Navigate to="/dashboard" replace />;
+  return <>{children}</>;
+};
+
+// Business/financial pages: accessible to admin, manager, or HR
+const BusinessRoute = ({ children }: { children: React.ReactNode }) => {
+  const { user, loading: authLoading } = useAuth();
+  const { isAdmin, isManager, isHR, loading: roleLoading } = useRoles();
+  if (authLoading || roleLoading) return <PageLoader />;
+  if (!user) return <Navigate to="/auth" replace />;
+  if (!isAdmin && !isManager && !isHR) return <Navigate to="/dashboard" replace />;
   return <>{children}</>;
 };
 
@@ -107,19 +117,19 @@ const App = () => (
                   </ProtectedRoute>
                 } />
                 <Route path="reports" element={
-                  <ProtectedRoute>
+                  <BusinessRoute>
                     <Reports />
-                  </ProtectedRoute>
+                  </BusinessRoute>
                 } />
                 <Route path="business" element={
-                  <ProtectedRoute>
+                  <BusinessRoute>
                     <BusinessManagement />
-                  </ProtectedRoute>
+                  </BusinessRoute>
                 } />
                 <Route path="business/inventory" element={
-                  <ProtectedRoute>
+                  <BusinessRoute>
                     <Inventory />
-                  </ProtectedRoute>
+                  </BusinessRoute>
                 } />
                 <Route path="business/inventory-requests" element={
                   <ProtectedRoute>
@@ -127,29 +137,29 @@ const App = () => (
                   </ProtectedRoute>
                 } />
                 <Route path="business/sku-management" element={
-                  <ProtectedRoute>
+                  <BusinessRoute>
                     <SKUManagement />
-                  </ProtectedRoute>
+                  </BusinessRoute>
                 } />
                 <Route path="business/sales" element={
-                  <ProtectedRoute>
+                  <BusinessRoute>
                     <Sales />
-                  </ProtectedRoute>
+                  </BusinessRoute>
                 } />
                 <Route path="business/payments" element={
-                  <ProtectedRoute>
+                  <BusinessRoute>
                     <Payments />
-                  </ProtectedRoute>
+                  </BusinessRoute>
                 } />
                 <Route path="business/analytics" element={
-                  <ProtectedRoute>
+                  <BusinessRoute>
                     <Analytics />
-                  </ProtectedRoute>
+                  </BusinessRoute>
                 } />
                 <Route path="business/kpi" element={
-                  <ProtectedRoute>
+                  <BusinessRoute>
                     <KPIDashboard />
-                  </ProtectedRoute>
+                  </BusinessRoute>
                 } />
                 <Route path="users" element={
                   <AdminRoute>

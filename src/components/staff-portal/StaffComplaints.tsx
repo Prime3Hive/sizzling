@@ -49,18 +49,22 @@ export default function StaffComplaints() {
   const [form, setForm] = useState({ subject: '', description: '', priority: 'medium' });
 
   const canManage = isAdmin;
+  const { loading: roleLoading } = useRoles();
 
+  // Server-side role filtering: admins fetch all complaints, staff fetch only their own.
   const { data: complaints = [] } = useQuery({
-    queryKey: ['complaints'],
+    queryKey: ['complaints', canManage ? 'all' : user?.id],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let q = supabase
         .from('staff_complaints')
         .select('*')
         .order('created_at', { ascending: false });
+      if (!canManage) q = q.eq('user_id', user!.id);
+      const { data, error } = await q;
       if (error) throw error;
       return data || [];
     },
-    enabled: !!user,
+    enabled: !!user && !roleLoading,
   });
 
   const createMutation = useMutation({
@@ -133,7 +137,8 @@ export default function StaffComplaints() {
     onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
   });
 
-  const myComplaints = complaints.filter(c => c.user_id === user?.id);
+  // When canManage=false query already returns only own complaints (server-filtered).
+  const myComplaints = canManage ? complaints.filter(c => c.user_id === user?.id) : complaints;
   const otherComplaints = canManage ? complaints.filter(c => c.user_id !== user?.id) : [];
 
   const renderComplaintTable = (items: typeof complaints, showActions: boolean) => (

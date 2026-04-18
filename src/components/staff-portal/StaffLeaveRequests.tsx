@@ -43,6 +43,7 @@ export default function StaffLeaveRequests() {
   const [form, setForm] = useState({ leave_type: 'casual', start_date: '', end_date: '', reason: '' });
 
   const canManage = isAdmin;
+  const { loading: roleLoading } = useRoles();
 
   const currentYear = new Date().getFullYear();
   const yearStart = `${currentYear}-01-01`;
@@ -61,7 +62,7 @@ export default function StaffLeaveRequests() {
       if (error) throw error;
       return data || [];
     },
-    enabled: !!user,
+    enabled: !!user && !roleLoading,
   });
 
   const sickUsed = myYearRequests.filter(r => r.leave_type === 'sick').length;
@@ -74,17 +75,21 @@ export default function StaffLeaveRequests() {
   const sickRemaining = SICK_LIMIT - sickUsed;
   const casualDaysRemaining = CASUAL_LIMIT - casualDaysUsed;
 
+  // Server-side role filtering: admins fetch all requests, staff fetch only their own.
+  // This prevents data leaking to non-admin users if RLS is ever misconfigured.
   const { data: requests = [] } = useQuery({
-    queryKey: ['leave-requests'],
+    queryKey: ['leave-requests', canManage ? 'all' : user?.id],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let q = supabase
         .from('staff_leave_requests')
         .select('*')
         .order('created_at', { ascending: false });
+      if (!canManage) q = q.eq('user_id', user!.id);
+      const { data, error } = await q;
       if (error) throw error;
       return data || [];
     },
-    enabled: !!user,
+    enabled: !!user && !roleLoading,
   });
 
   const createMutation = useMutation({
@@ -177,8 +182,9 @@ export default function StaffLeaveRequests() {
     createMutation.mutate();
   };
 
-  // Separate own requests vs others (for admin view)
-  const myRequests = requests.filter(r => r.user_id === user?.id);
+  // When canManage=false the query already returns only own requests (server-filtered).
+  // When canManage=true it fetches all, so we split here for the two-table view.
+  const myRequests = canManage ? requests.filter(r => r.user_id === user?.id) : requests;
   const otherRequests = canManage ? requests.filter(r => r.user_id !== user?.id) : [];
 
   return (

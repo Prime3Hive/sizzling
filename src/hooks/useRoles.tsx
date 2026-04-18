@@ -1,4 +1,5 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import { createContext, useContext, ReactNode } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from './useAuth';
 
@@ -24,6 +25,12 @@ interface Permission {
   can_create: boolean;
   can_update: boolean;
   can_delete: boolean;
+}
+
+interface RoleData {
+  userRole: UserRole | null;
+  department: Department | null;
+  permissions: Permission[];
 }
 
 interface RoleContextType {
@@ -56,108 +63,81 @@ interface RoleProviderProps {
 
 export const RoleProvider = ({ children }: RoleProviderProps) => {
   const { user } = useAuth();
-  const [userRole, setUserRole] = useState<UserRole | null>(null);
-  const [department, setDepartment] = useState<Department | null>(null);
-  const [permissions, setPermissions] = useState<Permission[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
 
-  const fetchUserRole = async () => {
-    if (!user?.id) {
-      setLoading(false);
-      return;
-    }
+  // Single cached query for all role data — 30 min staleTime since roles rarely change
+  const { data: roleData, isLoading } = useQuery<RoleData>({
+    queryKey: ['user-role-data', user?.id],
+    queryFn: async (): Promise<RoleData> => {
+      if (!user?.id) return { userRole: null, department: null, permissions: [] };
 
-    try {
-      setLoading(true);
-      
-      // Fetch user role
-      const { data: roleData, error: roleError } = await supabase
+      const { data: roleRow, error: roleError } = await supabase
         .from('user_roles')
         .select('*')
         .eq('user_id', user.id)
         .maybeSingle();
 
       if (roleError && roleError.code !== 'PGRST116') {
-        // Role fetch error - silently fail as this is not critical for UI
-        setLoading(false);
-        return;
+        return { userRole: null, department: null, permissions: [] };
       }
 
-      setUserRole(roleData as UserRole);
+      if (!roleRow?.department_id) {
+        return { userRole: roleRow as UserRole | null, department: null, permissions: [] };
+      }
 
-      // Fetch department if user has one
-      if (roleData?.department_id) {
-        const { data: deptData, error: deptError } = await supabase
-          .from('departments')
-          .select('*')
-          .eq('id', roleData.department_id)
-          .single();
-
-        if (!deptError) {
-          setDepartment(deptData);
-        }
-
-        // Fetch permissions for the department
-        const { data: permData, error: permError } = await supabase
+      // Fetch department + permissions in parallel
+      const [deptRes, permRes] = await Promise.all([
+        supabase.from('departments').select('*').eq('id', roleRow.department_id).single(),
+        supabase
           .from('department_permissions')
           .select('module_name, can_view, can_create, can_update, can_delete')
-          .eq('department_id', roleData.department_id);
+          .eq('department_id', roleRow.department_id),
+      ]);
 
-        if (!permError) {
-          setPermissions(permData || []);
-        }
-      } else {
-        setDepartment(null);
-        setPermissions([]);
-      }
-    } catch (error) {
-      // Silently handle errors - user will see appropriate UI state
-    } finally {
-      setLoading(false);
-    }
-  };
+      return {
+        userRole: roleRow as UserRole,
+        department: deptRes.data as Department | null,
+        permissions: (permRes.data || []) as Permission[],
+      };
+    },
+    enabled: !!user?.id,
+    staleTime: 30 * 60 * 1000,  // 30 minutes — roles rarely change mid-session
+    gcTime:    60 * 60 * 1000,  // 1 hour
+    refetchOnWindowFocus: false, // role doesn't change on tab switch
+  });
 
-  useEffect(() => {
-    fetchUserRole();
-  }, [user?.id]);
+  const userRole   = roleData?.userRole   ?? null;
+  const department = roleData?.department ?? null;
+  const permissions = roleData?.permissions ?? [];
 
-  const hasPermission = (module: string, action: 'view' | 'create' | 'update' | 'delete') => {
-    // Only approved admins have all permissions
-    if (userRole?.role === 'admin' && userRole?.role_status === 'approved') {
-      return true;
-    }
-    // Pending or unapproved roles get no elevated permissions
-    if (userRole?.role_status !== 'approved') {
-      return false;
-    }
+  const hasPermission = (module: string, action: 'view' | 'create' | 'update' | 'delete'): boolean => {
+    if (userRole?.role === 'admin' && userRole?.role_status === 'approved') return true;
+    if (userRole?.role_status !== 'approved') return false;
 
     const permission = permissions.find(p => p.module_name === module);
-    if (!permission) {
-      return false;
-    }
+    if (!permission) return false;
 
     switch (action) {
-      case 'view':
-        return permission.can_view;
-      case 'create':
-        return permission.can_create;
-      case 'update':
-        return permission.can_update;
-      case 'delete':
-        return permission.can_delete;
-      default:
-        return false;
+      case 'view':   return permission.can_view;
+      case 'create': return permission.can_create;
+      case 'update': return permission.can_update;
+      case 'delete': return permission.can_delete;
+      default:       return false;
     }
   };
 
   const isApproved = userRole?.role_status === 'approved';
-  const isAdmin = userRole?.role === 'admin' && isApproved;
-  const isManager = userRole?.role === 'manager' && isApproved;
-  const isHR = userRole?.role === 'hr' && isApproved;
+  const isAdmin    = userRole?.role === 'admin'    && isApproved;
+  const isManager  = userRole?.role === 'manager'  && isApproved;
+  const isHR       = userRole?.role === 'hr'       && isApproved;
   const isEmployee = userRole?.role === 'employee' && isApproved;
-  const isPending = !!userRole && !isApproved;
+  const isPending  = !!userRole && !isApproved;
 
-  const value = {
+  const refetchRole = async () => {
+    await queryClient.invalidateQueries({ queryKey: ['user-role-data', user?.id] });
+  };
+
+  const value: RoleContextType = {
     userRole,
     department,
     permissions,
@@ -166,9 +146,9 @@ export const RoleProvider = ({ children }: RoleProviderProps) => {
     isHR,
     isEmployee,
     isPending,
-    loading,
+    loading: isLoading,
     hasPermission,
-    refetchRole: fetchUserRole,
+    refetchRole,
   };
 
   return <RoleContext.Provider value={value}>{children}</RoleContext.Provider>;

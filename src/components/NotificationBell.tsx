@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
-import { Bell } from 'lucide-react';
+import { Bell, DollarSign, FileText, CalendarDays, AlertTriangle, MessageSquare, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -83,22 +83,30 @@ export default function NotificationBell() {
 
   const getTypeIcon = (type: string) => {
     switch (type) {
-      case 'payroll': return '💰';
-      case 'salary_slip': return '📄';
-      case 'leave_request': return '📅';
-      case 'complaint': return '⚠️';
-      case 'message': return '💬';
-      default: return 'ℹ️';
+      case 'payroll':      return <DollarSign  className="h-4 w-4 text-green-600"  aria-hidden="true" />;
+      case 'salary_slip':  return <FileText     className="h-4 w-4 text-blue-600"   aria-hidden="true" />;
+      case 'leave_request':return <CalendarDays className="h-4 w-4 text-orange-500" aria-hidden="true" />;
+      case 'complaint':    return <AlertTriangle className="h-4 w-4 text-yellow-600" aria-hidden="true" />;
+      case 'message':      return <MessageSquare className="h-4 w-4 text-primary"    aria-hidden="true" />;
+      default:             return <Info          className="h-4 w-4 text-muted-foreground" aria-hidden="true" />;
     }
   };
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button variant="ghost" size="icon" className="relative">
-          <Bell className="h-5 w-5" />
+        <Button
+          variant="ghost"
+          size="icon"
+          className="relative"
+          aria-label={unreadCount > 0 ? `Notifications — ${unreadCount} unread` : 'Notifications'}
+        >
+          <Bell className="h-5 w-5" aria-hidden="true" />
           {unreadCount > 0 && (
-            <span className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-destructive text-destructive-foreground text-xs flex items-center justify-center font-bold">
+            <span
+              className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-destructive text-destructive-foreground text-xs flex items-center justify-center font-bold"
+              aria-hidden="true"
+            >
               {unreadCount > 9 ? '9+' : unreadCount}
             </span>
           )}
@@ -128,7 +136,7 @@ export default function NotificationBell() {
                 }}
               >
                 <div className="flex gap-2">
-                  <span className="text-lg">{getTypeIcon(n.type)}</span>
+                  <div className="mt-0.5 shrink-0">{getTypeIcon(n.type)}</div>
                   <div className="flex-1 min-w-0">
                     <p className={`text-sm ${!n.read ? 'font-semibold' : 'font-medium'}`}>{n.title}</p>
                     <p className="text-xs text-muted-foreground truncate">{n.message}</p>

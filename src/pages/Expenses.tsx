@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import ExpenseFormDialog from '@/components/expenses/ExpenseFormDialog';
 import ExpenseFilters from '@/components/expenses/ExpenseFilters';
 import ExpenseTable from '@/components/expenses/ExpenseTable';
@@ -16,6 +17,7 @@ const Expenses = () => {
   const { toast } = useToast();
   const [editingExpense, setEditingExpense] = React.useState<any | null>(null);
   const [isEditOpen, setIsEditOpen] = React.useState(false);
+  const [deleteId, setDeleteId] = React.useState<string | null>(null);
 
   const [filterStartDate, setFilterStartDate] = useState<Date | undefined>();
   const [filterEndDate, setFilterEndDate] = useState<Date | undefined>();
@@ -93,8 +95,7 @@ const Expenses = () => {
   };
 
   const handleDelete = (id: string) => {
-    if (!window.confirm('Delete this expense? This cannot be undone.')) return;
-    deleteMutation.mutate(id);
+    setDeleteId(id);
   };
 
   if (isLoading) {
@@ -159,6 +160,15 @@ const Expenses = () => {
       )}
 
       <ExpenseSummary expenses={filteredExpenses} />
+
+      <ConfirmDialog
+        open={!!deleteId}
+        onOpenChange={(open) => { if (!open) setDeleteId(null); }}
+        title="Delete expense?"
+        description="This expense will be permanently deleted. This action cannot be undone."
+        confirmLabel="Delete"
+        onConfirm={() => { if (deleteId) { deleteMutation.mutate(deleteId); setDeleteId(null); } }}
+      />
     </div>
   );
 };
