@@ -132,9 +132,9 @@ const App = () => (
                   </BusinessRoute>
                 } />
                 <Route path="business/inventory-requests" element={
-                  <ProtectedRoute>
+                  <BusinessRoute>
                     <InventoryRequests />
-                  </ProtectedRoute>
+                  </BusinessRoute>
                 } />
                 <Route path="business/sku-management" element={
                   <BusinessRoute>

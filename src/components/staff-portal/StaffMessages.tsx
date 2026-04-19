@@ -107,6 +107,7 @@ export default function StaffMessages() {
   const sendMutation = useMutation({
     mutationFn: async () => {
       const catLabel = messageCategories.find(c => c.value === form.category)?.label || 'General';
+      const senderName = user!.user_metadata?.full_name || user!.email;
 
       if (isBroadcast) {
         // Admin broadcast: send individual message to every user except self
@@ -128,7 +129,31 @@ export default function StaffMessages() {
         return;
       }
 
-      // Single recipient
+      // Staff (non-admin, non-HR): auto-send to all approved admins
+      if (!isAdmin && !isHR) {
+        const { data: adminRoles } = await supabase
+          .from('user_roles')
+          .select('user_id')
+          .eq('role', 'admin')
+          .eq('role_status', 'approved');
+        for (const admin of (adminRoles || [])) {
+          await supabase.from('staff_messages').insert({
+            sender_id: user!.id,
+            recipient_id: admin.user_id,
+            subject: `[${catLabel}] ${form.subject}`,
+            message: form.message,
+          });
+          await supabase.from('notifications').insert({
+            user_id: admin.user_id,
+            title: 'New Staff Message',
+            message: `${senderName}: ${form.subject}`,
+            type: 'message',
+          });
+        }
+        return;
+      }
+
+      // Admin / HR: single recipient
       const { error } = await supabase.from('staff_messages').insert({
         sender_id: user!.id,
         recipient_id: form.recipient_id,
@@ -368,17 +393,24 @@ export default function StaffMessages() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="space-y-2">
-                <Label>To</Label>
-                <Select value={form.recipient_id} onValueChange={v => setForm({ ...form, recipient_id: v })}>
-                  <SelectTrigger><SelectValue placeholder="Select recipient" /></SelectTrigger>
-                  <SelectContent>
-                    {recipients.filter(r => r.user_id !== user?.id).map(r => (
-                      <SelectItem key={r.user_id} value={r.user_id}>{r.full_name || r.user_id}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+              {(isAdmin || isHR) ? (
+                <div className="space-y-2">
+                  <Label>To</Label>
+                  <Select value={form.recipient_id} onValueChange={v => setForm({ ...form, recipient_id: v })}>
+                    <SelectTrigger><SelectValue placeholder="Select recipient" /></SelectTrigger>
+                    <SelectContent>
+                      {recipients.filter(r => r.user_id !== user?.id).map(r => (
+                        <SelectItem key={r.user_id} value={r.user_id}>{r.full_name || r.user_id}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : (
+                <div className="rounded-md bg-muted/50 border px-3 py-2 text-sm">
+                  <span className="text-muted-foreground">To: </span>
+                  <span className="font-medium">Administration</span>
+                </div>
+              )}
               <div className="space-y-2">
                 <Label>Subject</Label>
                 <Input value={form.subject} onChange={e => setForm({ ...form, subject: e.target.value })} placeholder="Message subject..." />
@@ -387,7 +419,7 @@ export default function StaffMessages() {
                 <Label>Message</Label>
                 <Textarea value={form.message} onChange={e => setForm({ ...form, message: e.target.value })} placeholder="Your message..." rows={5} />
               </div>
-              <Button onClick={() => sendMutation.mutate()} disabled={!form.recipient_id || !form.subject || !form.message || sendMutation.isPending} className="w-full">
+              <Button onClick={() => sendMutation.mutate()} disabled={((isAdmin || isHR) && !form.recipient_id) || !form.subject || !form.message || sendMutation.isPending} className="w-full">
                 <Send className="h-4 w-4 mr-2" />{sendMutation.isPending ? 'Sending...' : 'Send Message'}
               </Button>
             </div>
