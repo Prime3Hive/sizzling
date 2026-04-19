@@ -1,22 +1,14 @@
 import React from 'react';
-import { Outlet, Link, useNavigate } from 'react-router-dom';
-import { Button } from '@/components/ui/button';
+import { Outlet, useNavigate } from 'react-router-dom';
 import { SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar';
 import { AppSidebar } from '@/components/AppSidebar';
 import { useAuth } from '@/hooks/useAuth';
-import { PlusCircle, Home, BarChart3, Settings, LogOut, Building2 } from 'lucide-react';
 import NotificationBell from '@/components/NotificationBell';
 import { useBirthdayNotifications } from '@/hooks/useBirthdayNotifications';
 
 const Layout = () => {
-  const { user, signOut } = useAuth();
+  const { user } = useAuth();
   useBirthdayNotifications();
-  const navigate = useNavigate();
-
-  const handleSignOut = async () => {
-    await signOut();
-    navigate('/auth');
-  };
 
   if (!user) {
     return <Outlet />;
@@ -26,35 +18,36 @@ const Layout = () => {
     <SidebarProvider>
       <div className="min-h-screen flex w-full bg-gradient-subtle">
         <AppSidebar />
-        
-        <div className="flex-1 flex flex-col">
-          <header className="border-b border-border bg-card/95 backdrop-blur-sm shadow-sm">
-            <div className="flex items-center justify-between py-4 px-4">
-              <div className="flex items-center space-x-4">
-                <SidebarTrigger className="mr-2" />
-                <div className="w-10 h-10 rounded-lg overflow-hidden bg-gradient-primary p-1 shadow-sm">
-                  <img 
-                    src="/favicon.png" 
-                    alt="Sizzling Spices Logo" 
+
+        <div className="flex-1 flex flex-col min-w-0">
+          {/* ── Top header ── */}
+          <header className="sticky top-0 z-30 border-b border-border bg-card/95 backdrop-blur-sm shadow-sm">
+            <div className="flex items-center justify-between h-14 md:h-16 px-3 md:px-5">
+
+              {/* Left: sidebar trigger + logo */}
+              <div className="flex items-center gap-2 md:gap-3 min-w-0">
+                <SidebarTrigger className="shrink-0 text-muted-foreground hover:text-foreground" />
+                <div className="w-8 h-8 md:w-9 md:h-9 rounded-lg overflow-hidden bg-gradient-primary p-0.5 shadow-sm shrink-0">
+                  <img
+                    src="/favicon.png"
+                    alt="Sizzling Spices"
                     className="w-full h-full object-contain rounded-md"
                   />
                 </div>
-                <h1 className="text-xl font-bold bg-gradient-primary bg-clip-text text-transparent">
+                <span className="hidden sm:block text-base font-bold bg-gradient-primary bg-clip-text text-transparent truncate">
                   Sizzling Spices Portal
-                </h1>
+                </span>
               </div>
 
-              <div className="flex items-center gap-2">
+              {/* Right: notifications only — sign-out lives in sidebar footer */}
+              <div className="flex items-center gap-1 shrink-0">
                 <NotificationBell />
-                <Button variant="outline" size="sm" onClick={handleSignOut} className="hover:shadow-sm transition-all duration-200">
-                  <LogOut className="h-4 w-4 mr-2" />
-                  Sign Out
-                </Button>
               </div>
             </div>
           </header>
 
-          <main className="flex-1 container mx-auto py-8 px-4">
+          {/* ── Page content ── */}
+          <main className="flex-1 px-3 py-4 sm:px-5 sm:py-6 md:px-8 md:py-8 w-full max-w-screen-2xl mx-auto">
             <Outlet />
           </main>
         </div>

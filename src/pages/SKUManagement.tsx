@@ -420,9 +420,9 @@ export default function SKUManagement() {
 
   return (
     <div className="container mx-auto p-6 space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-3xl font-bold">Inventory Portal</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold">Inventory Portal</h1>
           <p className="text-muted-foreground">Track stock levels, manage purchases, and monitor usage</p>
         </div>
         {isAdmin && (

@@ -132,8 +132,8 @@ const KPIDashboard = () => {
           <ArrowLeft className="h-5 w-5" />
         </Button>
         <div>
-          <h1 className="text-3xl font-bold text-foreground">Staff Performance KPI</h1>
-          <p className="text-muted-foreground mt-1">Monitor workforce metrics, manage KPI periods, assign tasks, and score performance</p>
+          <h1 className="text-2xl sm:text-3xl font-bold text-foreground">Staff Performance KPI</h1>
+          <p className="text-muted-foreground mt-1 hidden sm:block">Monitor workforce metrics, manage KPI periods, assign tasks, and score performance</p>
         </div>
       </div>
 

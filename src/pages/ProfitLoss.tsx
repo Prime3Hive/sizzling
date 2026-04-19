@@ -244,9 +244,9 @@ const ProfitLoss = () => {
   return (
     <div className="space-y-8">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-3xl font-bold bg-gradient-primary bg-clip-text text-transparent">
+          <h1 className="text-2xl sm:text-3xl font-bold bg-gradient-primary bg-clip-text text-transparent">
             Profit & Loss Dashboard
           </h1>
           <p className="text-muted-foreground mt-1">Financial performance overview — {selectedYear}</p>

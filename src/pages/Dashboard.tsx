@@ -270,10 +270,10 @@ const Dashboard = () => {
     return (
       <div className="space-y-8">
         <div>
-          <h1 className="text-4xl font-bold bg-gradient-primary bg-clip-text text-transparent">
+          <h1 className="text-2xl sm:text-4xl font-bold bg-gradient-primary bg-clip-text text-transparent">
             Welcome{staffProfile?.full_name ? `, ${staffProfile.full_name.split(' ')[0]}` : ' back'}!
           </h1>
-          <p className="text-muted-foreground text-lg mt-2">Here's your staff overview.</p>
+          <p className="text-muted-foreground sm:text-lg mt-1">Here's your staff overview.</p>
         </div>
 
         {/* Profile summary */}
@@ -370,8 +370,8 @@ const Dashboard = () => {
     return (
       <div className="space-y-8">
         <div>
-          <h1 className="text-4xl font-bold bg-gradient-primary bg-clip-text text-transparent">HR Dashboard</h1>
-          <p className="text-muted-foreground text-lg mt-2">Manage staff profiles and personnel records.</p>
+          <h1 className="text-2xl sm:text-4xl font-bold bg-gradient-primary bg-clip-text text-transparent">HR Dashboard</h1>
+          <p className="text-muted-foreground sm:text-lg mt-1">Manage staff profiles and personnel records.</p>
         </div>
         <div className="grid gap-6 md:grid-cols-2">
           <Link to="/staff-profiles">
@@ -403,13 +403,13 @@ const Dashboard = () => {
 
   return (
     <div className="space-y-8">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-4xl font-bold bg-gradient-primary bg-clip-text text-transparent">Dashboard</h1>
-          <p className="text-muted-foreground text-lg mt-2">Welcome back! Here's your business overview.</p>
+          <h1 className="text-2xl sm:text-4xl font-bold bg-gradient-primary bg-clip-text text-transparent">Dashboard</h1>
+          <p className="text-muted-foreground sm:text-lg mt-1">Welcome back! Here's your business overview.</p>
         </div>
         <Link to="/expenses">
-          <Button className="bg-gradient-primary hover:shadow-primary transition-all duration-300">
+          <Button className="bg-gradient-primary hover:shadow-primary transition-all duration-300 shrink-0">
             <PlusCircle className="h-4 w-4 mr-2" />Add Expense
           </Button>
         </Link>

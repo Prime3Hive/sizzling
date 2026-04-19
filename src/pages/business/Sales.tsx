@@ -410,10 +410,10 @@ const Sales = () => {
     return (
       <TooltipProvider>
         <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-3xl font-bold text-foreground">Sales Management</h1>
-          <p className="text-muted-foreground mt-2">
+          <h1 className="text-2xl sm:text-3xl font-bold text-foreground">Sales Management</h1>
+          <p className="text-muted-foreground mt-1">
             Record sales transactions and manage customer orders
           </p>
         </div>

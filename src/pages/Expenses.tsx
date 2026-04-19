@@ -112,9 +112,9 @@ const Expenses = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-3xl font-bold text-foreground">Expenses</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold text-foreground">Expenses</h1>
           <p className="text-muted-foreground">View and manage all registered expenses</p>
         </div>
         <ExpenseFormDialog budgets={budgets} onExpenseAdded={handleExpenseAdded} />
