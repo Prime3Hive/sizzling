@@ -169,6 +169,14 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 </SidebarMenuButton>
               </SidebarMenuItem>
               <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={location.pathname === '/business/inventory-requests'}>
+                  <Link to="/business/inventory-requests">
+                    <Package className="h-4 w-4" />
+                    Inventory Requests
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
                 <SidebarMenuButton asChild isActive={location.pathname === '/staff-portal'}>
                   <Link to="/staff-portal">
                     <MessageSquare className="h-4 w-4" />
@@ -244,11 +252,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                         <SidebarMenuSubItem>
                           <SidebarMenuSubButton asChild isActive={location.pathname === '/business/sku-management'}>
                             <Link to="/business/sku-management"><Boxes className="h-3 w-3" /><span>SKU Management</span></Link>
-                          </SidebarMenuSubButton>
-                        </SidebarMenuSubItem>
-                        <SidebarMenuSubItem>
-                          <SidebarMenuSubButton asChild isActive={location.pathname === '/business/inventory-requests'}>
-                            <Link to="/business/inventory-requests"><span>Inventory Requests</span></Link>
                           </SidebarMenuSubButton>
                         </SidebarMenuSubItem>
                         <SidebarMenuSubItem>
@@ -360,6 +363,13 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 </SidebarMenuButton>
               </SidebarMenuItem>
             )}
+
+            {/* Inventory Requests — all staff can submit */}
+            <SidebarMenuItem>
+              <SidebarMenuButton asChild isActive={location.pathname === '/business/inventory-requests'}>
+                <Link to="/business/inventory-requests"><Package className="h-4 w-4" />Inventory Requests</Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
 
             {/* Staff Portal — collapsible with tab links */}
             <SidebarMenuItem>
