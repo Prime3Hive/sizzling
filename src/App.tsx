@@ -17,10 +17,11 @@ const Reports           = lazy(() => import("./pages/Reports"));
 const BusinessManagement = lazy(() => import("./pages/BusinessManagement"));
 const Inventory         = lazy(() => import("./pages/business/Inventory"));
 const InventoryRequests = lazy(() => import("./pages/business/InventoryRequests"));
-const Sales             = lazy(() => import("./pages/business/Sales"));
 const Payments          = lazy(() => import("./pages/business/Payments"));
 const Analytics         = lazy(() => import("./pages/business/Analytics"));
 const KPIDashboard      = lazy(() => import("./pages/business/KPIDashboard"));
+const Invoices          = lazy(() => import("./pages/business/Invoices"));
+const Finance           = lazy(() => import("./pages/business/Finance"));
 const SKUManagement     = lazy(() => import("./pages/SKUManagement"));
 const UserManagement    = lazy(() => import("./pages/UserManagement"));
 const StaffProfiles     = lazy(() => import("./pages/StaffProfiles"));
@@ -31,6 +32,7 @@ const MyProfile         = lazy(() => import("./pages/MyProfile"));
 const StaffPortal       = lazy(() => import("./pages/StaffPortal"));
 const BirthdayCalendar  = lazy(() => import("./pages/BirthdayCalendar"));
 const MyPayslip         = lazy(() => import("./pages/MyPayslip"));
+const DepartmentPermissions = lazy(() => import("./pages/admin/DepartmentPermissions"));
 const NotFound          = lazy(() => import("./pages/NotFound"));
 
 const PageLoader = () => (
@@ -74,13 +76,27 @@ const AdminOrHRRoute = ({ children }: { children: React.ReactNode }) => {
   return <>{children}</>;
 };
 
-// Business/financial pages: accessible to admin, manager, or HR
+// Business overview page: any user with at least one business module permission
 const BusinessRoute = ({ children }: { children: React.ReactNode }) => {
   const { user, loading: authLoading } = useAuth();
-  const { isAdmin, isManager, isHR, loading: roleLoading } = useRoles();
+  const { isAdmin, isManager, hasPermission, loading: roleLoading } = useRoles();
   if (authLoading || roleLoading) return <PageLoader />;
   if (!user) return <Navigate to="/auth" replace />;
-  if (!isAdmin && !isManager && !isHR) return <Navigate to="/dashboard" replace />;
+  const hasAny = isAdmin || isManager ||
+    ['sales','inventory','invoices','finance','budgets','reports']
+      .some(m => hasPermission(m, 'view'));
+  if (!hasAny) return <Navigate to="/dashboard" replace />;
+  return <>{children}</>;
+};
+
+// Module-level permission gate — uses department_permissions for granular access.
+// Admin and HR always pass (handled inside hasPermission).
+const PermissionRoute = ({ module, children }: { module: string; children: React.ReactNode }) => {
+  const { user, loading: authLoading } = useAuth();
+  const { hasPermission, loading: roleLoading } = useRoles();
+  if (authLoading || roleLoading) return <PageLoader />;
+  if (!user) return <Navigate to="/auth" replace />;
+  if (!hasPermission(module, 'view')) return <Navigate to="/dashboard" replace />;
   return <>{children}</>;
 };
 
@@ -107,19 +123,19 @@ const App = () => (
                   </ProtectedRoute>
                 } />
                 <Route path="expenses" element={
-                  <ProtectedRoute>
+                  <PermissionRoute module="budgets">
                     <Expenses />
-                  </ProtectedRoute>
+                  </PermissionRoute>
                 } />
                 <Route path="budgets" element={
-                  <ProtectedRoute>
+                  <PermissionRoute module="budgets">
                     <Budgets />
-                  </ProtectedRoute>
+                  </PermissionRoute>
                 } />
                 <Route path="reports" element={
-                  <BusinessRoute>
+                  <PermissionRoute module="reports">
                     <Reports />
-                  </BusinessRoute>
+                  </PermissionRoute>
                 } />
                 <Route path="business" element={
                   <BusinessRoute>
@@ -127,9 +143,9 @@ const App = () => (
                   </BusinessRoute>
                 } />
                 <Route path="business/inventory" element={
-                  <BusinessRoute>
+                  <PermissionRoute module="inventory">
                     <Inventory />
-                  </BusinessRoute>
+                  </PermissionRoute>
                 } />
                 <Route path="business/inventory-requests" element={
                   <ProtectedRoute>
@@ -137,33 +153,43 @@ const App = () => (
                   </ProtectedRoute>
                 } />
                 <Route path="business/sku-management" element={
-                  <BusinessRoute>
+                  <PermissionRoute module="inventory">
                     <SKUManagement />
-                  </BusinessRoute>
-                } />
-                <Route path="business/sales" element={
-                  <BusinessRoute>
-                    <Sales />
-                  </BusinessRoute>
+                  </PermissionRoute>
                 } />
                 <Route path="business/payments" element={
-                  <BusinessRoute>
+                  <PermissionRoute module="sales">
                     <Payments />
-                  </BusinessRoute>
+                  </PermissionRoute>
                 } />
                 <Route path="business/analytics" element={
-                  <BusinessRoute>
+                  <PermissionRoute module="inventory">
                     <Analytics />
-                  </BusinessRoute>
+                  </PermissionRoute>
                 } />
                 <Route path="business/kpi" element={
-                  <BusinessRoute>
+                  <AdminOrHRRoute>
                     <KPIDashboard />
-                  </BusinessRoute>
+                  </AdminOrHRRoute>
+                } />
+                <Route path="business/invoices" element={
+                  <PermissionRoute module="invoices">
+                    <Invoices />
+                  </PermissionRoute>
+                } />
+                <Route path="business/finance" element={
+                  <PermissionRoute module="finance">
+                    <Finance />
+                  </PermissionRoute>
                 } />
                 <Route path="users" element={
                   <AdminRoute>
                     <UserManagement />
+                  </AdminRoute>
+                } />
+                <Route path="department-permissions" element={
+                  <AdminRoute>
+                    <DepartmentPermissions />
                   </AdminRoute>
                 } />
                 <Route path="staff-profiles" element={

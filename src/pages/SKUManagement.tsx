@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Package, Search, Filter, Edit2, Trash2, ShoppingCart, TrendingDown, ArrowRightLeft, BarChart3, ClipboardCheck, History, LineChart } from "lucide-react";
+import { Plus, Package, Search, Filter, Edit2, Archive, ArchiveRestore, ShoppingCart, TrendingDown, ArrowRightLeft, BarChart3, ClipboardCheck, History, LineChart } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useRoles } from "@/hooks/useRoles";
@@ -32,6 +32,7 @@ interface SKU {
   reorder_level: number;
   cost_per_unit: number;
   notes?: string;
+  is_archived: boolean;
 }
 
 interface Transaction {
@@ -81,6 +82,7 @@ export default function SKUManagement() {
   const [showConversionDialog, setShowConversionDialog] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
+  const [showArchived, setShowArchived] = useState(false);
   const [editingSKU, setEditingSKU] = useState<SKU | null>(null);
 
   // Initial state for new SKU
@@ -229,20 +231,18 @@ export default function SKUManagement() {
     }
   };
 
-  const handleDelete = async (id: string) => {
+  const handleArchive = async (id: string, archive: boolean) => {
     try {
       const { error } = await supabase
         .from('skus')
-        .delete()
+        .update({ is_archived: archive })
         .eq('id', id);
-
       if (error) throw error;
-
-      toast.success('Item deleted successfully');
+      toast.success(archive ? 'Item archived' : 'Item restored');
       fetchData();
     } catch (error) {
-      console.error('Error deleting SKU:', error);
-      toast.error('Failed to delete item');
+      console.error('Error archiving SKU:', error);
+      toast.error('Failed to update item');
     }
   };
 
@@ -405,7 +405,8 @@ export default function SKUManagement() {
     const matchesSearch = sku.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          sku.category.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesCategory = categoryFilter === "all" || sku.category === categoryFilter;
-    return matchesSearch && matchesCategory;
+    const matchesArchive = showArchived ? sku.is_archived : !sku.is_archived;
+    return matchesSearch && matchesCategory && matchesArchive;
   });
 
   const categories = [...new Set(skus.map(sku => sku.category))];
@@ -554,8 +555,8 @@ export default function SKUManagement() {
         {/* Items Tab */}
         <TabsContent value="items" className="space-y-6">
           {/* Filters */}
-          <div className="flex gap-4 items-center">
-            <div className="relative flex-1 max-w-sm">
+          <div className="flex flex-wrap gap-3 items-center">
+            <div className="relative flex-1 min-w-48 max-w-sm">
               <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="Search items..."
@@ -565,7 +566,7 @@ export default function SKUManagement() {
               />
             </div>
             <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-              <SelectTrigger className="w-48">
+              <SelectTrigger className="w-44">
                 <Filter className="h-4 w-4 mr-2" />
                 <SelectValue placeholder="Category" />
               </SelectTrigger>
@@ -578,12 +579,25 @@ export default function SKUManagement() {
                 ))}
               </SelectContent>
             </Select>
+            <Button
+              variant={showArchived ? "default" : "outline"}
+              size="sm"
+              onClick={() => setShowArchived(v => !v)}
+              className="gap-2"
+            >
+              <Archive className="h-4 w-4" />
+              {showArchived ? "Showing Archived" : "Show Archived"}
+            </Button>
           </div>
 
           <Card>
             <CardHeader>
-              <CardTitle>Inventory Items ({filteredSKUs.length})</CardTitle>
-              <CardDescription>All tracked inventory items</CardDescription>
+              <CardTitle>
+                {showArchived ? "Archived Items" : "Active Items"} ({filteredSKUs.length})
+              </CardTitle>
+              <CardDescription>
+                {showArchived ? "Archived items are excluded from requests and stock calculations." : "All active inventory items available for requests and usage."}
+              </CardDescription>
             </CardHeader>
             <CardContent>
               <Table>
@@ -630,20 +644,34 @@ export default function SKUManagement() {
                         {isAdmin && (
                           <TableCell>
                             <div className="flex items-center gap-2">
-                              <Button 
-                                variant="outline" 
-                                size="sm"
-                                onClick={() => setEditingSKU(sku)}
-                              >
-                                <Edit2 className="h-4 w-4" />
-                              </Button>
-                              <Button 
-                                variant="destructive" 
-                                size="sm"
-                                onClick={() => handleDelete(sku.id)}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
+                              {!sku.is_archived && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => setEditingSKU(sku)}
+                                >
+                                  <Edit2 className="h-4 w-4" />
+                                </Button>
+                              )}
+                              {sku.is_archived ? (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="text-green-700 border-green-300 hover:bg-green-50"
+                                  onClick={() => handleArchive(sku.id, false)}
+                                >
+                                  <ArchiveRestore className="h-4 w-4 mr-1" />Restore
+                                </Button>
+                              ) : (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="text-amber-700 border-amber-300 hover:bg-amber-50"
+                                  onClick={() => handleArchive(sku.id, true)}
+                                >
+                                  <Archive className="h-4 w-4 mr-1" />Archive
+                                </Button>
+                              )}
                             </div>
                           </TableCell>
                         )}

@@ -11,7 +11,7 @@ interface BirthdayProfile {
   full_name: string;
   date_of_birth: string;
   position: string;
-  departments?: { name: string } | null;
+  department_name: string | null;
   passport_path: string | null;
 }
 
@@ -58,11 +58,7 @@ const BirthdayCalendar = () => {
     queryKey: ["birthday-profiles"],
     staleTime: 0,
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("staff_profiles")
-        .select("id, full_name, date_of_birth, position, passport_path, departments(name)")
-        .not("date_of_birth", "is", null)
-        .order("full_name");
+      const { data, error } = await supabase.rpc("get_birthday_profiles");
       if (error) throw error;
       return (data || []) as BirthdayProfile[];
     },

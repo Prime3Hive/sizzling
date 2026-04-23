@@ -350,9 +350,11 @@ const Sales = () => {
       };
 
       // Insert payment record
-      const { error: paymentError } = await supabase
+      const { data: paymentResult, error: paymentError } = await supabase
         .from('payments')
-        .insert([paymentData]);
+        .insert([paymentData])
+        .select('id')
+        .single();
 
       if (paymentError) throw paymentError;
 
@@ -367,10 +369,43 @@ const Sales = () => {
 
       if (saleError) throw saleError;
 
+      // Write finance ledger entries
+      const ledgerRows: any[] = [
+        // Cash received entry
+        {
+          user_id: user.id,
+          entry_date: formData.get('payment_date') as string,
+          entry_type: 'payment_received',
+          source_type: 'payment',
+          source_id: paymentResult.id,
+          description: `Payment for ${paymentSale.sale_number}${paymentSale.customer_name ? ' — ' + paymentSale.customer_name : ''}`,
+          amount: paymentAmount,
+          cost_center: 'Daily Orders',
+          reference_number: paymentSale.sale_number,
+          recorded_by: user.id,
+        },
+      ];
+      // When fully paid, also record the revenue recognition
+      if (newStatus === 'paid') {
+        ledgerRows.push({
+          user_id: user.id,
+          entry_date: paymentSale.sale_date,
+          entry_type: 'revenue',
+          source_type: 'sale',
+          source_id: paymentSale.id,
+          description: `Sale ${paymentSale.sale_number}${paymentSale.customer_name ? ' — ' + paymentSale.customer_name : ''}`,
+          amount: invoicedAmount,
+          cost_center: 'Daily Orders',
+          reference_number: paymentSale.sale_number,
+          recorded_by: user.id,
+        });
+      }
+      await supabase.from('finance_ledger').insert(ledgerRows);
+
       toast({
         title: "Success",
-        description: paymentAmount >= invoicedAmount 
-          ? "Full payment recorded successfully" 
+        description: paymentAmount >= invoicedAmount
+          ? "Full payment recorded successfully"
           : "Partial payment recorded successfully",
       });
       

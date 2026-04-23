@@ -24,6 +24,7 @@ interface MonthlyPL {
   monthIndex: number;
   dailySales: number;
   eventSales: number;
+  invoiceRevenue: number;
   totalSales: number;
   dailyCOGS: number;
   eventCOGS: number;
@@ -81,6 +82,22 @@ const ProfitLoss = () => {
     },
   });
 
+  // Fetch finance ledger invoice revenue for the year
+  const { data: invoiceLedger = [], isLoading: invoiceLedgerLoading } = useQuery({
+    queryKey: ['pl-invoice-ledger', selectedYear],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('finance_ledger')
+        .select('entry_date, amount, invoice_type, cost_center')
+        .eq('entry_type', 'revenue')
+        .eq('source_type', 'invoice')
+        .gte('entry_date', yearStart)
+        .lte('entry_date', yearEnd);
+      if (error) throw error;
+      return data || [];
+    },
+  });
+
   // Fetch paid payroll records for the year
   const { data: payrollRecords = [], isLoading: payrollLoading } = useQuery({
     queryKey: ['pl-payroll', selectedYear],
@@ -96,14 +113,15 @@ const ProfitLoss = () => {
     },
   });
 
-  const isLoading = salesLoading || expensesLoading || payrollLoading;
+  const isLoading = salesLoading || expensesLoading || payrollLoading || invoiceLedgerLoading;
 
-  // Compute monthly P&L (now includes payroll as OpEX)
+  // Compute monthly P&L (includes payroll as OpEX and invoice revenue from ledger)
   const monthlyData: MonthlyPL[] = useMemo(() => {
     return MONTHS.map((month, index) => {
-      const monthSales = sales.filter(s => new Date(s.sale_date).getMonth() === index);
+      const monthSales    = sales.filter(s => new Date(s.sale_date).getMonth() === index);
       const monthExpenses = expenses.filter(e => new Date(e.date).getMonth() === index);
-      const monthPayroll = payrollRecords.filter(p => new Date(p.period_start).getMonth() === index);
+      const monthPayroll  = payrollRecords.filter(p => new Date(p.period_start).getMonth() === index);
+      const monthInvoices = invoiceLedger.filter(l => new Date(l.entry_date).getMonth() === index);
 
       const dailySales = monthSales
         .filter(s => (s.sale_type || 'daily') === 'daily')
@@ -111,7 +129,8 @@ const ProfitLoss = () => {
       const eventSales = monthSales
         .filter(s => s.sale_type === 'event')
         .reduce((sum, s) => sum + Number(s.total_amount), 0);
-      const totalSales = dailySales + eventSales;
+      const invoiceRevenue = monthInvoices.reduce((sum, l) => sum + Number(l.amount), 0);
+      const totalSales = dailySales + eventSales + invoiceRevenue;
 
       const dailyCOGS = monthExpenses
         .filter(e => (e.account_type || 'COGS') === 'COGS' && (e.cost_center || 'Daily Orders') !== 'Event Account')
@@ -144,7 +163,7 @@ const ProfitLoss = () => {
 
       return {
         month, monthIndex: index,
-        dailySales, eventSales, totalSales,
+        dailySales, eventSales, invoiceRevenue, totalSales,
         dailyCOGS, eventCOGS, totalCOGS,
         dailyGrossProfit, eventGrossProfit, totalGrossProfit,
         dailyOpEX, eventOpEX, payrollOpEX, totalOpEX,
@@ -159,6 +178,7 @@ const ProfitLoss = () => {
     return monthlyData.reduce((acc, m) => ({
       dailySales: acc.dailySales + m.dailySales,
       eventSales: acc.eventSales + m.eventSales,
+      invoiceRevenue: acc.invoiceRevenue + m.invoiceRevenue,
       totalSales: acc.totalSales + m.totalSales,
       dailyCOGS: acc.dailyCOGS + m.dailyCOGS,
       eventCOGS: acc.eventCOGS + m.eventCOGS,
@@ -174,7 +194,7 @@ const ProfitLoss = () => {
       eventNetProfit: acc.eventNetProfit + m.eventNetProfit,
       totalNetProfit: acc.totalNetProfit + m.totalNetProfit,
     }), {
-      dailySales: 0, eventSales: 0, totalSales: 0,
+      dailySales: 0, eventSales: 0, invoiceRevenue: 0, totalSales: 0,
       dailyCOGS: 0, eventCOGS: 0, totalCOGS: 0,
       dailyGrossProfit: 0, eventGrossProfit: 0, totalGrossProfit: 0,
       dailyOpEX: 0, eventOpEX: 0, payrollOpEX: 0, totalOpEX: 0,
@@ -196,21 +216,21 @@ const ProfitLoss = () => {
 
   const exportToExcel = () => {
     const headers = [
-      'MONTH', 'DAILY SALES', 'EVENT SALES', 'TOTAL SALES',
+      'MONTH', 'DAILY SALES', 'EVENT SALES', 'INVOICE REVENUE', 'TOTAL SALES',
       'DAILY COGS', 'EVENT COGS', 'TOTAL COGS',
       'GROSS PROFIT', 'EXPENSE OpEX', 'PAYROLL OpEX', 'TOTAL OpEX',
       'NET PROFIT/LOSS', 'MARGIN',
     ];
 
     const rows = monthlyData.map(m => [
-      m.month, m.dailySales, m.eventSales, m.totalSales,
+      m.month, m.dailySales, m.eventSales, m.invoiceRevenue, m.totalSales,
       m.dailyCOGS, m.eventCOGS, m.totalCOGS,
       m.totalGrossProfit, m.dailyOpEX + m.eventOpEX, m.payrollOpEX, m.totalOpEX,
       m.totalNetProfit, m.profitMargin > 0 ? `${m.profitMargin.toFixed(1)}%` : '',
     ]);
 
     rows.push([
-      'TOTAL', totals.dailySales, totals.eventSales, totals.totalSales,
+      'TOTAL', totals.dailySales, totals.eventSales, totals.invoiceRevenue, totals.totalSales,
       totals.dailyCOGS, totals.eventCOGS, totals.totalCOGS,
       totals.totalGrossProfit, totals.dailyOpEX + totals.eventOpEX, totals.payrollOpEX, totals.totalOpEX,
       totals.totalNetProfit, `${totalProfitMargin.toFixed(1)}%`,
@@ -420,6 +440,7 @@ const ProfitLoss = () => {
                     <TableHead className="sticky left-0 bg-muted/30 z-10 min-w-[100px] font-semibold">Month</TableHead>
                     <TableHead className="text-right min-w-[110px]">Daily Sales</TableHead>
                     <TableHead className="text-right min-w-[110px]">Event Sales</TableHead>
+                    <TableHead className="text-right min-w-[110px]">Invoice Rev.</TableHead>
                     <TableHead className="text-right min-w-[120px] font-semibold border-l border-border/30">Total Sales</TableHead>
                     <TableHead className="text-right min-w-[110px]">Daily COGS</TableHead>
                     <TableHead className="text-right min-w-[110px]">Event COGS</TableHead>
@@ -440,6 +461,7 @@ const ProfitLoss = () => {
                         <TableCell className="sticky left-0 bg-background z-10 font-medium">{m.month.substring(0, 3)}</TableCell>
                         <TableCell className="text-right text-sm">{formatNairaCompact(m.dailySales)}</TableCell>
                         <TableCell className="text-right text-sm">{formatNairaCompact(m.eventSales)}</TableCell>
+                        <TableCell className="text-right text-sm">{m.invoiceRevenue > 0 ? formatNairaCompact(m.invoiceRevenue) : <span className="text-muted-foreground">—</span>}</TableCell>
                         <TableCell className="text-right font-semibold text-sm border-l border-border/30">{formatNairaCompact(m.totalSales)}</TableCell>
                         <TableCell className="text-right text-sm">{formatNairaCompact(m.dailyCOGS)}</TableCell>
                         <TableCell className="text-right text-sm">{formatNairaCompact(m.eventCOGS)}</TableCell>
@@ -468,6 +490,7 @@ const ProfitLoss = () => {
                     <TableCell className="sticky left-0 bg-muted/40 z-10 font-bold">TOTAL</TableCell>
                     <TableCell className="text-right">{formatNairaCompact(totals.dailySales)}</TableCell>
                     <TableCell className="text-right">{formatNairaCompact(totals.eventSales)}</TableCell>
+                    <TableCell className="text-right">{formatNairaCompact(totals.invoiceRevenue)}</TableCell>
                     <TableCell className="text-right border-l border-border/30">{formatNairaCompact(totals.totalSales)}</TableCell>
                     <TableCell className="text-right">{formatNairaCompact(totals.dailyCOGS)}</TableCell>
                     <TableCell className="text-right">{formatNairaCompact(totals.eventCOGS)}</TableCell>

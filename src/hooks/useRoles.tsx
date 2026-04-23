@@ -111,8 +111,10 @@ export const RoleProvider = ({ children }: RoleProviderProps) => {
   const permissions = roleData?.permissions ?? [];
 
   const hasPermission = (module: string, action: 'view' | 'create' | 'update' | 'delete'): boolean => {
-    if (userRole?.role === 'admin' && userRole?.role_status === 'approved') return true;
-    if (userRole?.role_status !== 'approved') return false;
+    const approved = userRole?.role_status === 'approved';
+    if (!approved) return false;
+    // Only admin has universal access — all other roles use department permissions
+    if (userRole?.role === 'admin') return true;
 
     const permission = permissions.find(p => p.module_name === module);
     if (!permission) return false;

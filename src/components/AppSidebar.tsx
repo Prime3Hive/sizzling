@@ -3,7 +3,6 @@ import {
   BarChart3,
   Building2,
   Package,
-  ShoppingCart,
   CreditCard,
   Users,
   ChevronRight,
@@ -23,6 +22,10 @@ import {
   FileText,
   LayoutDashboard,
   LogOut,
+  ClipboardList,
+  Landmark,
+  ToggleLeft,
+  ClipboardCheck,
 } from "lucide-react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useRoles } from "@/hooks/useRoles";
@@ -99,10 +102,11 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const isStaff = !isAdmin && !isHR && !isManager && !isEmployee;
 
   const hasBusinessAccess = isAdmin
-    || isHR
     || isManager
     || hasPermission('inventory', 'view')
     || hasPermission('sales', 'view')
+    || hasPermission('invoices', 'view')
+    || hasPermission('finance', 'view')
     || hasPermission('budgets', 'view')
     || hasPermission('reports', 'view');
 
@@ -171,7 +175,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               <SidebarMenuItem>
                 <SidebarMenuButton asChild isActive={location.pathname === '/business/inventory-requests'}>
                   <Link to="/business/inventory-requests">
-                    <Package className="h-4 w-4" />
+                    <ClipboardCheck className="h-4 w-4" />
                     Inventory Requests
                   </Link>
                 </SidebarMenuButton>
@@ -220,7 +224,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             <SidebarGroupLabel>Business</SidebarGroupLabel>
             <SidebarMenu>
 
-              {(isAdmin || isHR || isManager || hasPermission('inventory', 'view') || hasPermission('sales', 'view')) && (
+              {hasBusinessAccess && (
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild isActive={location.pathname === '/business'}>
                     <Link to="/business">
@@ -232,9 +236,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               )}
 
               {/* Inventory */}
-              {(isAdmin || hasPermission('inventory', 'view')) && (
+              {hasPermission('inventory', 'view') && (
                 <SidebarMenuItem>
-                  <Collapsible defaultOpen={location.pathname.startsWith('/business/inventory') || location.pathname === '/business/sku-management' || location.pathname === '/business/analytics' || location.pathname === '/business/kpi'}>
+                  <Collapsible defaultOpen={location.pathname.startsWith('/business/inventory') || location.pathname === '/business/sku-management' || location.pathname === '/business/analytics'}>
                     <CollapsibleTrigger asChild>
                       <SidebarMenuButton className="group/collapsible">
                         <Package className="h-4 w-4" />
@@ -259,35 +263,50 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                             <Link to="/business/analytics"><TrendingUp className="h-3 w-3" /><span>Analytics</span></Link>
                           </SidebarMenuSubButton>
                         </SidebarMenuSubItem>
-                        <SidebarMenuSubItem>
-                          <SidebarMenuSubButton asChild isActive={location.pathname === '/business/kpi'}>
-                            <Link to="/business/kpi"><PieChart className="h-3 w-3" /><span>KPI Dashboard</span></Link>
-                          </SidebarMenuSubButton>
-                        </SidebarMenuSubItem>
                       </SidebarMenuSub>
                     </CollapsibleContent>
                   </Collapsible>
                 </SidebarMenuItem>
               )}
 
-              {/* Sales & Payments */}
-              {(isAdmin || isHR || isManager || hasPermission('sales', 'view')) && (
-                <>
-                  <SidebarMenuItem>
-                    <SidebarMenuButton asChild isActive={location.pathname === '/business/sales'}>
-                      <Link to="/business/sales"><ShoppingCart className="h-4 w-4" />Sales</Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                  <SidebarMenuItem>
-                    <SidebarMenuButton asChild isActive={location.pathname === '/business/payments'}>
-                      <Link to="/business/payments"><CreditCard className="h-4 w-4" />Payments</Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                </>
+              {/* Inventory Requests — all authenticated staff */}
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={location.pathname === '/business/inventory-requests'}>
+                  <Link to="/business/inventory-requests">
+                    <ClipboardCheck className="h-4 w-4" />Inventory Requests
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+
+              {/* Payments */}
+              {hasPermission('sales', 'view') && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={location.pathname === '/business/payments'}>
+                    <Link to="/business/payments"><CreditCard className="h-4 w-4" />Payments</Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+
+              {/* Invoices */}
+              {hasPermission('invoices', 'view') && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={location.pathname === '/business/invoices'}>
+                    <Link to="/business/invoices"><ClipboardList className="h-4 w-4" />Invoices</Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+
+              {/* Finance */}
+              {hasPermission('finance', 'view') && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={location.pathname === '/business/finance'}>
+                    <Link to="/business/finance"><Landmark className="h-4 w-4" />Finance</Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
               )}
 
               {/* Expenses */}
-              {(isAdmin || isHR || isManager || hasPermission('budgets', 'view')) && (
+              {(hasPermission('budgets', 'view') || hasPermission('finance', 'view')) && (
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild isActive={location.pathname === '/expenses'}>
                     <Link to="/expenses"><Receipt className="h-4 w-4" />Expenses</Link>
@@ -296,7 +315,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               )}
 
               {/* Budgets */}
-              {(isAdmin || hasPermission('budgets', 'view')) && (
+              {hasPermission('budgets', 'view') && (
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild isActive={location.pathname === '/budgets'}>
                     <Link to="/budgets"><Target className="h-4 w-4" />Budgets</Link>
@@ -305,7 +324,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               )}
 
               {/* Reports */}
-              {(isAdmin || hasPermission('reports', 'view')) && (
+              {hasPermission('reports', 'view') && (
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild isActive={location.pathname === '/reports'}>
                     <Link to="/reports"><BarChart3 className="h-4 w-4" />Reports</Link>
@@ -348,6 +367,14 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               </SidebarMenuItem>
             )}
 
+            {isAdmin && (
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={location.pathname === '/department-permissions'}>
+                  <Link to="/department-permissions"><ToggleLeft className="h-4 w-4" />Access Control</Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            )}
+
             {(isAdmin || isHR) && (
               <SidebarMenuItem>
                 <SidebarMenuButton asChild isActive={location.pathname === '/staff-profiles'}>
@@ -364,12 +391,14 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               </SidebarMenuItem>
             )}
 
-            {/* Inventory Requests — all staff can submit */}
-            <SidebarMenuItem>
-              <SidebarMenuButton asChild isActive={location.pathname === '/business/inventory-requests'}>
-                <Link to="/business/inventory-requests"><Package className="h-4 w-4" />Inventory Requests</Link>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
+            {/* KPI Dashboard — Admin and HR only */}
+            {(isAdmin || isHR) && (
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={location.pathname === '/business/kpi'}>
+                  <Link to="/business/kpi"><PieChart className="h-4 w-4" />KPI Dashboard</Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            )}
 
             {/* Staff Portal — collapsible with tab links */}
             <SidebarMenuItem>

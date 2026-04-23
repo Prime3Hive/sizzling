@@ -42,6 +42,7 @@ interface StaffProfile {
 interface StaffProfilePrintableProps {
   profile: StaffProfile;
   passportUrl: string | null;
+  isAdmin?: boolean;
 }
 
 const positionLabels: Record<string, string> = {
@@ -104,7 +105,7 @@ const calculateTenure = (employmentDate: string | null, yearOfJoining: number | 
   return `${years} Year${years > 1 ? 's' : ''}, ${months} Month${months > 1 ? 's' : ''}`;
 };
 
-const StaffProfilePrintable = ({ profile, passportUrl }: StaffProfilePrintableProps) => {
+const StaffProfilePrintable = ({ profile, passportUrl, isAdmin = false }: StaffProfilePrintableProps) => {
   const tenure = calculateTenure(profile.employment_date, profile.year_of_joining);
   const documentNumber = `SS-${new Date().getFullYear()}-${profile.id.slice(0, 3).toUpperCase()}`;
 
@@ -224,7 +225,7 @@ const StaffProfilePrintable = ({ profile, passportUrl }: StaffProfilePrintablePr
           <div style={{ display: "flex", flexDirection: "column", gap: "8px", flexShrink: 0 }}>
             <StatBox label="Gender" value={genderLabels[profile.gender || ''] || '—'} />
             <StatBox label="Marital" value={maritalStatusLabels[profile.marital_status || ''] || '—'} />
-            {profile.salary && <StatBox label="Salary" value={formatNairaCompact(profile.salary)} accent />}
+            {isAdmin && profile.salary && <StatBox label="Salary" value={formatNairaCompact(profile.salary)} accent />}
           </div>
         </div>
 
@@ -252,7 +253,7 @@ const StaffProfilePrintable = ({ profile, passportUrl }: StaffProfilePrintablePr
             <Row label="LGA" value={profile.lga || '—'} />
           </Section>
 
-          {/* Bank Details */}
+          {/* Bank Details — visible to Admin and HR */}
           <Section title="Bank Details">
             <Row label="Bank Name" value={profile.bank_name || '—'} />
             <Row label="Account Number" value={profile.account_number || '—'} />

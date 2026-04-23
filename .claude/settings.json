@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "supabase": {
+      "type": "http",
+      "url": "https://mcp.supabase.com",
+      "auth": {
+        "type": "bearer",
+        "token": "sbp_5aeff96e3a186be79a83214ad02fb1dcc32fe930" 
+      }
+    }
+  }
+}

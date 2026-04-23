@@ -1,0 +1,41 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run:*)",
+      "Bash(wc -l *.tsx)",
+      "Bash(wc -l *.js)",
+      "Bash(node -e \"const p = require\\('./package.json'\\); console.log\\(JSON.stringify\\(p.dependencies, null, 2\\)\\)\")",
+      "Bash(sed -n '295,305p' src/pages/business/Inventory.tsx)",
+      "Bash(sed -n '420,430p' src/pages/SKUManagement.tsx)",
+      "Bash(sed -n '246,254p' src/pages/ProfitLoss.tsx)",
+      "Bash(sed -n '50,57p' src/pages/BusinessManagement.tsx)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(npx tsc *)",
+      "WebSearch",
+      "WebFetch(domain:supabase.com)",
+      "Bash(npx supabase *)",
+      "Bash(supabase --version)",
+      "Bash(curl -s \"https://api.supabase.com/v1/projects\" -H \"Authorization: Bearer sbp_1c311bcdfa159b982330f266f06b081dee7d3628\")",
+      "Bash(python3 -c \"import sys,json; projects=json.load\\(sys.stdin\\); [print\\(p['id'], p['name']\\) for p in projects]\")",
+      "Bash(curl -s -X POST https://api.supabase.com/v1/projects/kqnqzyklwfrhtywimsjm/database/query -H 'Authorization: Bearer sbp_1c311bcdfa159b982330f266f06b081dee7d3628' -H 'Content-Type: application/json' -d '{\"query\": \"SELECT current_database\\(\\), version\\(\\);\"}')",
+      "Bash(curl -s \"https://api.supabase.com/v1/projects\" -H \"Authorization: Bearer sbp_5aeff96e3a186be79a83214ad02fb1dcc32fe930\")",
+      "Bash(curl -s -X POST https://api.supabase.com/v1/projects/kqnqzyklwfrhtywimsjm/database/query -H 'Authorization: Bearer sbp_5aeff96e3a186be79a83214ad02fb1dcc32fe930' -H 'Content-Type: application/json' -d '{\"query\": \"SELECT routine_name, routine_type FROM information_schema.routines WHERE routine_schema = '\\\\''public'\\\\'' AND routine_name = '\\\\''generate_invoice_number'\\\\'';\"}')",
+      "Bash(curl -s -X POST https://api.supabase.com/v1/projects/kqnqzyklwfrhtywimsjm/database/query -H 'Authorization: Bearer sbp_5aeff96e3a186be79a83214ad02fb1dcc32fe930' -H 'Content-Type: application/json' -d '{\"query\": \"SELECT table_name FROM information_schema.tables WHERE table_schema = '\\\\''public'\\\\'' AND table_name IN \\('\\\\''invoices'\\\\'', '\\\\''invoice_items'\\\\'', '\\\\''invoice_sequences'\\\\''\\) ORDER BY table_name;\"}')",
+      "Bash(curl -s -X POST https://api.supabase.com/v1/projects/kqnqzyklwfrhtywimsjm/database/query -H 'Authorization: Bearer sbp_5aeff96e3a186be79a83214ad02fb1dcc32fe930' -H 'Content-Type: application/json' -d '{\"query\": \"SELECT column_name, data_type, is_nullable, column_default FROM information_schema.columns WHERE table_schema = '\\\\''public'\\\\'' AND table_name = '\\\\''invoices'\\\\'' ORDER BY ordinal_position;\"}')",
+      "Bash(curl -s -X POST https://api.supabase.com/v1/projects/kqnqzyklwfrhtywimsjm/database/query -H 'Authorization: Bearer sbp_5aeff96e3a186be79a83214ad02fb1dcc32fe930' -H 'Content-Type: application/json' -d '{\"query\": \"SELECT column_name FROM information_schema.columns WHERE table_schema = '\\\\''public'\\\\'' AND table_name = '\\\\''invoice_items'\\\\'' ORDER BY ordinal_position;\"}')",
+      "Bash(curl -s -X POST https://api.supabase.com/v1/projects/kqnqzyklwfrhtywimsjm/database/query -H 'Authorization: Bearer sbp_5aeff96e3a186be79a83214ad02fb1dcc32fe930' -H 'Content-Type: application/json' -d '{\"query\": \"SELECT grantee, privilege_type FROM information_schema.routine_privileges WHERE routine_schema = '\\\\''public'\\\\'' AND routine_name = '\\\\''generate_invoice_number'\\\\'';\"}')",
+      "Bash(curl -s -X POST https://api.supabase.com/v1/projects/kqnqzyklwfrhtywimsjm/database/query -H 'Authorization: Bearer sbp_5aeff96e3a186be79a83214ad02fb1dcc32fe930' -H 'Content-Type: application/json' -d '{\"query\": \"SELECT tablename, rowsecurity FROM pg_tables WHERE schemaname = '\\\\''public'\\\\'' AND tablename IN \\('\\\\''invoices'\\\\'', '\\\\''invoice_items'\\\\'', '\\\\''invoice_sequences'\\\\''\\);\"}')",
+      "Bash(curl -s -X POST https://api.supabase.com/v1/projects/kqnqzyklwfrhtywimsjm/database/query -H 'Authorization: Bearer sbp_5aeff96e3a186be79a83214ad02fb1dcc32fe930' -H 'Content-Type: application/json' -d '{\"query\": \"SELECT schemaname, tablename, policyname, cmd FROM pg_policies WHERE tablename IN \\('\\\\''invoices'\\\\'', '\\\\''invoice_items'\\\\'', '\\\\''invoice_sequences'\\\\''\\) ORDER BY tablename, policyname;\"}')",
+      "Bash(curl -s -X POST https://api.supabase.com/v1/projects/kqnqzyklwfrhtywimsjm/database/query -H 'Authorization: Bearer sbp_5aeff96e3a186be79a83214ad02fb1dcc32fe930' -H 'Content-Type: application/json' -d '{\"query\": \"SELECT trigger_name, event_manipulation, action_timing FROM information_schema.triggers WHERE event_object_table = '\\\\''invoices'\\\\'';\"}')",
+      "Bash(curl -s -X POST https://api.supabase.com/v1/projects/kqnqzyklwfrhtywimsjm/database/query -H 'Authorization: Bearer sbp_5aeff96e3a186be79a83214ad02fb1dcc32fe930' -H 'Content-Type: application/json' -d '{\"query\": \"SELECT public.generate_invoice_number\\('\\\\''QUO'\\\\''\\) AS test_quotation, public.generate_invoice_number\\('\\\\''INV'\\\\''\\) AS test_invoice;\"}')",
+      "Bash(curl -s -X POST https://api.supabase.com/v1/projects/kqnqzyklwfrhtywimsjm/database/query -H 'Authorization: Bearer sbp_5aeff96e3a186be79a83214ad02fb1dcc32fe930' -H 'Content-Type: application/json' -d '{\"query\": \"SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = '\\\\''public'\\\\'' AND table_name = '\\\\''profiles'\\\\'' ORDER BY ordinal_position;\"}')",
+      "Bash(curl -s -X POST https://api.supabase.com/v1/projects/kqnqzyklwfrhtywimsjm/database/query -H 'Authorization: Bearer sbp_5aeff96e3a186be79a83214ad02fb1dcc32fe930' -H 'Content-Type: application/json' -d '{\"query\": \"ALTER TABLE public.invoices ADD COLUMN IF NOT EXISTS updated_by UUID REFERENCES auth.users\\(id\\);\"}')",
+      "Bash(xargs grep *)",
+      "Bash(curl -s -X POST https://api.supabase.com/v1/projects/kqnqzyklwfrhtywimsjm/database/query -H 'Authorization: Bearer sbp_5aeff96e3a186be79a83214ad02fb1dcc32fe930' -H 'Content-Type: application/json' -d '{\"query\": \"CREATE TABLE IF NOT EXISTS public.finance_ledger \\(id UUID PRIMARY KEY DEFAULT gen_random_uuid\\(\\), user_id UUID NOT NULL REFERENCES auth.users\\(id\\), entry_date DATE NOT NULL, entry_type TEXT NOT NULL CHECK \\(entry_type IN \\('\\\\''revenue'\\\\'', '\\\\''payment_received'\\\\''\\)\\), source_type TEXT NOT NULL CHECK \\(source_type IN \\('\\\\''sale'\\\\'', '\\\\''invoice'\\\\'', '\\\\''payment'\\\\''\\)\\), source_id UUID NOT NULL, description TEXT NOT NULL, amount NUMERIC\\(12,2\\) NOT NULL, cost_center TEXT, invoice_type TEXT, reference_number TEXT, recorded_by UUID REFERENCES auth.users\\(id\\), created_at TIMESTAMPTZ NOT NULL DEFAULT NOW\\(\\)\\); ALTER TABLE public.finance_ledger ENABLE ROW LEVEL SECURITY; CREATE POLICY IF NOT EXISTS finance_ledger_insert ON public.finance_ledger FOR INSERT TO authenticated WITH CHECK \\(auth.uid\\(\\) = user_id\\); CREATE POLICY IF NOT EXISTS finance_ledger_select ON public.finance_ledger FOR SELECT TO authenticated USING \\(true\\); GRANT SELECT, INSERT ON public.finance_ledger TO authenticated;\"}')",
+      "Bash(curl -s -X POST https://api.supabase.com/v1/projects/kqnqzyklwfrhtywimsjm/database/query -H 'Authorization: Bearer sbp_5aeff96e3a186be79a83214ad02fb1dcc32fe930' -H 'Content-Type: application/json' --data-binary '{\"query\": \"ALTER TABLE public.finance_ledger ENABLE ROW LEVEL SECURITY\"}')",
+      "Bash(curl -s -X POST https://api.supabase.com/v1/projects/kqnqzyklwfrhtywimsjm/database/query -H 'Authorization: Bearer sbp_5aeff96e3a186be79a83214ad02fb1dcc32fe930' -H 'Content-Type: application/json' --data-binary '{\"query\": \"CREATE POLICY \\\\\"finance_ledger_insert\\\\\" ON public.finance_ledger FOR INSERT TO authenticated WITH CHECK \\(auth.uid\\(\\) = user_id\\); CREATE POLICY \\\\\"finance_ledger_select\\\\\" ON public.finance_ledger FOR SELECT TO authenticated USING \\(true\\); GRANT SELECT, INSERT ON public.finance_ledger TO authenticated\"}')"
+    ]
+  }
+}

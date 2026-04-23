@@ -15,7 +15,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import StaffLeaveRequests from '@/components/staff-portal/StaffLeaveRequests';
 import StaffComplaints from '@/components/staff-portal/StaffComplaints';
 import StaffMessages from '@/components/staff-portal/StaffMessages';
-import { formatNairaCompact } from '@/lib/currency';
 
 const genderOptions = [
   { value: 'male', label: 'Male' },
@@ -223,11 +222,10 @@ const MyProfile = () => {
       <Card>
         <CardHeader><CardTitle>Employment Details</CardTitle></CardHeader>
         <CardContent>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
             <div><span className="text-muted-foreground">Name</span><p className="font-medium">{profile.full_name}</p></div>
             <div><span className="text-muted-foreground">Position</span><p className="font-medium">{positionLabel}</p></div>
             <div><span className="text-muted-foreground">Department</span><p className="font-medium">{profile.departments?.name || 'N/A'}</p></div>
-            <div><span className="text-muted-foreground">Salary</span><p className="font-medium">{profile.salary ? formatNairaCompact(profile.salary) : 'N/A'}</p></div>
           </div>
         </CardContent>
       </Card>
@@ -298,18 +296,7 @@ const MyProfile = () => {
         </CardContent>
       </Card>
 
-      {/* Bank details - read only */}
-      <Card>
-        <CardHeader><CardTitle>Bank Details</CardTitle></CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-3 gap-4 text-sm">
-            <div><span className="text-muted-foreground">Bank Name</span><p className="font-medium">{profile.bank_name || 'N/A'}</p></div>
-            <div><span className="text-muted-foreground">Account Number</span><p className="font-medium">{profile.account_number || 'N/A'}</p></div>
-            <div><span className="text-muted-foreground">Account Name</span><p className="font-medium">{profile.account_name || 'N/A'}</p></div>
-          </div>
-          <p className="text-xs text-muted-foreground mt-2">Contact admin to update bank details.</p>
-        </CardContent>
-      </Card>
+      {/* Bank details and salary are managed by Admin only */}
 
       <div className="flex justify-end">
         <Button onClick={handleSave} disabled={saving}>

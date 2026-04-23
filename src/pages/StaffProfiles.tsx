@@ -490,6 +490,7 @@ const StaffProfiles = () => {
             <StaffProfilePrintable
               profile={exportingProfile}
               passportUrl={getPassportUrl(exportingProfile.passport_path)}
+              isAdmin={isAdmin}
             />
           </div>
         </div>
