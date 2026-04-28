@@ -512,7 +512,7 @@ const StaffProfiles = () => {
           setIsDialogOpen(open);
           if (!open) resetForm();
         }}>
-          {isAdmin && (
+          {(isAdmin || isHR) && (
           <DialogTrigger asChild>
             <Button>
               <Plus className="mr-2 h-4 w-4" />
@@ -971,7 +971,7 @@ const StaffProfiles = () => {
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-1">
-                  {isAdmin && (
+                  {(isAdmin || isHR) && (
                   <Button size="icon" variant="ghost" onClick={() => handleEdit(profile)} title="Edit">
                     <Pencil className="h-4 w-4" />
                   </Button>
