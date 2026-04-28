@@ -12,7 +12,7 @@ import {
   Eye, EyeOff, Mail, Lock, User, ChevronLeft, CheckCircle2,
 } from 'lucide-react';
 
-type AuthMode = 'signin' | 'signup' | 'reset';
+type AuthMode = 'signin' | 'signup' | 'reset' | 'verify';
 
 const TURNSTILE_SITE_KEY =
   import.meta.env.VITE_CLOUDFLARE_TURNSTILE_SITE_KEY || '1x00000000000000000000AA';
@@ -21,6 +21,7 @@ const Auth = () => {
   const [mode, setMode] = useState<AuthMode>('signin');
   const [isLoading, setIsLoading] = useState(false);
   const [resetSent, setResetSent] = useState(false);
+  const [resendLoading, setResendLoading] = useState(false);
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -42,9 +43,9 @@ const Auth = () => {
     if (user) navigate('/');
   }, [user, navigate]);
 
-  const switchMode = (m: AuthMode) => {
+  const switchMode = (m: AuthMode, keepEmail = false) => {
     setMode(m);
-    setEmail('');
+    if (!keepEmail) setEmail('');
     setPassword('');
     setConfirmPassword('');
     setFullName('');
@@ -63,9 +64,13 @@ const Auth = () => {
     try {
       const { error } = await signIn(email, password);
       if (error) {
-        toast({ title: 'Sign in failed', description: error.message, variant: 'destructive' });
-        signInRef.current?.reset();
-        setSignInToken('');
+        if (error.message?.toLowerCase().includes('email not confirmed')) {
+          switchMode('verify', true);
+        } else {
+          toast({ title: 'Sign in failed', description: error.message, variant: 'destructive' });
+          signInRef.current?.reset();
+          setSignInToken('');
+        }
       }
     } catch {
       toast({ title: 'Authentication error', description: 'An unexpected error occurred.', variant: 'destructive' });
@@ -98,8 +103,7 @@ const Auth = () => {
         signUpRef.current?.reset();
         setSignUpToken('');
       } else {
-        toast({ title: 'Account created!', description: 'Check your email for a verification link to activate your account.' });
-        switchMode('signin');
+        switchMode('verify', true);
       }
     } catch {
       toast({ title: 'Registration error', description: 'An unexpected error occurred.', variant: 'destructive' });
@@ -121,6 +125,17 @@ const Auth = () => {
       toast({ title: 'Reset failed', description: error.message, variant: 'destructive' });
     } else {
       setResetSent(true);
+    }
+  };
+
+  const handleResendVerification = async () => {
+    setResendLoading(true);
+    const { error } = await supabase.auth.resend({ type: 'signup', email });
+    setResendLoading(false);
+    if (error) {
+      toast({ title: 'Could not resend', description: error.message, variant: 'destructive' });
+    } else {
+      toast({ title: 'Email resent', description: 'A new verification link has been sent.' });
     }
   };
 
@@ -374,6 +389,47 @@ const Auth = () => {
                   Sign in
                 </button>
               </p>
+            </div>
+          )}
+
+          {/* ── VERIFY EMAIL ── */}
+          {mode === 'verify' && (
+            <div className="space-y-6">
+              <div className="text-center space-y-5 py-4">
+                <div className="mx-auto w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center">
+                  <Mail className="h-8 w-8 text-primary" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold text-foreground">Check your email</h2>
+                  <p className="text-muted-foreground mt-2 text-sm leading-relaxed">
+                    We sent a verification link to{' '}
+                    <span className="font-semibold text-foreground">{email}</span>.
+                    Click the link in that email to activate your account.
+                  </p>
+                </div>
+
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-left text-xs text-amber-800 space-y-1">
+                  <p className="font-semibold">Didn't receive it?</p>
+                  <p>Check your spam or junk folder. The link expires after 24 hours.</p>
+                </div>
+
+                <Button
+                  className="w-full h-11"
+                  onClick={handleResendVerification}
+                  disabled={resendLoading}
+                  variant="outline"
+                >
+                  {resendLoading ? 'Sending…' : 'Resend verification email'}
+                </Button>
+
+                <button
+                  type="button"
+                  onClick={() => switchMode('signin')}
+                  className="text-sm text-primary font-medium hover:underline"
+                >
+                  Back to Sign In
+                </button>
+              </div>
             </div>
           )}
 
