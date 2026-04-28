@@ -14,6 +14,15 @@ import {
 
 type AuthMode = 'signin' | 'signup' | 'reset' | 'verify';
 
+const isRateLimit = (msg: string) =>
+  /rate.limit|too many|over_email_send_rate_limit|security purposes.*after/i.test(msg);
+
+const rateLimitMessage = (msg: string) => {
+  const seconds = msg.match(/after (\d+) second/i)?.[1];
+  if (seconds) return `Too many attempts. Please wait ${Math.ceil(Number(seconds) / 60)} minute(s) before trying again.`;
+  return 'Too many email requests. Please wait a few minutes before trying again.';
+};
+
 const TURNSTILE_SITE_KEY =
   import.meta.env.VITE_CLOUDFLARE_TURNSTILE_SITE_KEY || '1x00000000000000000000AA';
 
@@ -99,7 +108,12 @@ const Auth = () => {
     try {
       const { error } = await signUp(email, password, fullName);
       if (error) {
-        toast({ title: 'Account creation failed', description: error.message, variant: 'destructive' });
+        const msg = error.message ?? '';
+        toast({
+          title: isRateLimit(msg) ? 'Too many requests' : 'Account creation failed',
+          description: isRateLimit(msg) ? rateLimitMessage(msg) : msg,
+          variant: 'destructive',
+        });
         signUpRef.current?.reset();
         setSignUpToken('');
       } else {
@@ -133,7 +147,12 @@ const Auth = () => {
     const { error } = await supabase.auth.resend({ type: 'signup', email });
     setResendLoading(false);
     if (error) {
-      toast({ title: 'Could not resend', description: error.message, variant: 'destructive' });
+      const msg = error.message ?? '';
+      toast({
+        title: isRateLimit(msg) ? 'Too many requests' : 'Could not resend',
+        description: isRateLimit(msg) ? rateLimitMessage(msg) : msg,
+        variant: 'destructive',
+      });
     } else {
       toast({ title: 'Email resent', description: 'A new verification link has been sent.' });
     }
