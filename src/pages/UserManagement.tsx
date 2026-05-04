@@ -306,7 +306,7 @@ export default function UserManagement() {
                   </TableCell>
                   <TableCell>
                     <Badge variant={u.role === 'admin' ? 'default' : u.role === 'manager' || u.role === 'hr' ? 'secondary' : 'outline'}>
-                      {u.role}
+                      {u.role === 'hr' ? 'HR' : u.role.charAt(0).toUpperCase() + u.role.slice(1)}
                     </Badge>
                   </TableCell>
                   <TableCell>
