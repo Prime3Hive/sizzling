@@ -13,8 +13,8 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, Send } from 'lucide-react';
-import { format } from 'date-fns';
+import { Plus, Send, Eye, CalendarDays, User, Clock, CheckCircle2, XCircle } from 'lucide-react';
+import { format, differenceInCalendarDays, parseISO } from 'date-fns';
 
 const leaveTypes = [
   { value: 'casual', label: 'Casual Leave' },
@@ -37,7 +37,7 @@ export default function StaffLeaveRequests() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
-  const [responseOpen, setResponseOpen] = useState<string | null>(null);
+  const [viewRequest, setViewRequest] = useState<any | null>(null);
   const [responseText, setResponseText] = useState('');
   const [responseStatus, setResponseStatus] = useState('approved');
   const [form, setForm] = useState({ leave_type: 'casual', start_date: '', end_date: '', reason: '' });
@@ -82,7 +82,7 @@ export default function StaffLeaveRequests() {
     queryFn: async () => {
       let q = supabase
         .from('staff_leave_requests')
-        .select('*')
+        .select('*, staff_profiles(full_name, position)')
         .order('created_at', { ascending: false });
       if (!canManage) q = q.eq('user_id', user!.id);
       const { data, error } = await q;
@@ -266,72 +266,174 @@ export default function StaffLeaveRequests() {
         </CardContent>
       </Card>
 
-      {/* Staff Requests: Admin can view + respond; HR can view only */}
+      {/* Staff Requests: Admin/HR view — every row is clickable */}
       {(isAdmin || isHR) && otherRequests.length > 0 && (
         <Card>
           <CardContent className="p-0">
-            <div className="px-4 py-3 border-b bg-muted/30">
+            <div className="px-4 py-3 border-b bg-muted/30 flex items-center justify-between">
               <p className="text-sm font-medium text-muted-foreground">Staff Requests</p>
+              <p className="text-xs text-muted-foreground">Click a row to view details</p>
             </div>
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead>Staff</TableHead>
                   <TableHead>Type</TableHead>
-                  <TableHead>Start</TableHead>
-                  <TableHead>End</TableHead>
-                  <TableHead>Reason</TableHead>
+                  <TableHead>Period</TableHead>
+                  <TableHead>Duration</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Response</TableHead>
-                  <TableHead>Actions</TableHead>
+                  <TableHead className="w-10"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {otherRequests.map(r => (
-                  <TableRow key={r.id}>
-                    <TableCell className="font-medium capitalize">{(r.leave_type as string).replace(/_/g, ' ')}</TableCell>
-                    <TableCell>{format(new Date(r.start_date), 'MMM d, yyyy')}</TableCell>
-                    <TableCell>{format(new Date(r.end_date), 'MMM d, yyyy')}</TableCell>
-                    <TableCell className="max-w-[200px] truncate">{r.reason || '—'}</TableCell>
-                    <TableCell><Badge variant="outline" className={statusColors[r.status] || ''}>{r.status}</Badge></TableCell>
-                    <TableCell className="max-w-[200px] truncate">{r.admin_response || '—'}</TableCell>
-                    <TableCell>
-                      {r.status === 'pending' && canManage && (
-                        <Dialog open={responseOpen === r.id} onOpenChange={v => { setResponseOpen(v ? r.id : null); setResponseText(''); }}>
-                          <DialogTrigger asChild>
-                            <Button size="sm" variant="outline">Respond</Button>
-                          </DialogTrigger>
-                          <DialogContent>
-                            <DialogHeader><DialogTitle>Respond to Leave Request</DialogTitle></DialogHeader>
-                            <div className="space-y-4">
-                              <div className="space-y-2">
-                                <Label>Decision</Label>
-                                <Select value={responseStatus} onValueChange={setResponseStatus}>
-                                  <SelectTrigger><SelectValue /></SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="approved">Approve</SelectItem>
-                                    <SelectItem value="rejected">Reject</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                              </div>
-                              <div className="space-y-2">
-                                <Label>Response Message</Label>
-                                <Textarea value={responseText} onChange={e => setResponseText(e.target.value)} placeholder="Optional message..." rows={3} />
-                              </div>
-                              <Button onClick={() => respondMutation.mutate({ id: r.id, status: responseStatus, response: responseText })} disabled={respondMutation.isPending} className="w-full">
-                                {respondMutation.isPending ? 'Sending...' : 'Send Response'}
-                              </Button>
-                            </div>
-                          </DialogContent>
-                        </Dialog>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {otherRequests.map(r => {
+                  const days = differenceInCalendarDays(parseISO(r.end_date), parseISO(r.start_date)) + 1;
+                  return (
+                    <TableRow
+                      key={r.id}
+                      className="cursor-pointer hover:bg-muted/40"
+                      onClick={() => { setViewRequest(r); setResponseText(''); setResponseStatus('approved'); }}
+                    >
+                      <TableCell className="font-medium">
+                        {(r.staff_profiles as any)?.full_name ?? 'Unknown'}
+                      </TableCell>
+                      <TableCell className="capitalize">{(r.leave_type as string).replace(/_/g, ' ')}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                        {format(parseISO(r.start_date), 'MMM d')} – {format(parseISO(r.end_date), 'MMM d, yyyy')}
+                      </TableCell>
+                      <TableCell className="text-sm">{days} day{days !== 1 ? 's' : ''}</TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className={statusColors[r.status] || ''}>{r.status}</Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Eye className="h-4 w-4 text-muted-foreground" />
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </CardContent>
         </Card>
       )}
+
+      {/* Leave Request Detail Dialog */}
+      <Dialog open={!!viewRequest} onOpenChange={open => { if (!open) setViewRequest(null); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <CalendarDays className="h-5 w-5 text-primary" />
+              Leave Request Details
+            </DialogTitle>
+          </DialogHeader>
+
+          {viewRequest && (() => {
+            const r = viewRequest;
+            const days = differenceInCalendarDays(parseISO(r.end_date), parseISO(r.start_date)) + 1;
+            const staffName = (r.staff_profiles as any)?.full_name ?? 'Unknown';
+            const staffPosition = (r.staff_profiles as any)?.position;
+            return (
+              <div className="space-y-4">
+                {/* Staff info */}
+                <div className="flex items-center gap-3 rounded-lg bg-muted/40 border px-4 py-3">
+                  <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+                    <User className="h-4 w-4 text-primary" />
+                  </div>
+                  <div>
+                    <p className="font-semibold text-sm">{staffName}</p>
+                    {staffPosition && <p className="text-xs text-muted-foreground capitalize">{staffPosition.replace(/_/g, ' ')}</p>}
+                  </div>
+                  <Badge variant="outline" className={`ml-auto ${statusColors[r.status] || ''}`}>{r.status}</Badge>
+                </div>
+
+                {/* Details grid */}
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div className="space-y-1">
+                    <p className="text-xs text-muted-foreground uppercase tracking-wide">Leave Type</p>
+                    <p className="font-medium capitalize">{(r.leave_type as string).replace(/_/g, ' ')}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-xs text-muted-foreground uppercase tracking-wide">Duration</p>
+                    <p className="font-medium">{days} day{days !== 1 ? 's' : ''}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-xs text-muted-foreground uppercase tracking-wide">Start Date</p>
+                    <p className="font-medium">{format(parseISO(r.start_date), 'EEEE, MMM d yyyy')}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-xs text-muted-foreground uppercase tracking-wide">End Date</p>
+                    <p className="font-medium">{format(parseISO(r.end_date), 'EEEE, MMM d yyyy')}</p>
+                  </div>
+                  <div className="space-y-1 col-span-2">
+                    <p className="text-xs text-muted-foreground uppercase tracking-wide">Submitted</p>
+                    <p className="font-medium">{format(parseISO(r.created_at), 'MMM d, yyyy – h:mm a')}</p>
+                  </div>
+                </div>
+
+                {/* Reason */}
+                <div className="space-y-1">
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Reason</p>
+                  <p className="text-sm rounded-md bg-muted/40 border px-3 py-2 min-h-[48px] whitespace-pre-wrap">
+                    {r.reason || <span className="text-muted-foreground italic">No reason provided</span>}
+                  </p>
+                </div>
+
+                {/* Admin response (if already actioned) */}
+                {r.admin_response && (
+                  <div className="space-y-1">
+                    <p className="text-xs text-muted-foreground uppercase tracking-wide">Admin Response</p>
+                    <p className="text-sm rounded-md bg-muted/40 border px-3 py-2 whitespace-pre-wrap">{r.admin_response}</p>
+                    {r.responded_at && (
+                      <p className="text-xs text-muted-foreground">
+                        Responded {format(parseISO(r.responded_at), 'MMM d, yyyy – h:mm a')}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* Respond section — admin only, pending requests */}
+                {r.status === 'pending' && canManage && (
+                  <div className="space-y-3 border-t pt-4">
+                    <p className="text-sm font-medium">Respond to this request</p>
+                    <div className="space-y-2">
+                      <Label>Decision</Label>
+                      <Select value={responseStatus} onValueChange={setResponseStatus}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="approved">Approve</SelectItem>
+                          <SelectItem value="rejected">Reject</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Message (optional)</Label>
+                      <Textarea
+                        value={responseText}
+                        onChange={e => setResponseText(e.target.value)}
+                        placeholder="Add a note to the staff member..."
+                        rows={3}
+                      />
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        className="flex-1 gap-2"
+                        variant={responseStatus === 'approved' ? 'default' : 'destructive'}
+                        onClick={() => respondMutation.mutate({ id: r.id, status: responseStatus, response: responseText })}
+                        disabled={respondMutation.isPending}
+                      >
+                        {responseStatus === 'approved'
+                          ? <><CheckCircle2 className="h-4 w-4" />{respondMutation.isPending ? 'Approving…' : 'Approve'}</>
+                          : <><XCircle className="h-4 w-4" />{respondMutation.isPending ? 'Rejecting…' : 'Reject'}</>
+                        }
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
