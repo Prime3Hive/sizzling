@@ -157,7 +157,7 @@ export default function StaffLeaveRequests() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['leave-requests'] });
-      setResponseOpen(null);
+      setViewRequest(null);
       setResponseText('');
       toast({ title: 'Response sent' });
     },

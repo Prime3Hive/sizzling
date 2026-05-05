@@ -2,7 +2,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ArrowLeft, Users, CalendarCheck, AlertTriangle, Clock, TrendingUp, Award, Building2, UserCheck, LayoutDashboard, CalendarRange, Tag, ClipboardList, Star, BarChart2 } from "lucide-react";
+import { ArrowLeft, Users, CalendarCheck, AlertTriangle, Clock, TrendingUp, Award, Building2, UserCheck, LayoutDashboard, CalendarRange, Tag, ClipboardList, Star, BarChart2, MessageSquare } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -35,7 +35,7 @@ const KPIDashboard = () => {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('staff_profiles')
-        .select('id, full_name, position, employment_type, employment_date, year_of_joining, departments(name)');
+        .select('id, full_name, position, employment_type, employment_date, year_of_joining, linked_user_id, departments(name)');
       if (error) throw error;
       return data || [];
     },
@@ -46,7 +46,7 @@ const KPIDashboard = () => {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('staff_leave_requests')
-        .select('id, user_id, leave_type, status, start_date, end_date, days_requested');
+        .select('id, staff_profile_id, leave_type, status, start_date, end_date');
       if (error) throw error;
       return data || [];
     },
@@ -58,6 +58,17 @@ const KPIDashboard = () => {
       const { data, error } = await supabase
         .from('staff_complaints')
         .select('id, status, created_at');
+      if (error) throw error;
+      return data || [];
+    },
+  });
+
+  const { data: staffMessages = [] } = useQuery({
+    queryKey: ['kpi-staff-messages'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('staff_messages')
+        .select('id, sender_id, recipient_id');
       if (error) throw error;
       return data || [];
     },
@@ -123,6 +134,37 @@ const KPIDashboard = () => {
   const resolutionRate = complaints.length
     ? Math.round((resolvedComplaints / complaints.length) * 100)
     : 0;
+
+  // Per-staff leave breakdown keyed by staff_profile_id
+  const leaveByProfile: Record<string, { approved: number; pending: number; rejected: number; daysApproved: number }> = {};
+  leaveRequests.forEach((r: any) => {
+    if (!r.staff_profile_id) return;
+    if (!leaveByProfile[r.staff_profile_id]) {
+      leaveByProfile[r.staff_profile_id] = { approved: 0, pending: 0, rejected: 0, daysApproved: 0 };
+    }
+    const b = leaveByProfile[r.staff_profile_id];
+    if (r.status === 'approved') {
+      const days = Math.floor((new Date(r.end_date).getTime() - new Date(r.start_date).getTime()) / 86400000) + 1;
+      b.approved++; b.daysApproved += days;
+    }
+    else if (r.status === 'pending') b.pending++;
+    else if (r.status === 'rejected') b.rejected++;
+  });
+
+  // Per-user message counts keyed by auth user_id
+  const messagesByUser: Record<string, { sent: number; received: number }> = {};
+  staffMessages.forEach((m: any) => {
+    if (m.sender_id) {
+      if (!messagesByUser[m.sender_id]) messagesByUser[m.sender_id] = { sent: 0, received: 0 };
+      messagesByUser[m.sender_id].sent++;
+    }
+    if (m.recipient_id) {
+      if (!messagesByUser[m.recipient_id]) messagesByUser[m.recipient_id] = { sent: 0, received: 0 };
+      messagesByUser[m.recipient_id].received++;
+    }
+  });
+
+  const totalMessagesSent = staffMessages.length;
 
   return (
     <div className="space-y-6">
@@ -364,7 +406,7 @@ const KPIDashboard = () => {
             <CardHeader className="pb-2">
               <CardTitle className="flex items-center gap-2 text-base">
                 <TrendingUp className="h-4 w-4 text-muted-foreground" />
-                Staff Tenure Overview
+                Staff Overview
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -376,18 +418,44 @@ const KPIDashboard = () => {
                       <th className="pb-2 font-medium">Position</th>
                       <th className="pb-2 font-medium">Department</th>
                       <th className="pb-2 font-medium">Employment Type</th>
+                      <th className="pb-2 font-medium text-center">Leave (approved)</th>
+                      <th className="pb-2 font-medium text-center">Pending</th>
+                      <th className="pb-2 font-medium text-center">Messages</th>
                       <th className="pb-2 font-medium text-right">Tenure</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
                     {staffProfiles.map((p: any) => {
                       const yrs = calcTenureYears(p);
+                      const leave = leaveByProfile[p.id] || { approved: 0, pending: 0, rejected: 0, daysApproved: 0 };
+                      const msgs = p.linked_user_id ? (messagesByUser[p.linked_user_id] || { sent: 0, received: 0 }) : { sent: 0, received: 0 };
                       return (
                         <tr key={p.id} className="hover:bg-muted/40 transition-colors">
                           <td className="py-2 font-medium">{p.full_name}</td>
                           <td className="py-2 capitalize text-muted-foreground">{p.position?.replace(/_/g, ' ') || '—'}</td>
-                          <td className="py-2 text-muted-foreground">{p.departments?.name || '—'}</td>
+                          <td className="py-2 text-muted-foreground">{(p.departments as any)?.name || '—'}</td>
                           <td className="py-2 capitalize text-muted-foreground">{p.employment_type?.replace(/_/g, ' ') || '—'}</td>
+                          <td className="py-2 text-center">
+                            {leave.approved > 0 ? (
+                              <span className="text-xs font-medium text-green-700 bg-green-100 px-2 py-0.5 rounded-full">
+                                {leave.approved} ({leave.daysApproved}d)
+                              </span>
+                            ) : <span className="text-muted-foreground">—</span>}
+                          </td>
+                          <td className="py-2 text-center">
+                            {leave.pending > 0 ? (
+                              <span className="text-xs font-medium text-yellow-700 bg-yellow-100 px-2 py-0.5 rounded-full">
+                                {leave.pending}
+                              </span>
+                            ) : <span className="text-muted-foreground">—</span>}
+                          </td>
+                          <td className="py-2 text-center">
+                            {msgs.sent + msgs.received > 0 ? (
+                              <span className="text-xs text-muted-foreground">
+                                {msgs.sent}↑ {msgs.received}↓
+                              </span>
+                            ) : <span className="text-muted-foreground">—</span>}
+                          </td>
                           <td className="py-2 text-right">
                             {yrs !== null ? (
                               <Badge variant={yrs >= 3 ? "default" : "secondary"}>
@@ -400,7 +468,7 @@ const KPIDashboard = () => {
                     })}
                     {staffProfiles.length === 0 && (
                       <tr>
-                        <td colSpan={5} className="py-8 text-center text-muted-foreground">
+                        <td colSpan={8} className="py-8 text-center text-muted-foreground">
                           No staff profiles found.
                         </td>
                       </tr>
@@ -410,6 +478,90 @@ const KPIDashboard = () => {
               </div>
             </CardContent>
           </Card>
+
+          {/* Staff Communication Summary */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <MessageSquare className="h-4 w-4 text-muted-foreground" />
+                  Communication Summary
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-2 gap-4 mb-4">
+                  <div className="rounded-lg bg-muted/50 px-4 py-3 text-center">
+                    <p className="text-2xl font-bold">{totalMessagesSent}</p>
+                    <p className="text-xs text-muted-foreground mt-1">Total Messages</p>
+                  </div>
+                  <div className="rounded-lg bg-muted/50 px-4 py-3 text-center">
+                    <p className="text-2xl font-bold">{Object.keys(messagesByUser).length}</p>
+                    <p className="text-xs text-muted-foreground mt-1">Active Communicators</p>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  {staffProfiles
+                    .filter((p: any) => p.linked_user_id && messagesByUser[p.linked_user_id])
+                    .sort((a: any, b: any) => {
+                      const aTotal = (messagesByUser[a.linked_user_id]?.sent || 0) + (messagesByUser[a.linked_user_id]?.received || 0);
+                      const bTotal = (messagesByUser[b.linked_user_id]?.sent || 0) + (messagesByUser[b.linked_user_id]?.received || 0);
+                      return bTotal - aTotal;
+                    })
+                    .slice(0, 5)
+                    .map((p: any) => {
+                      const m = messagesByUser[p.linked_user_id];
+                      return (
+                        <div key={p.id} className="flex items-center justify-between text-sm">
+                          <span className="font-medium truncate max-w-[160px]">{p.full_name}</span>
+                          <span className="text-xs text-muted-foreground shrink-0">
+                            {m.sent} sent · {m.received} received
+                          </span>
+                        </div>
+                      );
+                    })}
+                  {staffProfiles.filter((p: any) => p.linked_user_id && messagesByUser[p.linked_user_id]).length === 0 && (
+                    <p className="text-sm text-muted-foreground text-center py-4">No message activity yet.</p>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <CalendarCheck className="h-4 w-4 text-muted-foreground" />
+                  Leave Activity by Staff
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  {staffProfiles
+                    .filter((p: any) => leaveByProfile[p.id])
+                    .sort((a: any, b: any) => (leaveByProfile[b.id]?.daysApproved || 0) - (leaveByProfile[a.id]?.daysApproved || 0))
+                    .slice(0, 6)
+                    .map((p: any) => {
+                      const l = leaveByProfile[p.id];
+                      return (
+                        <div key={p.id} className="flex items-center justify-between text-sm">
+                          <span className="font-medium truncate max-w-[160px]">{p.full_name}</span>
+                          <div className="flex gap-1.5 shrink-0">
+                            {l.approved > 0 && (
+                              <span className="text-xs text-green-700 bg-green-100 px-1.5 py-0.5 rounded-full">{l.daysApproved}d approved</span>
+                            )}
+                            {l.pending > 0 && (
+                              <span className="text-xs text-yellow-700 bg-yellow-100 px-1.5 py-0.5 rounded-full">{l.pending} pending</span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  {staffProfiles.filter((p: any) => leaveByProfile[p.id]).length === 0 && (
+                    <p className="text-sm text-muted-foreground text-center py-4">No leave requests on record.</p>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         </TabsContent>
 
         {/* ── KPI Periods Tab ── */}

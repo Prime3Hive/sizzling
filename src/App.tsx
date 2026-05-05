@@ -33,6 +33,7 @@ const StaffPortal       = lazy(() => import("./pages/StaffPortal"));
 const BirthdayCalendar  = lazy(() => import("./pages/BirthdayCalendar"));
 const MyPayslip         = lazy(() => import("./pages/MyPayslip"));
 const DepartmentPermissions = lazy(() => import("./pages/admin/DepartmentPermissions"));
+const CompanyFiles      = lazy(() => import("./pages/admin/CompanyFiles"));
 const NotFound          = lazy(() => import("./pages/NotFound"));
 
 const PageLoader = () => (
@@ -190,6 +191,11 @@ const App = () => (
                 <Route path="department-permissions" element={
                   <AdminRoute>
                     <DepartmentPermissions />
+                  </AdminRoute>
+                } />
+                <Route path="company-files" element={
+                  <AdminRoute>
+                    <CompanyFiles />
                   </AdminRoute>
                 } />
                 <Route path="staff-profiles" element={

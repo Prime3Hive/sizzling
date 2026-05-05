@@ -26,6 +26,7 @@ import {
   Landmark,
   ToggleLeft,
   ClipboardCheck,
+  HardDrive,
 } from "lucide-react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useRoles } from "@/hooks/useRoles";
@@ -371,6 +372,14 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               <SidebarMenuItem>
                 <SidebarMenuButton asChild isActive={location.pathname === '/department-permissions'}>
                   <Link to="/department-permissions"><ToggleLeft className="h-4 w-4" />Access Control</Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            )}
+
+            {isAdmin && (
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={location.pathname === '/company-files'}>
+                  <Link to="/company-files"><HardDrive className="h-4 w-4" />Company Files</Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
             )}
