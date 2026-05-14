@@ -13,10 +13,12 @@ import { BarChart2, RefreshCw, Lock, Loader2, Users, CheckCircle, Award } from "
 
 interface TaskRow {
   staff_profile_id: string;
-  weight: number;
-  max_score: number;
-  score: number | null;
-  status: string;
+  category_id:      string | null;
+  weight:           number;   // task weight % within its category (0-100)
+  max_score:        number;
+  score:            number | null;
+  status:           string;
+  kpi_categories:   { weight: number } | null; // category's share of the overall score (0-100)
 }
 
 interface SavedScore {
@@ -104,10 +106,10 @@ export default function KPIStaffScores() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("kpi_task_assignments")
-        .select("staff_profile_id, weight, max_score, score, status")
+        .select("staff_profile_id, category_id, weight, max_score, score, status, kpi_categories(weight)")
         .eq("period_id", selectedPeriod);
       if (error) throw error;
-      return (data || []) as TaskRow[];
+      return (data || []) as unknown as TaskRow[];
     },
     enabled: !!selectedPeriod,
   });
@@ -126,21 +128,52 @@ export default function KPIStaffScores() {
     enabled: !!selectedPeriod,
   });
 
-  // Aggregate task scores per staff member
+  // Weighted KPI score per staff member
+  // Formula: overall% = Σ [ (Σ task_pct×task_weight / Σ task_weight) × cat_weight/100 ]
   const aggregates = useMemo(() => {
-    const map: Record<string, { totalScore: number; maxPossible: number; scoredCount: number; totalCount: number }> = {};
+    type CatBucket = { totalTaskWeight: number; scoredWeightedSum: number; catWeight: number };
+    type StaffBucket = { scoredCount: number; totalCount: number; cats: Record<string, CatBucket> };
+
+    const raw: Record<string, StaffBucket> = {};
+
     for (const t of tasks) {
-      if (!map[t.staff_profile_id]) {
-        map[t.staff_profile_id] = { totalScore: 0, maxPossible: 0, scoredCount: 0, totalCount: 0 };
+      const sid = t.staff_profile_id;
+      if (!raw[sid]) raw[sid] = { scoredCount: 0, totalCount: 0, cats: {} };
+      raw[sid].totalCount++;
+
+      const catKey    = t.category_id ?? "__none__";
+      const catWeight = t.kpi_categories?.weight ?? 0;
+
+      if (!raw[sid].cats[catKey]) {
+        raw[sid].cats[catKey] = { totalTaskWeight: 0, scoredWeightedSum: 0, catWeight };
       }
-      map[t.staff_profile_id].totalCount++;
+      raw[sid].cats[catKey].totalTaskWeight += t.weight;
+
       if (t.status === "scored" && t.score !== null) {
-        map[t.staff_profile_id].totalScore  += t.score;
-        map[t.staff_profile_id].maxPossible += t.max_score;
-        map[t.staff_profile_id].scoredCount++;
+        const taskPct = t.max_score > 0 ? (t.score / t.max_score) * 100 : 0;
+        raw[sid].cats[catKey].scoredWeightedSum += taskPct * t.weight;
+        raw[sid].scoredCount++;
       }
     }
-    return map;
+
+    const result: Record<string, { totalScore: number; maxPossible: number; scoredCount: number; totalCount: number }> = {};
+
+    for (const [sid, agg] of Object.entries(raw)) {
+      let weightedPct = 0;
+      for (const cat of Object.values(agg.cats)) {
+        if (cat.totalTaskWeight > 0 && cat.catWeight > 0) {
+          const catScore = cat.scoredWeightedSum / cat.totalTaskWeight; // 0-100
+          weightedPct  += catScore * (cat.catWeight / 100);
+        }
+      }
+      result[sid] = {
+        totalScore:  Math.round(weightedPct * 100) / 100,
+        maxPossible: 100,
+        scoredCount: agg.scoredCount,
+        totalCount:  agg.totalCount,
+      };
+    }
+    return result;
   }, [tasks]);
 
   const savedScoresMap = useMemo(() => {

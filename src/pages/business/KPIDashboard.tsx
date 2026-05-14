@@ -12,6 +12,7 @@ import KPITaskLibrary from "@/components/kpi/KPITaskLibrary";
 import KPIAssignTasks from "@/components/kpi/KPIAssignTasks";
 import KPIScoreEntry from "@/components/kpi/KPIScoreEntry";
 import KPIStaffScores from "@/components/kpi/KPIStaffScores";
+import KPIMyScore from "@/components/kpi/KPIMyScore";
 
 const leaveTypeLabels: Record<string, string> = {
   casual: "Casual",
@@ -179,8 +180,11 @@ const KPIDashboard = () => {
         </div>
       </div>
 
-      <Tabs defaultValue="overview" className="space-y-6">
+      <Tabs defaultValue={canManageKPI || isHR ? "overview" : "my-score"} className="space-y-6">
         <TabsList className="bg-muted/50 p-1 flex-wrap h-auto gap-1">
+          <TabsTrigger value="my-score" className="data-[state=active]:bg-background data-[state=active]:shadow-card gap-2">
+            <Star className="h-4 w-4" /> My Score
+          </TabsTrigger>
           <TabsTrigger value="overview" className="data-[state=active]:bg-background data-[state=active]:shadow-card gap-2">
             <LayoutDashboard className="h-4 w-4" /> Overview
           </TabsTrigger>
@@ -210,6 +214,11 @@ const KPIDashboard = () => {
             </TabsTrigger>
           )}
         </TabsList>
+
+        {/* ── My Score Tab ── */}
+        <TabsContent value="my-score">
+          <KPIMyScore />
+        </TabsContent>
 
         {/* ── Overview Tab ── */}
         <TabsContent value="overview" className="space-y-6">

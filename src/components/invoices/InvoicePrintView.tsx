@@ -53,16 +53,40 @@ export default function InvoicePrintView({ invoice }: Props) {
   // Items-only subtotal for display purposes
   const itemsSubtotal = invoice.subtotal - (invoice.waiter_total ?? 0);
 
+  const isCancelled = invoice.status === "cancelled";
+
   return (
-    <div style={s.page}>
+    <div style={{ ...s.page, position: "relative" }}>
+
+      {/* ── Cancelled watermark ── */}
+      {isCancelled && (
+        <div style={{
+          position: "absolute", top: "50%", left: "50%",
+          transform: "translate(-50%, -50%) rotate(-35deg)",
+          fontSize: 72, fontWeight: 900, color: "#ef444420",
+          letterSpacing: 6, whiteSpace: "nowrap", pointerEvents: "none",
+          userSelect: "none", zIndex: 0,
+        }}>
+          CANCELLED
+        </div>
+      )}
 
       {/* ── Header ── */}
-      <div style={s.header}>
-        <div>
-          <div style={s.companyName}>{COMPANY.name}</div>
-          <div style={{ ...s.companyInfo, fontStyle: "italic", marginBottom: 4 }}>{COMPANY.tagline}</div>
-          <div style={s.companyInfo}>{COMPANY.address}</div>
-          <div style={s.companyInfo}>{COMPANY.phone}</div>
+      <div style={{ ...s.header, position: "relative", zIndex: 1 }}>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 14 }}>
+          {/* Company logo */}
+          <img
+            src="/favicon.png"
+            alt="Sizzling Spices logo"
+            style={{ width: 52, height: 52, objectFit: "contain", borderRadius: 8, flexShrink: 0 }}
+            onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+          />
+          <div>
+            <div style={s.companyName}>{COMPANY.name}</div>
+            <div style={{ ...s.companyInfo, fontStyle: "italic", marginBottom: 4 }}>{COMPANY.tagline}</div>
+            <div style={s.companyInfo}>{COMPANY.address}</div>
+            <div style={s.companyInfo}>{COMPANY.phone}</div>
+          </div>
         </div>
         <div>
           <div style={s.docType}>{docType}</div>
@@ -70,6 +94,11 @@ export default function InvoicePrintView({ invoice }: Props) {
           {invoice.invoice_number && invoice.status !== "quotation" && (
             <div style={{ ...s.docNum, color: "#aaa", marginTop: 2 }}>
               Quotation ref: {invoice.quotation_number}
+            </div>
+          )}
+          {isCancelled && (
+            <div style={{ ...s.docNum, color: "#ef4444", fontWeight: 700, marginTop: 6 }}>
+              ✕ CANCELLED
             </div>
           )}
         </div>

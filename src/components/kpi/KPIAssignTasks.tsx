@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
-import { ClipboardList, Plus, Trash2, Loader2, UserCircle } from "lucide-react";
+import { ClipboardList, Plus, Trash2, Loader2, UserCircle, Library } from "lucide-react";
 import { format } from "date-fns";
 
 interface TaskAssignment {
@@ -29,16 +29,26 @@ interface TaskAssignment {
   kpi_periods: { name: string } | null;
 }
 
+interface TaskTemplate {
+  id: string;
+  category_id: string;
+  title: string;
+  description: string | null;
+  target: string | null;
+  weight: number;
+  max_score: number;
+}
+
 const blank = {
-  period_id: "",
+  period_id:        "",
   staff_profile_id: "",
-  category_id: "",
-  title: "",
-  description: "",
-  target_value: "",
-  weight: "1",
-  max_score: "10",
-  due_date: "",
+  category_id:      "",
+  title:            "",
+  description:      "",
+  target_value:     "",
+  weight:           "25",
+  max_score:        "100",
+  due_date:         "",
 };
 
 const statusColors: Record<string, string> = {
@@ -52,32 +62,49 @@ export default function KPIAssignTasks() {
   const { user } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
-  const [open, setOpen] = useState(false);
-  const [form, setForm] = useState(blank);
+  const [open, setOpen]             = useState(false);
+  const [form, setForm]             = useState(blank);
   const [filterPeriod, setFilterPeriod] = useState("all");
+  const [templatePickerCatId, setTemplatePickerCatId] = useState("");
 
-  // Periods (active/draft only for assigning)
+  // ── Queries ──────────────────────────────────────────────────────────────────
+
   const { data: periods = [] } = useQuery({
     queryKey: ["kpi-periods"],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("kpi_periods").select("id, name, status").order("created_at", { ascending: false });
+        .from("kpi_periods").select("id, name, status")
+        .order("created_at", { ascending: false });
       if (error) throw error;
       return data || [];
     },
   });
 
-  // Categories
   const { data: categories = [] } = useQuery({
     queryKey: ["kpi-categories"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("kpi_categories").select("id, name, color").order("name");
+      const { data, error } = await supabase
+        .from("kpi_categories")
+        .select("id, name, color")
+        .order("sort_order")
+        .order("name");
       if (error) throw error;
       return data || [];
     },
   });
 
-  // Staff profiles
+  const { data: templates = [] } = useQuery<TaskTemplate[]>({
+    queryKey: ["kpi-task-templates"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("kpi_task_templates")
+        .select("id, category_id, title, description, target, weight, max_score")
+        .order("sort_order");
+      if (error) throw error;
+      return (data || []) as unknown as TaskTemplate[];
+    },
+  });
+
   const { data: staff = [] } = useQuery({
     queryKey: ["staff-profiles-select"],
     queryFn: async () => {
@@ -88,7 +115,6 @@ export default function KPIAssignTasks() {
     },
   });
 
-  // All assignments
   const { data: tasks = [], isLoading } = useQuery<TaskAssignment[]>({
     queryKey: ["kpi-task-assignments"],
     queryFn: async () => {
@@ -101,6 +127,8 @@ export default function KPIAssignTasks() {
       return (data || []) as unknown as TaskAssignment[];
     },
   });
+
+  // ── Mutations ────────────────────────────────────────────────────────────────
 
   const assign = useMutation({
     mutationFn: async (payload: typeof blank) => {
@@ -138,6 +166,8 @@ export default function KPIAssignTasks() {
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
+  // ── Handlers ─────────────────────────────────────────────────────────────────
+
   const handleSubmit = () => {
     if (!form.period_id || !form.staff_profile_id || !form.title) {
       toast({ title: "Please fill in Period, Staff member and Task Title", variant: "destructive" });
@@ -146,17 +176,41 @@ export default function KPIAssignTasks() {
     assign.mutate(form);
   };
 
+  const applyTemplate = (t: TaskTemplate) => {
+    setForm(prev => ({
+      ...prev,
+      title:       t.title,
+      description: t.description || "",
+      target_value: t.target || "",
+      category_id: t.category_id,
+      weight:      String(t.weight),
+      max_score:   String(t.max_score),
+    }));
+    setTemplatePickerCatId("");
+  };
+
   const filtered = filterPeriod === "all" ? tasks : tasks.filter((t) => {
-    const period = periods.find((p: any) => p.name === t.kpi_periods?.name);
+    const period = (periods as any[]).find((p) => p.name === t.kpi_periods?.name);
     return period?.id === filterPeriod;
   });
+
+  // Templates filtered by selected category for the picker
+  const pickerTemplates = templatePickerCatId
+    ? templates.filter(t => t.category_id === templatePickerCatId)
+    : templates;
+
+  const openDialog = () => { setForm(blank); setTemplatePickerCatId(""); setOpen(true); };
+
+  // ── Render ────────────────────────────────────────────────────────────────────
 
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h2 className="text-xl font-semibold">Assign Tasks</h2>
-          <p className="text-sm text-muted-foreground">Assign KPI tasks to individual staff members.</p>
+          <p className="text-sm text-muted-foreground">
+            Assign KPI tasks to individual staff members. Pick from the library or create a custom task.
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <Select value={filterPeriod} onValueChange={setFilterPeriod}>
@@ -165,12 +219,12 @@ export default function KPIAssignTasks() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Periods</SelectItem>
-              {periods.map((p: any) => (
+              {(periods as any[]).map((p) => (
                 <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
               ))}
             </SelectContent>
           </Select>
-          <Button onClick={() => setOpen(true)} className="gap-2">
+          <Button onClick={openDialog} className="gap-2">
             <Plus className="h-4 w-4" /> Assign Task
           </Button>
         </div>
@@ -215,7 +269,7 @@ export default function KPIAssignTasks() {
                       </span>
                       <span>Period: {task.kpi_periods?.name || "—"}</span>
                       {task.due_date && <span>Due: {format(new Date(task.due_date), "MMM d, yyyy")}</span>}
-                      <span>Weight: {task.weight} · Max: {task.max_score} pts</span>
+                      <span>Weight: {task.weight}% · Max: {task.max_score} pts</span>
                       {task.score != null && (
                         <span className="text-green-600 font-semibold">Score: {task.score}/{task.max_score}</span>
                       )}
@@ -225,7 +279,9 @@ export default function KPIAssignTasks() {
                     )}
                   </div>
                   {task.status === "pending" && (
-                    <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+                    <Button
+                      size="icon" variant="ghost"
+                      className="h-8 w-8 text-destructive opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
                       onClick={() => remove.mutate(task.id)}>
                       <Trash2 className="h-3.5 w-3.5" />
                     </Button>
@@ -237,19 +293,59 @@ export default function KPIAssignTasks() {
         </div>
       )}
 
-      {/* Assign Dialog */}
+      {/* ── Assign Dialog ── */}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Assign New Task</DialogTitle>
           </DialogHeader>
           <div className="grid gap-4 py-2">
+
+            {/* ── Library picker ── */}
+            {templates.length > 0 && (
+              <div className="rounded-lg border bg-muted/30 p-3 space-y-2">
+                <p className="text-xs font-medium flex items-center gap-1.5">
+                  <Library className="h-3.5 w-3.5" /> Pick from library (pre-fills the form below)
+                </p>
+                <div className="flex gap-2">
+                  <Select value={templatePickerCatId} onValueChange={setTemplatePickerCatId}>
+                    <SelectTrigger className="h-8 text-xs flex-1">
+                      <SelectValue placeholder="Filter by category…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="">All categories</SelectItem>
+                      {(categories as any[]).map((c) => (
+                        <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="max-h-40 overflow-y-auto space-y-1">
+                  {pickerTemplates.map(t => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => applyTemplate(t)}
+                      className="w-full text-left text-xs px-2.5 py-1.5 rounded-md hover:bg-primary/10 transition-colors flex items-center justify-between gap-2 group"
+                    >
+                      <span className="font-medium truncate">{t.title}</span>
+                      <span className="text-muted-foreground shrink-0 group-hover:text-primary">{t.weight}% wt</span>
+                    </button>
+                  ))}
+                  {pickerTemplates.length === 0 && (
+                    <p className="text-xs text-muted-foreground text-center py-2">No templates in this category.</p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* ── Form fields ── */}
             <div className="grid gap-1.5">
               <Label>Review Period *</Label>
               <Select value={form.period_id} onValueChange={(v) => setForm({ ...form, period_id: v })}>
                 <SelectTrigger><SelectValue placeholder="Select period" /></SelectTrigger>
                 <SelectContent>
-                  {periods.filter((p: any) => p.status !== "closed").map((p: any) => (
+                  {(periods as any[]).filter((p) => p.status !== "closed").map((p: any) => (
                     <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
                   ))}
                 </SelectContent>
@@ -279,28 +375,30 @@ export default function KPIAssignTasks() {
             </div>
             <div className="grid gap-1.5">
               <Label>Task Title *</Label>
-              <Input placeholder="e.g. Achieve 98% order accuracy"
+              <Input placeholder="e.g. Daily walk-through completed"
                 value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
             </div>
             <div className="grid gap-1.5">
-              <Label>Description</Label>
-              <Textarea rows={2} placeholder="Describe the task…"
+              <Label>Scoring Criteria / Description</Label>
+              <Textarea rows={2} placeholder="100% = … | 80% = … | 60% = … | 0% = …"
                 value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
             </div>
             <div className="grid gap-1.5">
-              <Label>Target / Expected Output</Label>
-              <Input placeholder="e.g. 100 units, 95%, 5 reports"
+              <Label>Target</Label>
+              <Input placeholder="e.g. ≥ 95% across all departments"
                 value={form.target_value} onChange={(e) => setForm({ ...form, target_value: e.target.value })} />
             </div>
             <div className="grid grid-cols-3 gap-3">
               <div className="grid gap-1.5">
-                <Label>Weight (1–10)</Label>
-                <Input type="number" min={1} max={10} value={form.weight}
+                <Label>Weight %</Label>
+                <Input type="number" min={0} max={100}
+                  value={form.weight}
                   onChange={(e) => setForm({ ...form, weight: e.target.value })} />
               </div>
               <div className="grid gap-1.5">
                 <Label>Max Score</Label>
-                <Input type="number" min={1} max={100} value={form.max_score}
+                <Input type="number" min={1} max={100}
+                  value={form.max_score}
                   onChange={(e) => setForm({ ...form, max_score: e.target.value })} />
               </div>
               <div className="grid gap-1.5">

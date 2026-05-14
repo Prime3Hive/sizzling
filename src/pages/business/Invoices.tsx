@@ -15,7 +15,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Plus, Search, X, FileText, ShoppingCart, CalendarDays,
-  TrendingUp, Clock, CheckCircle2, XCircle,
+  TrendingUp, Clock, CheckCircle2, XCircle, Archive,
 } from "lucide-react";
 import { format } from "date-fns";
 import { formatNairaCompact } from "@/lib/currency";
@@ -56,6 +56,7 @@ export default function Invoices() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [paymentFilter, setPaymentFilter] = useState("all");
+  const [showArchived, setShowArchived] = useState(false);
 
   const { data: invoices = [], isLoading } = useQuery({
     queryKey: ["invoices"],
@@ -106,6 +107,9 @@ export default function Invoices() {
       if (tab === "daily_sales" && inv.invoice_type !== "daily_sales") return false;
       if (tab === "event" && inv.invoice_type !== "event") return false;
 
+      // Hide archived cancelled invoices unless user opts in
+      if (inv.archived && !showArchived) return false;
+
       if (search) {
         const q = search.toLowerCase();
         const match =
@@ -132,6 +136,11 @@ export default function Invoices() {
   };
 
   const hasFilters = search || dateFrom || dateTo || paymentFilter !== "all";
+
+  const archivedCount = useMemo(
+    () => invoices.filter((i) => i.archived).length,
+    [invoices]
+  );
 
   const openCreate = (type?: InvoiceType) => {
     setEditingInvoice(null);
@@ -282,6 +291,16 @@ export default function Invoices() {
               <X className="h-4 w-4 mr-1" /> Clear
             </Button>
           )}
+          {archivedCount > 0 && (
+            <Button
+              variant={showArchived ? "secondary" : "ghost"}
+              size="sm"
+              onClick={() => setShowArchived((v) => !v)}
+            >
+              <Archive className="h-4 w-4 mr-1" />
+              {showArchived ? "Hide Archived" : `Show Archived (${archivedCount})`}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -370,6 +389,13 @@ export default function Invoices() {
                       <div className="mt-0.5">
                         <Badge variant="outline" className="text-[9px] bg-blue-50 text-blue-600 border-blue-200">
                           Finance
+                        </Badge>
+                      </div>
+                    )}
+                    {inv.archived && (
+                      <div className="mt-0.5">
+                        <Badge variant="outline" className="text-[9px] bg-muted text-muted-foreground border-muted-foreground/30">
+                          Archived
                         </Badge>
                       </div>
                     )}

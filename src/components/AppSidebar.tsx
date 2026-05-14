@@ -13,7 +13,6 @@ import {
   PieChart,
   LineChart,
   Wallet,
-  MessageSquare,
   CalendarDays,
   AlertTriangle,
   Mail,
@@ -27,6 +26,9 @@ import {
   ToggleLeft,
   ClipboardCheck,
   HardDrive,
+  ShoppingCart,
+  User,
+  Send,
 } from "lucide-react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useRoles } from "@/hooks/useRoles";
@@ -102,14 +104,26 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 
   const isStaff = !isAdmin && !isHR && !isManager && !isEmployee;
 
-  const hasBusinessAccess = isAdmin
+  // Hub access checks
+  const hasCommerceAccess = isAdmin
     || isManager
     || hasPermission('inventory', 'view')
     || hasPermission('sales', 'view')
-    || hasPermission('invoices', 'view')
+    || hasPermission('invoices', 'view');
+
+  const hasFinanceAccess = isAdmin
+    || isManager
     || hasPermission('finance', 'view')
     || hasPermission('budgets', 'view')
     || hasPermission('reports', 'view');
+
+  const hasPeopleAccess = isAdmin || isHR;
+
+  const isInventoryActive = location.pathname.startsWith('/business/inventory')
+    || location.pathname === '/business/sku-management'
+    || location.pathname === '/business/analytics';
+
+  const isStaffRequestsActive = location.pathname === '/staff-portal';
 
   const SidebarUserHeader = () => (
     <SidebarHeader className="border-b border-border/60 pb-3">
@@ -168,7 +182,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               <SidebarMenuItem>
                 <SidebarMenuButton asChild isActive={location.pathname === '/my-profile'}>
                   <Link to="/my-profile">
-                    <UserCog className="h-4 w-4" />
+                    <User className="h-4 w-4" />
                     My Profile
                   </Link>
                 </SidebarMenuButton>
@@ -182,12 +196,39 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 </SidebarMenuButton>
               </SidebarMenuItem>
               <SidebarMenuItem>
-                <SidebarMenuButton asChild isActive={location.pathname === '/staff-portal'}>
-                  <Link to="/staff-portal">
-                    <MessageSquare className="h-4 w-4" />
-                    Staff Portal
-                  </Link>
-                </SidebarMenuButton>
+                <Collapsible defaultOpen={location.pathname === '/staff-portal'}>
+                  <CollapsibleTrigger asChild>
+                    <SidebarMenuButton className="group/collapsible">
+                      <Send className="h-4 w-4" />
+                      My Requests
+                      <ChevronRight className="ml-auto h-4 w-4 transition-transform group-data-[state=open]/collapsible:rotate-90" />
+                    </SidebarMenuButton>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    <SidebarMenuSub>
+                      <SidebarMenuSubItem>
+                        <SidebarMenuSubButton asChild>
+                          <Link to="/staff-portal?tab=leave"><CalendarDays className="h-3 w-3" /><span>Leave Requests</span></Link>
+                        </SidebarMenuSubButton>
+                      </SidebarMenuSubItem>
+                      <SidebarMenuSubItem>
+                        <SidebarMenuSubButton asChild>
+                          <Link to="/staff-portal?tab=complaints"><AlertTriangle className="h-3 w-3" /><span>Complaints</span></Link>
+                        </SidebarMenuSubButton>
+                      </SidebarMenuSubItem>
+                      <SidebarMenuSubItem>
+                        <SidebarMenuSubButton asChild>
+                          <Link to="/staff-portal?tab=messages"><Mail className="h-3 w-3" /><span>Messages</span></Link>
+                        </SidebarMenuSubButton>
+                      </SidebarMenuSubItem>
+                      <SidebarMenuSubItem>
+                        <SidebarMenuSubButton asChild>
+                          <Link to="/business/kpi"><TrendingUp className="h-3 w-3" /><span>My Performance</span></Link>
+                        </SidebarMenuSubButton>
+                      </SidebarMenuSubItem>
+                    </SidebarMenuSub>
+                  </CollapsibleContent>
+                </Collapsible>
               </SidebarMenuItem>
             </SidebarMenu>
           </SidebarGroup>
@@ -203,7 +244,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 
       <SidebarContent>
 
-        {/* ── Dashboard ── */}
+        {/* ── Overview ── */}
         <SidebarGroup>
           <SidebarMenu>
             <SidebarMenuItem>
@@ -217,15 +258,14 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           </SidebarMenu>
         </SidebarGroup>
 
-        <SidebarSeparator />
+        {/* ── COMMERCE HUB ── */}
+        {hasCommerceAccess && (
+          <>
+            <SidebarSeparator />
+            <SidebarGroup>
+              <SidebarGroupLabel>Commerce</SidebarGroupLabel>
+              <SidebarMenu>
 
-        {/* ── MODULE 1: BUSINESS MANAGEMENT ── */}
-        {hasBusinessAccess && (
-          <SidebarGroup>
-            <SidebarGroupLabel>Business</SidebarGroupLabel>
-            <SidebarMenu>
-
-              {hasBusinessAccess && (
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild isActive={location.pathname === '/business'}>
                     <Link to="/business">
@@ -234,221 +274,223 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
-              )}
 
-              {/* Inventory */}
-              {hasPermission('inventory', 'view') && (
+                {/* Inventory — collapsible */}
+                {hasPermission('inventory', 'view') && (
+                  <SidebarMenuItem>
+                    <Collapsible defaultOpen={isInventoryActive}>
+                      <CollapsibleTrigger asChild>
+                        <SidebarMenuButton className="group/collapsible" isActive={isInventoryActive}>
+                          <Package className="h-4 w-4" />
+                          Inventory
+                          <ChevronRight className="ml-auto h-4 w-4 transition-transform group-data-[state=open]/collapsible:rotate-90" />
+                        </SidebarMenuButton>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent>
+                        <SidebarMenuSub>
+                          <SidebarMenuSubItem>
+                            <SidebarMenuSubButton asChild isActive={location.pathname === '/business/inventory'}>
+                              <Link to="/business/inventory"><span>Stock Management</span></Link>
+                            </SidebarMenuSubButton>
+                          </SidebarMenuSubItem>
+                          <SidebarMenuSubItem>
+                            <SidebarMenuSubButton asChild isActive={location.pathname === '/business/sku-management'}>
+                              <Link to="/business/sku-management"><Boxes className="h-3 w-3" /><span>SKU Catalog</span></Link>
+                            </SidebarMenuSubButton>
+                          </SidebarMenuSubItem>
+                          <SidebarMenuSubItem>
+                            <SidebarMenuSubButton asChild isActive={location.pathname === '/business/analytics'}>
+                              <Link to="/business/analytics"><TrendingUp className="h-3 w-3" /><span>Analytics</span></Link>
+                            </SidebarMenuSubButton>
+                          </SidebarMenuSubItem>
+                        </SidebarMenuSub>
+                      </CollapsibleContent>
+                    </Collapsible>
+                  </SidebarMenuItem>
+                )}
+
+                {/* Inventory Requests — all authenticated staff */}
                 <SidebarMenuItem>
-                  <Collapsible defaultOpen={location.pathname.startsWith('/business/inventory') || location.pathname === '/business/sku-management' || location.pathname === '/business/analytics'}>
+                  <SidebarMenuButton asChild isActive={location.pathname === '/business/inventory-requests'}>
+                    <Link to="/business/inventory-requests">
+                      <ClipboardCheck className="h-4 w-4" />Inventory Requests
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+
+                {/* Sales */}
+                {hasPermission('sales', 'view') && (
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild isActive={location.pathname === '/business/sales'}>
+                      <Link to="/business/sales"><ShoppingCart className="h-4 w-4" />Sales</Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                )}
+
+                {/* Payments */}
+                {hasPermission('sales', 'view') && (
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild isActive={location.pathname === '/business/payments'}>
+                      <Link to="/business/payments"><CreditCard className="h-4 w-4" />Payments</Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                )}
+
+                {/* Invoices */}
+                {hasPermission('invoices', 'view') && (
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild isActive={location.pathname === '/business/invoices'}>
+                      <Link to="/business/invoices"><ClipboardList className="h-4 w-4" />Invoices</Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                )}
+
+              </SidebarMenu>
+            </SidebarGroup>
+          </>
+        )}
+
+        {/* ── FINANCE HUB ── */}
+        {hasFinanceAccess && (
+          <>
+            <SidebarSeparator />
+            <SidebarGroup>
+              <SidebarGroupLabel>Finance</SidebarGroupLabel>
+              <SidebarMenu>
+
+                {hasPermission('finance', 'view') && (
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild isActive={location.pathname === '/business/finance'}>
+                      <Link to="/business/finance"><Landmark className="h-4 w-4" />Finance Ledger</Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                )}
+
+                {(hasPermission('budgets', 'view') || hasPermission('finance', 'view')) && (
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild isActive={location.pathname === '/expenses'}>
+                      <Link to="/expenses"><Receipt className="h-4 w-4" />Expenses</Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                )}
+
+                {hasPermission('budgets', 'view') && (
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild isActive={location.pathname === '/budgets'}>
+                      <Link to="/budgets"><Target className="h-4 w-4" />Budgets</Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                )}
+
+                {hasPermission('reports', 'view') && (
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild isActive={location.pathname === '/reports'}>
+                      <Link to="/reports"><BarChart3 className="h-4 w-4" />Reports</Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                )}
+
+                {isAdmin && (
+                  <>
+                    <SidebarMenuItem>
+                      <SidebarMenuButton asChild isActive={location.pathname === '/profit-loss'}>
+                        <Link to="/profit-loss"><LineChart className="h-4 w-4" />Profit & Loss</Link>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                    <SidebarMenuItem>
+                      <SidebarMenuButton asChild isActive={location.pathname === '/njc-supplies'}>
+                        <Link to="/njc-supplies"><Package className="h-4 w-4" />NJC Supplies</Link>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  </>
+                )}
+
+              </SidebarMenu>
+            </SidebarGroup>
+          </>
+        )}
+
+        {/* ── PEOPLE HUB ── */}
+        {hasPeopleAccess && (
+          <>
+            <SidebarSeparator />
+            <SidebarGroup>
+              <SidebarGroupLabel>People</SidebarGroupLabel>
+              <SidebarMenu>
+
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={location.pathname === '/staff-profiles'}>
+                    <Link to="/staff-profiles"><UserCog className="h-4 w-4" />Staff Profiles</Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+
+                {isAdmin && (
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild isActive={location.pathname === '/payroll'}>
+                      <Link to="/payroll"><Wallet className="h-4 w-4" />Payroll</Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                )}
+
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={location.pathname === '/business/kpi'}>
+                    <Link to="/business/kpi"><PieChart className="h-4 w-4" />KPI Dashboard</Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+
+                {/* Staff Requests — collapsible admin/hr view of all staff requests */}
+                <SidebarMenuItem>
+                  <Collapsible defaultOpen={isStaffRequestsActive}>
                     <CollapsibleTrigger asChild>
-                      <SidebarMenuButton className="group/collapsible">
-                        <Package className="h-4 w-4" />
-                        Inventory
+                      <SidebarMenuButton className="group/collapsible" isActive={isStaffRequestsActive}>
+                        <Send className="h-4 w-4" />
+                        Staff Requests
                         <ChevronRight className="ml-auto h-4 w-4 transition-transform group-data-[state=open]/collapsible:rotate-90" />
                       </SidebarMenuButton>
                     </CollapsibleTrigger>
                     <CollapsibleContent>
                       <SidebarMenuSub>
                         <SidebarMenuSubItem>
-                          <SidebarMenuSubButton asChild isActive={location.pathname === '/business/inventory'}>
-                            <Link to="/business/inventory"><span>Inventory Management</span></Link>
+                          <SidebarMenuSubButton asChild>
+                            <Link to="/staff-portal?tab=leave"><CalendarDays className="h-3 w-3" /><span>Leave Requests</span></Link>
                           </SidebarMenuSubButton>
                         </SidebarMenuSubItem>
                         <SidebarMenuSubItem>
-                          <SidebarMenuSubButton asChild isActive={location.pathname === '/business/sku-management'}>
-                            <Link to="/business/sku-management"><Boxes className="h-3 w-3" /><span>SKU Management</span></Link>
+                          <SidebarMenuSubButton asChild>
+                            <Link to="/staff-portal?tab=complaints"><AlertTriangle className="h-3 w-3" /><span>Complaints</span></Link>
                           </SidebarMenuSubButton>
                         </SidebarMenuSubItem>
                         <SidebarMenuSubItem>
-                          <SidebarMenuSubButton asChild isActive={location.pathname === '/business/analytics'}>
-                            <Link to="/business/analytics"><TrendingUp className="h-3 w-3" /><span>Analytics</span></Link>
+                          <SidebarMenuSubButton asChild>
+                            <Link to="/staff-portal?tab=messages"><Mail className="h-3 w-3" /><span>Messages</span></Link>
                           </SidebarMenuSubButton>
                         </SidebarMenuSubItem>
                       </SidebarMenuSub>
                     </CollapsibleContent>
                   </Collapsible>
                 </SidebarMenuItem>
-              )}
 
-              {/* Inventory Requests — all authenticated staff */}
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild isActive={location.pathname === '/business/inventory-requests'}>
-                  <Link to="/business/inventory-requests">
-                    <ClipboardCheck className="h-4 w-4" />Inventory Requests
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-
-              {/* Payments */}
-              {hasPermission('sales', 'view') && (
                 <SidebarMenuItem>
-                  <SidebarMenuButton asChild isActive={location.pathname === '/business/payments'}>
-                    <Link to="/business/payments"><CreditCard className="h-4 w-4" />Payments</Link>
+                  <SidebarMenuButton asChild isActive={location.pathname === '/birthdays'}>
+                    <Link to="/birthdays"><Cake className="h-4 w-4" />Birthday Calendar</Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
-              )}
 
-              {/* Invoices */}
-              {hasPermission('invoices', 'view') && (
-                <SidebarMenuItem>
-                  <SidebarMenuButton asChild isActive={location.pathname === '/business/invoices'}>
-                    <Link to="/business/invoices"><ClipboardList className="h-4 w-4" />Invoices</Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              )}
-
-              {/* Finance */}
-              {hasPermission('finance', 'view') && (
-                <SidebarMenuItem>
-                  <SidebarMenuButton asChild isActive={location.pathname === '/business/finance'}>
-                    <Link to="/business/finance"><Landmark className="h-4 w-4" />Finance</Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              )}
-
-              {/* Expenses */}
-              {(hasPermission('budgets', 'view') || hasPermission('finance', 'view')) && (
-                <SidebarMenuItem>
-                  <SidebarMenuButton asChild isActive={location.pathname === '/expenses'}>
-                    <Link to="/expenses"><Receipt className="h-4 w-4" />Expenses</Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              )}
-
-              {/* Budgets */}
-              {hasPermission('budgets', 'view') && (
-                <SidebarMenuItem>
-                  <SidebarMenuButton asChild isActive={location.pathname === '/budgets'}>
-                    <Link to="/budgets"><Target className="h-4 w-4" />Budgets</Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              )}
-
-              {/* Reports */}
-              {hasPermission('reports', 'view') && (
-                <SidebarMenuItem>
-                  <SidebarMenuButton asChild isActive={location.pathname === '/reports'}>
-                    <Link to="/reports"><BarChart3 className="h-4 w-4" />Reports</Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              )}
-
-              {/* Admin-only financial tools */}
-              {isAdmin && (
-                <>
-                  <SidebarMenuItem>
-                    <SidebarMenuButton asChild isActive={location.pathname === '/profit-loss'}>
-                      <Link to="/profit-loss"><LineChart className="h-4 w-4" />Profit & Loss</Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                  <SidebarMenuItem>
-                    <SidebarMenuButton asChild isActive={location.pathname === '/njc-supplies'}>
-                      <Link to="/njc-supplies"><Package className="h-4 w-4" />NJC Supplies</Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                </>
-              )}
-
-            </SidebarMenu>
-          </SidebarGroup>
+              </SidebarMenu>
+            </SidebarGroup>
+          </>
         )}
 
         <SidebarSeparator />
 
-        {/* ── MODULE 2: ADMINISTRATION ── */}
+        {/* ── MY SPACE ── */}
         <SidebarGroup>
-          <SidebarGroupLabel>Administration</SidebarGroupLabel>
+          <SidebarGroupLabel>My Space</SidebarGroupLabel>
           <SidebarMenu>
 
-            {isAdmin && (
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild isActive={location.pathname === '/users'}>
-                  <Link to="/users"><Users className="h-4 w-4" />User Management</Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            )}
-
-            {isAdmin && (
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild isActive={location.pathname === '/department-permissions'}>
-                  <Link to="/department-permissions"><ToggleLeft className="h-4 w-4" />Access Control</Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            )}
-
-            {isAdmin && (
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild isActive={location.pathname === '/company-files'}>
-                  <Link to="/company-files"><HardDrive className="h-4 w-4" />Company Files</Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            )}
-
-            {(isAdmin || isHR) && (
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild isActive={location.pathname === '/staff-profiles'}>
-                  <Link to="/staff-profiles"><UserCog className="h-4 w-4" />Staff Profiles</Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            )}
-
-            {isAdmin && (
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild isActive={location.pathname === '/payroll'}>
-                  <Link to="/payroll"><Wallet className="h-4 w-4" />Payroll</Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            )}
-
-            {/* KPI Dashboard — Admin and HR only */}
-            {(isAdmin || isHR) && (
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild isActive={location.pathname === '/business/kpi'}>
-                  <Link to="/business/kpi"><PieChart className="h-4 w-4" />KPI Dashboard</Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            )}
-
-            {/* Staff Portal — collapsible with tab links */}
             <SidebarMenuItem>
-              <Collapsible defaultOpen={location.pathname === '/staff-portal'}>
-                <CollapsibleTrigger asChild>
-                  <SidebarMenuButton className="group/collapsible" isActive={location.pathname === '/staff-portal'}>
-                    <ShieldCheck className="h-4 w-4" />
-                    Staff Portal
-                    <ChevronRight className="ml-auto h-4 w-4 transition-transform group-data-[state=open]/collapsible:rotate-90" />
-                  </SidebarMenuButton>
-                </CollapsibleTrigger>
-                <CollapsibleContent>
-                  <SidebarMenuSub>
-                    <SidebarMenuSubItem>
-                      <SidebarMenuSubButton asChild>
-                        <Link to="/staff-portal?tab=leave"><CalendarDays className="h-3 w-3" /><span>Leave Requests</span></Link>
-                      </SidebarMenuSubButton>
-                    </SidebarMenuSubItem>
-                    <SidebarMenuSubItem>
-                      <SidebarMenuSubButton asChild>
-                        <Link to="/staff-portal?tab=complaints"><AlertTriangle className="h-3 w-3" /><span>Complaints</span></Link>
-                      </SidebarMenuSubButton>
-                    </SidebarMenuSubItem>
-                    <SidebarMenuSubItem>
-                      <SidebarMenuSubButton asChild>
-                        <Link to="/staff-portal?tab=messages"><Mail className="h-3 w-3" /><span>Messages</span></Link>
-                      </SidebarMenuSubButton>
-                    </SidebarMenuSubItem>
-                    <SidebarMenuSubItem>
-                      <SidebarMenuSubButton asChild>
-                        <Link to="/staff-portal?tab=performance"><TrendingUp className="h-3 w-3" /><span>My Performance</span></Link>
-                      </SidebarMenuSubButton>
-                    </SidebarMenuSubItem>
-                  </SidebarMenuSub>
-                </CollapsibleContent>
-              </Collapsible>
-            </SidebarMenuItem>
-
-            <SidebarMenuItem>
-              <SidebarMenuButton asChild isActive={location.pathname === '/birthdays'}>
-                <Link to="/birthdays"><Cake className="h-4 w-4" />Birthday Calendar</Link>
+              <SidebarMenuButton asChild isActive={location.pathname === '/my-profile'}>
+                <Link to="/my-profile"><User className="h-4 w-4" />My Profile</Link>
               </SidebarMenuButton>
             </SidebarMenuItem>
 
@@ -459,13 +501,44 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             </SidebarMenuItem>
 
             <SidebarMenuItem>
-              <SidebarMenuButton asChild isActive={location.pathname === '/my-profile'}>
-                <Link to="/my-profile"><UserCog className="h-4 w-4" />My Profile</Link>
+              <SidebarMenuButton asChild isActive={location.pathname === '/business/kpi'}>
+                <Link to="/business/kpi"><TrendingUp className="h-4 w-4" />My Performance</Link>
               </SidebarMenuButton>
             </SidebarMenuItem>
 
           </SidebarMenu>
         </SidebarGroup>
+
+        {/* ── ADMINISTRATION ── */}
+        {isAdmin && (
+          <>
+            <SidebarSeparator />
+            <SidebarGroup>
+              <SidebarGroupLabel>Administration</SidebarGroupLabel>
+              <SidebarMenu>
+
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={location.pathname === '/users'}>
+                    <Link to="/users"><Users className="h-4 w-4" />User Management</Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={location.pathname === '/department-permissions'}>
+                    <Link to="/department-permissions"><ToggleLeft className="h-4 w-4" />Access Control</Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={location.pathname === '/company-files'}>
+                    <Link to="/company-files"><HardDrive className="h-4 w-4" />Company Files</Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+
+              </SidebarMenu>
+            </SidebarGroup>
+          </>
+        )}
 
       </SidebarContent>
 

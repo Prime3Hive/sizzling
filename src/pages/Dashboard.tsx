@@ -2,7 +2,30 @@ import React from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { PlusCircle, DollarSign, TrendingUp, TrendingDown, Receipt, Settings, BarChart3, Users, Wallet, LineChart, User, CalendarDays, AlertTriangle, Mail, Send, Cake, ClipboardList, PackageX } from 'lucide-react';
+import {
+  PlusCircle,
+  DollarSign,
+  TrendingUp,
+  TrendingDown,
+  Receipt,
+  BarChart3,
+  Users,
+  Wallet,
+  LineChart,
+  User,
+  CalendarDays,
+  AlertTriangle,
+  Mail,
+  Cake,
+  ClipboardList,
+  PackageX,
+  Building2,
+  Landmark,
+  UserCog,
+  ShieldCheck,
+  ArrowRight,
+  ShoppingCart,
+} from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
@@ -21,7 +44,11 @@ const Dashboard = () => {
   const yearStart = `${now.getFullYear()}-01-01`;
   const yearEnd = `${now.getFullYear()}-12-31`;
 
-  // Monthly expenses — admin/manager only (financial data)
+  const hour = now.getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+  const currentDate = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+
+  // Monthly expenses
   const { data: monthlyExpenses = [], isLoading: expLoading } = useQuery({
     queryKey: ['dashboard-expenses', monthStart, monthEnd],
     queryFn: async () => {
@@ -36,7 +63,7 @@ const Dashboard = () => {
     enabled: !!user && canViewFinancials,
   });
 
-  // YTD Sales — admin/manager only
+  // YTD Sales
   const { data: ytdSales = [], isLoading: salesLoading } = useQuery({
     queryKey: ['dashboard-sales', yearStart, yearEnd],
     queryFn: async () => {
@@ -51,7 +78,7 @@ const Dashboard = () => {
     enabled: !!user && canViewFinancials,
   });
 
-  // YTD Expenses for P/L — admin/manager only
+  // YTD Expenses for P/L
   const { data: ytdExpenses = [], isLoading: ytdExpLoading } = useQuery({
     queryKey: ['dashboard-ytd-expenses', yearStart, yearEnd],
     queryFn: async () => {
@@ -66,7 +93,7 @@ const Dashboard = () => {
     enabled: !!user && canViewFinancials,
   });
 
-  // Payroll summary — admin only (sensitive salary data)
+  // Payroll summary
   const { data: payrollRecords = [], isLoading: payrollLoading } = useQuery({
     queryKey: ['dashboard-payroll'],
     queryFn: async () => {
@@ -92,7 +119,7 @@ const Dashboard = () => {
     enabled: !!user,
   });
 
-  // Recent expenses — filtered by user for non-admins to prevent cross-user data exposure
+  // Recent expenses
   const { data: recentExpenses = [] } = useQuery({
     queryKey: ['dashboard-recent-expenses', canViewFinancials ? 'all' : user?.id],
     queryFn: async () => {
@@ -109,9 +136,7 @@ const Dashboard = () => {
     enabled: !!user,
   });
 
-  const isLoading = expLoading || salesLoading || ytdExpLoading || payrollLoading;
-
-  // Admin: upcoming birthdays in next 7 days
+  // Upcoming birthdays
   const { data: upcomingBirthdays = [] } = useQuery({
     queryKey: ['dashboard-upcoming-birthdays'],
     queryFn: async () => {
@@ -137,7 +162,7 @@ const Dashboard = () => {
     enabled: !!user && isAdmin,
   });
 
-  // Admin: all-staff pending leave count
+  // Pending leave count
   const { data: allPendingLeave = 0 } = useQuery({
     queryKey: ['dashboard-admin-pending-leave'],
     queryFn: async () => {
@@ -150,7 +175,7 @@ const Dashboard = () => {
     enabled: !!user && isAdmin,
   });
 
-  // Admin: low-stock SKU count
+  // Low-stock count
   const { data: lowStockCount = 0 } = useQuery({
     queryKey: ['dashboard-low-stock'],
     queryFn: async () => {
@@ -160,7 +185,7 @@ const Dashboard = () => {
     enabled: !!user && isAdmin,
   });
 
-  // Admin: unread staff messages count
+  // Unread messages
   const { data: unreadMsgCount = 0 } = useQuery({
     queryKey: ['admin-unread-messages'],
     queryFn: async () => {
@@ -173,7 +198,7 @@ const Dashboard = () => {
     enabled: !!user && isAdmin,
   });
 
-  // Staff profile for regular staff
+  // Staff profile for employees/managers
   const { data: staffProfile } = useQuery({
     queryKey: ['dashboard-staff-profile', user?.id],
     queryFn: async () => {
@@ -187,7 +212,7 @@ const Dashboard = () => {
     enabled: !!user && (isStaff || isEmployee || isManager),
   });
 
-  // Pending leave requests count for staff
+  // Pending leave for staff
   const { data: pendingLeaveCount = 0 } = useQuery({
     queryKey: ['dashboard-pending-leave', user?.id],
     queryFn: async () => {
@@ -201,16 +226,16 @@ const Dashboard = () => {
     enabled: !!user && (isStaff || isEmployee || isManager),
   });
 
+  const isLoading = expLoading || salesLoading || ytdExpLoading || payrollLoading;
+
   const monthlySpent = monthlyExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
   const totalBudget = budgets.reduce((sum, b) => sum + Number(b.total_budget), 0);
 
-  // Payroll
   const pendingPayroll = payrollRecords.filter(r => r.status === 'pending');
   const totalPendingPay = pendingPayroll.reduce((sum, r) => sum + Number(r.net_pay), 0);
   const paidPayroll = payrollRecords.filter(r => r.status === 'paid');
   const totalPaidPay = paidPayroll.reduce((sum, r) => sum + Number(r.net_pay), 0);
 
-  // P/L calculations
   const ytdRevenue = ytdSales.reduce((sum, s) => sum + Number(s.total_amount), 0);
   const ytdCOGS = ytdExpenses.filter(e => (e.account_type || 'COGS') === 'COGS').reduce((sum, e) => sum + Number(e.amount), 0);
   const ytdOpEX = ytdExpenses.filter(e => e.account_type === 'OpEX').reduce((sum, e) => sum + Number(e.amount), 0);
@@ -220,14 +245,20 @@ const Dashboard = () => {
   const ytdNetProfit = ytdGrossProfit - ytdTotalOpEX;
   const profitMargin = ytdRevenue > 0 ? (ytdNetProfit / ytdRevenue) * 100 : 0;
 
-  // Monthly sales
   const monthlySales = ytdSales
     .filter(s => s.sale_date >= monthStart && s.sale_date <= monthEnd)
     .reduce((sum, s) => sum + Number(s.total_amount), 0);
 
+  const displayName = user?.user_metadata?.full_name as string | undefined;
+  const firstName = displayName?.split(' ')[0] || 'there';
+
   if (isLoading) {
     return (
       <div className="space-y-6">
+        <div className="space-y-2">
+          <Skeleton className="h-4 w-32" />
+          <Skeleton className="h-9 w-64" />
+        </div>
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           {[...Array(4)].map((_, i) => (
             <Card key={i}><CardHeader className="pb-2"><Skeleton className="h-4 w-20" /></CardHeader><CardContent><Skeleton className="h-8 w-24" /></CardContent></Card>
@@ -237,7 +268,7 @@ const Dashboard = () => {
     );
   }
 
-  // Pending role users: show waiting screen
+  // Pending role: show waiting screen
   if (isPending) {
     return (
       <div className="flex flex-col items-center justify-center py-24 text-center space-y-4">
@@ -254,14 +285,14 @@ const Dashboard = () => {
             <Button variant="outline"><User className="h-4 w-4 mr-2" />My Profile</Button>
           </Link>
           <Link to="/staff-portal">
-            <Button variant="outline"><Mail className="h-4 w-4 mr-2" />Staff Portal</Button>
+            <Button variant="outline"><Mail className="h-4 w-4 mr-2" />My Requests</Button>
           </Link>
         </div>
       </div>
     );
   }
 
-  // Regular staff, approved employees, and managers see the personal staff dashboard
+  // Staff / Employee / Manager — personal dashboard
   if (isStaff || isEmployee || isManager) {
     const positionLabel = staffProfile?.position
       ? staffProfile.position.replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase())
@@ -270,13 +301,13 @@ const Dashboard = () => {
     return (
       <div className="space-y-8">
         <div>
+          <p className="text-xs text-muted-foreground uppercase tracking-widest font-medium mb-1">{currentDate}</p>
           <h1 className="text-2xl sm:text-4xl font-bold bg-gradient-primary bg-clip-text text-transparent">
-            Welcome{staffProfile?.full_name ? `, ${staffProfile.full_name.split(' ')[0]}` : ' back'}!
+            {greeting}{staffProfile?.full_name ? `, ${staffProfile.full_name.split(' ')[0]}` : ''}!
           </h1>
           <p className="text-muted-foreground sm:text-lg mt-1">Here's your staff overview.</p>
         </div>
 
-        {/* Profile summary */}
         <div className="grid gap-6 md:grid-cols-3">
           <Link to="/my-profile">
             <Card className="hover:shadow-primary transition-all duration-300 bg-gradient-card border-border/50 cursor-pointer hover:scale-105">
@@ -323,10 +354,9 @@ const Dashboard = () => {
           </Link>
         </div>
 
-        {/* Quick request actions */}
         <Card className="shadow-elegant border-border/50 bg-gradient-card">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2"><Send className="h-5 w-5 text-primary" />Send a Request</CardTitle>
+            <CardTitle className="flex items-center gap-2 text-base">Send a Request</CardTitle>
             <CardDescription>Submit requests or reports to management</CardDescription>
           </CardHeader>
           <CardContent>
@@ -365,11 +395,12 @@ const Dashboard = () => {
     );
   }
 
-  // HR users see a staff-focused dashboard
+  // HR dashboard
   if (isHR) {
     return (
       <div className="space-y-8">
         <div>
+          <p className="text-xs text-muted-foreground uppercase tracking-widest font-medium mb-1">{currentDate}</p>
           <h1 className="text-2xl sm:text-4xl font-bold bg-gradient-primary bg-clip-text text-transparent">HR Dashboard</h1>
           <p className="text-muted-foreground sm:text-lg mt-1">Manage staff profiles and personnel records.</p>
         </div>
@@ -389,7 +420,7 @@ const Dashboard = () => {
             <Card className="hover:shadow-secondary transition-all duration-300 bg-gradient-card border-border/50 cursor-pointer hover:scale-105">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium">My Profile</CardTitle>
-                <div className="p-2 rounded-full bg-gradient-primary"><Settings className="h-4 w-4 text-white" /></div>
+                <div className="p-2 rounded-full bg-gradient-primary"><User className="h-4 w-4 text-white" /></div>
               </CardHeader>
               <CardContent>
                 <p className="text-muted-foreground">View and update your personal information</p>
@@ -401,12 +432,20 @@ const Dashboard = () => {
     );
   }
 
+  // ── Admin Dashboard ──
+  const hasAlerts = allPendingLeave > 0 || lowStockCount > 0 || upcomingBirthdays.length > 0 || unreadMsgCount > 0;
+
   return (
     <div className="space-y-8">
+
+      {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl sm:text-4xl font-bold bg-gradient-primary bg-clip-text text-transparent">Dashboard</h1>
-          <p className="text-muted-foreground sm:text-lg mt-1">Welcome back! Here's your business overview.</p>
+          <p className="text-xs text-muted-foreground uppercase tracking-widest font-medium mb-1">{currentDate}</p>
+          <h1 className="text-2xl sm:text-4xl font-bold bg-gradient-primary bg-clip-text text-transparent">
+            {greeting}, {firstName}!
+          </h1>
+          <p className="text-muted-foreground sm:text-lg mt-1">Here's your business at a glance.</p>
         </div>
         <Link to="/expenses">
           <Button className="bg-gradient-primary hover:shadow-primary transition-all duration-300 shrink-0">
@@ -415,28 +454,82 @@ const Dashboard = () => {
         </Link>
       </div>
 
-      {/* Financial Overview */}
-      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
-        {isAdmin && (
+      {/* Action Alerts */}
+      {hasAlerts && (
+        <div>
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-3">Action Required</p>
+          <div className="flex flex-wrap gap-3">
+            {allPendingLeave > 0 && (
+              <Link to="/staff-portal?tab=leave" className="flex-1 min-w-[200px]">
+                <div className="flex items-center gap-3 rounded-lg border border-yellow-200 bg-yellow-50 dark:bg-yellow-900/10 px-4 py-3 hover:shadow-md transition-all cursor-pointer">
+                  <div className="p-2 bg-yellow-500/10 rounded-lg shrink-0"><ClipboardList className="h-4 w-4 text-yellow-600" /></div>
+                  <div>
+                    <p className="text-sm font-semibold text-yellow-800 dark:text-yellow-400">{allPendingLeave} Pending Leave{allPendingLeave !== 1 ? 's' : ''}</p>
+                    <p className="text-xs text-yellow-600 dark:text-yellow-500">Awaiting approval</p>
+                  </div>
+                </div>
+              </Link>
+            )}
+            {unreadMsgCount > 0 && (
+              <Link to="/staff-portal?tab=messages" className="flex-1 min-w-[200px]">
+                <div className="flex items-center gap-3 rounded-lg border border-primary/20 bg-primary/5 px-4 py-3 hover:shadow-md transition-all cursor-pointer">
+                  <div className="p-2 bg-primary/10 rounded-lg shrink-0"><Mail className="h-4 w-4 text-primary" /></div>
+                  <div>
+                    <p className="text-sm font-semibold text-primary">{unreadMsgCount} Unread Message{unreadMsgCount !== 1 ? 's' : ''}</p>
+                    <p className="text-xs text-primary/70">From staff</p>
+                  </div>
+                </div>
+              </Link>
+            )}
+            {lowStockCount > 0 && (
+              <Link to="/business/inventory" className="flex-1 min-w-[200px]">
+                <div className="flex items-center gap-3 rounded-lg border border-red-200 bg-red-50 dark:bg-red-900/10 px-4 py-3 hover:shadow-md transition-all cursor-pointer">
+                  <div className="p-2 bg-red-500/10 rounded-lg shrink-0"><PackageX className="h-4 w-4 text-red-600" /></div>
+                  <div>
+                    <p className="text-sm font-semibold text-red-800 dark:text-red-400">{lowStockCount} Low Stock Item{lowStockCount !== 1 ? 's' : ''}</p>
+                    <p className="text-xs text-red-600 dark:text-red-500">At or below reorder point</p>
+                  </div>
+                </div>
+              </Link>
+            )}
+            {upcomingBirthdays.length > 0 && (
+              <Link to="/birthdays" className="flex-1 min-w-[200px]">
+                <div className="flex items-center gap-3 rounded-lg border border-pink-200 bg-pink-50 dark:bg-pink-900/10 px-4 py-3 hover:shadow-md transition-all cursor-pointer">
+                  <div className="p-2 bg-pink-500/10 rounded-lg shrink-0"><Cake className="h-4 w-4 text-pink-600" /></div>
+                  <div>
+                    <p className="text-sm font-semibold text-pink-800 dark:text-pink-400">
+                      {upcomingBirthdays[0].name.split(' ')[0]}{upcomingBirthdays.length > 1 ? ` +${upcomingBirthdays.length - 1} more` : ''}
+                    </p>
+                    <p className="text-xs text-pink-600 dark:text-pink-500">Birthday{upcomingBirthdays.length !== 1 ? 's' : ''} in 7 days</p>
+                  </div>
+                </div>
+              </Link>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Financial Pulse */}
+      <div>
+        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-3">Financial Pulse</p>
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           <Link to="/profit-loss">
-            <Card className="hover:shadow-primary transition-all duration-300 bg-gradient-card border-border/50 cursor-pointer hover:scale-105">
+            <Card className="hover:shadow-primary transition-all duration-300 bg-gradient-card border-border/50 cursor-pointer hover:scale-[1.02]">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">YTD Revenue</CardTitle>
+                <CardTitle className="text-sm font-medium text-muted-foreground">YTD Revenue</CardTitle>
                 <div className="p-2 rounded-full bg-gradient-primary"><DollarSign className="h-4 w-4 text-white" /></div>
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold">{formatNairaCompact(ytdRevenue)}</div>
-                <p className="text-xs text-muted-foreground">This month: {formatNairaCompact(monthlySales)}</p>
+                <p className="text-xs text-muted-foreground mt-1">This month: {formatNairaCompact(monthlySales)}</p>
               </CardContent>
             </Card>
           </Link>
-        )}
 
-        {isAdmin && (
           <Link to="/profit-loss">
-            <Card className="hover:shadow-secondary transition-all duration-300 bg-gradient-card border-border/50 cursor-pointer hover:scale-105">
+            <Card className="hover:shadow-secondary transition-all duration-300 bg-gradient-card border-border/50 cursor-pointer hover:scale-[1.02]">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">YTD Net Profit</CardTitle>
+                <CardTitle className="text-sm font-medium text-muted-foreground">YTD Net Profit</CardTitle>
                 <div className="p-2 rounded-full bg-gradient-primary">
                   {ytdNetProfit >= 0 ? <TrendingUp className="h-4 w-4 text-white" /> : <TrendingDown className="h-4 w-4 text-white" />}
                 </div>
@@ -445,179 +538,159 @@ const Dashboard = () => {
                 <div className={`text-2xl font-bold ${ytdNetProfit >= 0 ? 'text-success' : 'text-destructive'}`}>
                   {ytdNetProfit < 0 ? '-' : ''}{formatNairaCompact(Math.abs(ytdNetProfit))}
                 </div>
-                <p className="text-xs text-muted-foreground">Margin: {profitMargin.toFixed(1)}%</p>
+                <p className="text-xs text-muted-foreground mt-1">Margin: {profitMargin.toFixed(1)}%</p>
               </CardContent>
             </Card>
           </Link>
-        )}
 
-        <Link to="/expenses">
-          <Card className="hover:shadow-primary transition-all duration-300 bg-gradient-card border-border/50 cursor-pointer hover:scale-105">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Monthly Expenses</CardTitle>
-              <div className="p-2 rounded-full bg-gradient-primary"><Receipt className="h-4 w-4 text-white" /></div>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{formatNairaCompact(monthlySpent)}</div>
-              <p className="text-xs text-muted-foreground">
-                {totalBudget > 0 ? `${((monthlySpent / totalBudget) * 100).toFixed(1)}% of budget` : 'No budget set'}
-              </p>
-            </CardContent>
-          </Card>
-        </Link>
-
-        {isAdmin && (
-          <Link to="/payroll">
-            <Card className="hover:shadow-secondary transition-all duration-300 bg-gradient-card border-border/50 cursor-pointer hover:scale-105">
+          <Link to="/expenses">
+            <Card className="hover:shadow-primary transition-all duration-300 bg-gradient-card border-border/50 cursor-pointer hover:scale-[1.02]">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Payroll</CardTitle>
+                <CardTitle className="text-sm font-medium text-muted-foreground">Monthly Expenses</CardTitle>
+                <div className="p-2 rounded-full bg-gradient-primary"><Receipt className="h-4 w-4 text-white" /></div>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{formatNairaCompact(monthlySpent)}</div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {totalBudget > 0 ? `${((monthlySpent / totalBudget) * 100).toFixed(1)}% of budget` : 'No budget set'}
+                </p>
+              </CardContent>
+            </Card>
+          </Link>
+
+          <Link to="/payroll">
+            <Card className="hover:shadow-secondary transition-all duration-300 bg-gradient-card border-border/50 cursor-pointer hover:scale-[1.02]">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">Payroll</CardTitle>
                 <div className="p-2 rounded-full bg-gradient-primary"><Wallet className="h-4 w-4 text-white" /></div>
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold text-warning">{formatNairaCompact(totalPendingPay)}</div>
-                <p className="text-xs text-muted-foreground">{pendingPayroll.length} pending • {paidPayroll.length} paid</p>
+                <p className="text-xs text-muted-foreground mt-1">{pendingPayroll.length} pending · {paidPayroll.length} paid</p>
               </CardContent>
             </Card>
           </Link>
-        )}
-        {isAdmin && (
-          <Link to="/staff-portal">
-            <Card className="hover:shadow-primary transition-all duration-300 bg-gradient-card border-border/50 cursor-pointer hover:scale-105">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Staff Messages</CardTitle>
-                <div className="p-2 rounded-full bg-gradient-primary"><Mail className="h-4 w-4 text-white" /></div>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{unreadMsgCount}</div>
-                <p className="text-xs text-muted-foreground">Unread messages</p>
-              </CardContent>
-            </Card>
-          </Link>
-        )}
+        </div>
       </div>
 
-      {/* Admin alert widgets */}
-      {(allPendingLeave > 0 || lowStockCount > 0 || upcomingBirthdays.length > 0) && (
-        <div className="grid gap-4 md:grid-cols-3">
-          {allPendingLeave > 0 && (
-            <Link to="/staff-portal">
-              <Card className="border-yellow-200 bg-yellow-50 dark:bg-yellow-900/10 hover:shadow-md transition-all cursor-pointer">
-                <CardContent className="pt-4 pb-4">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-yellow-500/10 rounded-lg"><ClipboardList className="h-5 w-5 text-yellow-600" /></div>
-                    <div>
-                      <p className="text-sm font-semibold text-yellow-800 dark:text-yellow-400">{allPendingLeave} Pending Leave{allPendingLeave !== 1 ? 's' : ''}</p>
-                      <p className="text-xs text-yellow-600 dark:text-yellow-500">Awaiting approval — click to review</p>
-                    </div>
+      {/* Hub Navigation */}
+      <div>
+        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-3">Navigate</p>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Link to="/business">
+            <Card className="group h-full hover:shadow-primary transition-all duration-300 border-border/50 hover:border-primary/30 cursor-pointer hover:scale-[1.02]">
+              <CardContent className="pt-5 pb-4">
+                <div className="flex items-start justify-between mb-3">
+                  <div className="p-2.5 rounded-xl bg-primary/10 text-primary">
+                    <ShoppingCart className="h-5 w-5" />
                   </div>
-                </CardContent>
-              </Card>
-            </Link>
-          )}
-          {lowStockCount > 0 && (
-            <Link to="/business/inventory">
-              <Card className="border-red-200 bg-red-50 dark:bg-red-900/10 hover:shadow-md transition-all cursor-pointer">
-                <CardContent className="pt-4 pb-4">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-red-500/10 rounded-lg"><PackageX className="h-5 w-5 text-red-600" /></div>
-                    <div>
-                      <p className="text-sm font-semibold text-red-800 dark:text-red-400">{lowStockCount} Low Stock Item{lowStockCount !== 1 ? 's' : ''}</p>
-                      <p className="text-xs text-red-600 dark:text-red-500">At or below reorder point</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </Link>
-          )}
-          {upcomingBirthdays.length > 0 && (
-            <Link to="/birthdays">
-              <Card className="border-pink-200 bg-pink-50 dark:bg-pink-900/10 hover:shadow-md transition-all cursor-pointer">
-                <CardContent className="pt-4 pb-4">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-pink-500/10 rounded-lg"><Cake className="h-5 w-5 text-pink-600" /></div>
-                    <div>
-                      <p className="text-sm font-semibold text-pink-800 dark:text-pink-400">
-                        {upcomingBirthdays[0].name.split(' ')[0]}{upcomingBirthdays.length > 1 ? ` +${upcomingBirthdays.length - 1} more` : ''}
-                      </p>
-                      <p className="text-xs text-pink-600 dark:text-pink-500">Birthday{upcomingBirthdays.length !== 1 ? 's' : ''} in next 7 days 🎂</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </Link>
-          )}
-        </div>
-      )}
+                  <ArrowRight className="h-4 w-4 text-muted-foreground/40 group-hover:text-primary transition-colors mt-1" />
+                </div>
+                <p className="font-semibold text-sm">Commerce</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Sales · Payments · Invoices · Inventory</p>
+              </CardContent>
+            </Card>
+          </Link>
 
-      {/* P/L Summary + Recent Expenses */}
+          <Link to="/expenses">
+            <Card className="group h-full hover:shadow-secondary transition-all duration-300 border-border/50 hover:border-secondary/30 cursor-pointer hover:scale-[1.02]">
+              <CardContent className="pt-5 pb-4">
+                <div className="flex items-start justify-between mb-3">
+                  <div className="p-2.5 rounded-xl bg-secondary/10 text-secondary">
+                    <Landmark className="h-5 w-5" />
+                  </div>
+                  <ArrowRight className="h-4 w-4 text-muted-foreground/40 group-hover:text-secondary transition-colors mt-1" />
+                </div>
+                <p className="font-semibold text-sm">Finance</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Expenses · Budgets · P&L · Reports</p>
+              </CardContent>
+            </Card>
+          </Link>
+
+          <Link to="/staff-profiles">
+            <Card className="group h-full hover:shadow-primary transition-all duration-300 border-border/50 hover:border-primary/30 cursor-pointer hover:scale-[1.02]">
+              <CardContent className="pt-5 pb-4">
+                <div className="flex items-start justify-between mb-3">
+                  <div className="p-2.5 rounded-xl bg-purple-100 dark:bg-purple-900/20 text-purple-600">
+                    <UserCog className="h-5 w-5" />
+                  </div>
+                  <ArrowRight className="h-4 w-4 text-muted-foreground/40 group-hover:text-purple-600 transition-colors mt-1" />
+                </div>
+                <p className="font-semibold text-sm">People</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Staff · Payroll · KPI · Requests</p>
+              </CardContent>
+            </Card>
+          </Link>
+
+          <Link to="/users">
+            <Card className="group h-full hover:shadow-elegant transition-all duration-300 border-border/50 hover:border-muted-foreground/30 cursor-pointer hover:scale-[1.02]">
+              <CardContent className="pt-5 pb-4">
+                <div className="flex items-start justify-between mb-3">
+                  <div className="p-2.5 rounded-xl bg-muted text-muted-foreground">
+                    <ShieldCheck className="h-5 w-5" />
+                  </div>
+                  <ArrowRight className="h-4 w-4 text-muted-foreground/40 group-hover:text-foreground transition-colors mt-1" />
+                </div>
+                <p className="font-semibold text-sm">Administration</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Users · Access Control · Files</p>
+              </CardContent>
+            </Card>
+          </Link>
+        </div>
+      </div>
+
+      {/* Detail cards: P&L Summary + Recent Expenses */}
       <div className="grid gap-6 md:grid-cols-2">
-        {isAdmin && (
-          <Card className="shadow-elegant border-border/50 bg-gradient-card">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2"><LineChart className="h-5 w-5 text-primary" />P&L Summary — {now.getFullYear()}</CardTitle>
-              <CardDescription>Year-to-date financial performance</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                <div className="flex justify-between"><span className="text-muted-foreground">Revenue</span><span className="font-medium">{formatNairaCompact(ytdRevenue)}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">COGS</span><span className="font-medium text-destructive">-{formatNairaCompact(ytdCOGS)}</span></div>
-                <div className="border-t pt-2 flex justify-between"><span className="font-medium">Gross Profit</span><span className={ytdGrossProfit >= 0 ? 'text-success font-medium' : 'text-destructive font-medium'}>{formatNairaCompact(ytdGrossProfit)}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">OpEX</span><span className="font-medium text-destructive">-{formatNairaCompact(ytdOpEX)}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">Payroll</span><span className="font-medium text-destructive">-{formatNairaCompact(ytdPayrollOpEX)}</span></div>
-                <div className="border-t pt-2 flex justify-between"><span className="font-semibold">Net Profit</span><span className={`font-bold ${ytdNetProfit >= 0 ? 'text-success' : 'text-destructive'}`}>{ytdNetProfit < 0 ? '-' : ''}{formatNairaCompact(Math.abs(ytdNetProfit))}</span></div>
-              </div>
-              <Link to="/profit-loss">
-                <Button variant="outline" className="w-full mt-4">View Full P&L Dashboard</Button>
-              </Link>
-            </CardContent>
-          </Card>
-        )}
+        <Card className="shadow-elegant border-border/50 bg-gradient-card">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base"><LineChart className="h-4 w-4 text-primary" />P&L Summary — {now.getFullYear()}</CardTitle>
+            <CardDescription>Year-to-date financial performance</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2.5">
+              <div className="flex justify-between text-sm"><span className="text-muted-foreground">Revenue</span><span className="font-medium">{formatNairaCompact(ytdRevenue)}</span></div>
+              <div className="flex justify-between text-sm"><span className="text-muted-foreground">COGS</span><span className="font-medium text-destructive">−{formatNairaCompact(ytdCOGS)}</span></div>
+              <div className="border-t pt-2 flex justify-between text-sm"><span className="font-medium">Gross Profit</span><span className={ytdGrossProfit >= 0 ? 'text-success font-semibold' : 'text-destructive font-semibold'}>{formatNairaCompact(ytdGrossProfit)}</span></div>
+              <div className="flex justify-between text-sm"><span className="text-muted-foreground">OpEX</span><span className="font-medium text-destructive">−{formatNairaCompact(ytdOpEX)}</span></div>
+              <div className="flex justify-between text-sm"><span className="text-muted-foreground">Payroll</span><span className="font-medium text-destructive">−{formatNairaCompact(ytdPayrollOpEX)}</span></div>
+              <div className="border-t pt-2 flex justify-between text-sm"><span className="font-semibold">Net Profit</span><span className={`font-bold ${ytdNetProfit >= 0 ? 'text-success' : 'text-destructive'}`}>{ytdNetProfit < 0 ? '−' : ''}{formatNairaCompact(Math.abs(ytdNetProfit))}</span></div>
+            </div>
+            <Link to="/profit-loss">
+              <Button variant="outline" size="sm" className="w-full mt-4">View Full P&L Report</Button>
+            </Link>
+          </CardContent>
+        </Card>
 
         <Card className="shadow-elegant border-border/50 bg-gradient-card">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2"><Receipt className="h-5 w-5 text-primary" />Recent Expenses</CardTitle>
-            <CardDescription>Your latest transactions</CardDescription>
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base"><Receipt className="h-4 w-4 text-primary" />Recent Expenses</CardTitle>
+            <CardDescription>Latest recorded transactions</CardDescription>
           </CardHeader>
           <CardContent>
             {recentExpenses.length === 0 ? (
               <div className="text-center py-6">
-                <Receipt className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                <p className="text-muted-foreground">No expenses yet</p>
-                <Link to="/expenses"><Button variant="outline" className="mt-2">Add your first expense</Button></Link>
+                <Receipt className="h-10 w-10 text-muted-foreground mx-auto mb-3" />
+                <p className="text-muted-foreground text-sm">No expenses yet</p>
+                <Link to="/expenses"><Button variant="outline" size="sm" className="mt-2">Add your first expense</Button></Link>
               </div>
             ) : (
-              <div className="space-y-4">
+              <div className="space-y-3">
                 {recentExpenses.map((expense: any) => (
                   <div key={expense.id} className="flex items-center justify-between">
-                    <div>
-                      <p className="font-medium">{expense.description}</p>
-                      <p className="text-sm text-muted-foreground">{expense.category} • {new Date(expense.date).toLocaleDateString()}</p>
+                    <div className="min-w-0">
+                      <p className="font-medium text-sm truncate">{expense.description}</p>
+                      <p className="text-xs text-muted-foreground">{expense.category} · {new Date(expense.date).toLocaleDateString()}</p>
                     </div>
-                    <p className="font-medium">{formatNairaCompact(Number(expense.amount))}</p>
+                    <p className="font-semibold text-sm ml-3 shrink-0">{formatNairaCompact(Number(expense.amount))}</p>
                   </div>
                 ))}
-                <Link to="/expenses"><Button variant="outline" className="w-full">View All Expenses</Button></Link>
+                <Link to="/expenses"><Button variant="outline" size="sm" className="w-full mt-1">View All Expenses</Button></Link>
               </div>
             )}
           </CardContent>
         </Card>
       </div>
 
-      {/* Quick Actions */}
-      <Card className="shadow-elegant border-border/50 bg-gradient-card">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2"><Settings className="h-5 w-5 text-secondary" />Quick Actions</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <Link to="/expenses"><Button variant="outline" className="w-full justify-start"><PlusCircle className="h-4 w-4 mr-2" />Add Expense</Button></Link>
-            <Link to="/budgets"><Button variant="outline" className="w-full justify-start"><Settings className="h-4 w-4 mr-2" />Budgets</Button></Link>
-            {isAdmin && <Link to="/profit-loss"><Button variant="outline" className="w-full justify-start"><BarChart3 className="h-4 w-4 mr-2" />P&L Report</Button></Link>}
-            {isAdmin && <Link to="/payroll"><Button variant="outline" className="w-full justify-start"><Users className="h-4 w-4 mr-2" />Payroll</Button></Link>}
-            {isAdmin && <Link to="/staff-portal"><Button variant="outline" className="w-full justify-start"><Mail className="h-4 w-4 mr-2" />Staff Messages</Button></Link>}
-          </div>
-        </CardContent>
-      </Card>
     </div>
   );
 };

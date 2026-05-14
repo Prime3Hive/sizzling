@@ -20,7 +20,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Printer, FileCheck, TrendingUp, Edit, XCircle, CheckCircle2, Users, Building2,
+  Download, Archive, ArchiveRestore, Loader2,
 } from "lucide-react";
+import html2canvas from "html2canvas";
+import { jsPDF } from "jspdf";
 import { format } from "date-fns";
 import { formatNairaCompact } from "@/lib/currency";
 import {
@@ -61,6 +64,7 @@ export default function InvoiceViewDialog({ invoice, open, onOpenChange, onEdit 
   );
   const [amountPaid, setAmountPaid] = useState(invoice?.amount_paid?.toString() ?? "0");
   const [updatingPayment, setUpdatingPayment] = useState(false);
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
 
   // Fetch full names for created_by / updated_by
   useEffect(() => {
@@ -128,6 +132,26 @@ export default function InvoiceViewDialog({ invoice, open, onOpenChange, onEdit 
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["invoices"] });
       toast({ title: "Cancelled", description: "Document has been cancelled." });
+      onOpenChange(false);
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  // Archive / unarchive a cancelled invoice
+  const archiveMutation = useMutation({
+    mutationFn: async (archive: boolean) => {
+      if (!invoice) throw new Error("No invoice");
+      const { error } = await supabase
+        .from("invoices")
+        .update({ archived: archive, updated_by: user?.id ?? null })
+        .eq("id", invoice.id);
+      if (error) throw error;
+    },
+    onSuccess: (_, archive) => {
+      queryClient.invalidateQueries({ queryKey: ["invoices"] });
+      toast({ title: archive ? "Invoice archived" : "Invoice restored from archive" });
       onOpenChange(false);
     },
     onError: (err: any) => {
@@ -247,6 +271,41 @@ export default function InvoiceViewDialog({ invoice, open, onOpenChange, onEdit 
       toast({ title: "Error", description: err.message, variant: "destructive" });
     } finally {
       setUpdatingPayment(false);
+    }
+  };
+
+  const handleDownloadPdf = async () => {
+    const el = printRef.current;
+    if (!el) return;
+    setDownloadingPdf(true);
+    try {
+      const canvas = await html2canvas(el, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        width: 794,
+      });
+      const imgData = canvas.toDataURL("image/png");
+      const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+      const pageW  = pdf.internal.pageSize.getWidth();
+      const pageH  = pdf.internal.pageSize.getHeight();
+      const ratio  = pageW / canvas.width;
+      const imgH   = canvas.height * ratio;
+      let remaining = imgH;
+      let offset    = 0;
+      pdf.addImage(imgData, "PNG", 0, offset, pageW, imgH);
+      remaining -= pageH;
+      while (remaining > 0) {
+        offset -= pageH;
+        pdf.addPage();
+        pdf.addImage(imgData, "PNG", 0, offset, pageW, imgH);
+        remaining -= pageH;
+      }
+      pdf.save(`${displayNumber}.pdf`);
+    } catch (err: any) {
+      toast({ title: "PDF generation failed", description: err.message, variant: "destructive" });
+    } finally {
+      setDownloadingPdf(false);
     }
   };
 
@@ -624,8 +683,8 @@ export default function InvoiceViewDialog({ invoice, open, onOpenChange, onEdit 
             )}
           </section>
 
-          {/* Hidden print template */}
-          <div className="hidden">
+          {/* Off-screen print template — must be visible for html2canvas */}
+          <div style={{ position: "absolute", left: "-9999px", top: 0, width: 794, pointerEvents: "none" }}>
             <div ref={printRef}>
               <InvoicePrintView invoice={invoice} />
             </div>
@@ -636,6 +695,37 @@ export default function InvoiceViewDialog({ invoice, open, onOpenChange, onEdit 
             <Button variant="outline" onClick={handlePrint}>
               <Printer className="h-4 w-4 mr-1.5" /> Print
             </Button>
+
+            {/* Always: download PDF */}
+            <Button variant="outline" onClick={handleDownloadPdf} disabled={downloadingPdf}>
+              {downloadingPdf
+                ? <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Generating…</>
+                : <><Download className="h-4 w-4 mr-1.5" /> Download PDF</>
+              }
+            </Button>
+
+            {/* Cancelled: archive / restore */}
+            {isCancelled && (
+              invoice.archived ? (
+                <Button
+                  variant="outline"
+                  onClick={() => archiveMutation.mutate(false)}
+                  disabled={archiveMutation.isPending}
+                >
+                  <ArchiveRestore className="h-4 w-4 mr-1.5" />
+                  {archiveMutation.isPending ? "Restoring…" : "Restore from Archive"}
+                </Button>
+              ) : (
+                <Button
+                  variant="outline"
+                  onClick={() => archiveMutation.mutate(true)}
+                  disabled={archiveMutation.isPending}
+                >
+                  <Archive className="h-4 w-4 mr-1.5" />
+                  {archiveMutation.isPending ? "Archiving…" : "Archive"}
+                </Button>
+              )
+            )}
 
             {/* Quotation actions */}
             {isQuotation && (
@@ -665,7 +755,7 @@ export default function InvoiceViewDialog({ invoice, open, onOpenChange, onEdit 
               </Button>
             )}
 
-            {isInvoice && !isCancelled && (
+            {isInvoice && (
               <Button variant="outline" onClick={() => setShowCancelConfirm(true)}>
                 <XCircle className="h-4 w-4 mr-1.5" /> Cancel Invoice
               </Button>

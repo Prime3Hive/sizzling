@@ -63,6 +63,7 @@ export interface Invoice {
   updated_at: string;
   created_by: string | null;
   updated_by: string | null;
+  archived: boolean;
   items?: InvoiceItem[];
 }
 

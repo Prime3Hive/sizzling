@@ -169,9 +169,9 @@ const App = () => (
                   </PermissionRoute>
                 } />
                 <Route path="business/kpi" element={
-                  <AdminOrHRRoute>
+                  <ProtectedRoute>
                     <KPIDashboard />
-                  </AdminOrHRRoute>
+                  </ProtectedRoute>
                 } />
                 <Route path="business/invoices" element={
                   <PermissionRoute module="invoices">
