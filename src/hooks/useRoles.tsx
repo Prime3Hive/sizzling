@@ -2,6 +2,8 @@ import { createContext, useContext, ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from './useAuth';
+import { hasFeature, type Feature } from '@/config/capabilities';
+import type { AppRole } from '@/config/modules';
 
 interface UserRole {
   id: string;
@@ -44,6 +46,7 @@ interface RoleContextType {
   isPending: boolean;
   loading: boolean;
   hasPermission: (module: string, action: 'view' | 'create' | 'update' | 'delete') => boolean;
+  canFeature: (feature: Feature) => boolean;
   refetchRole: () => Promise<void>;
 }
 
@@ -135,6 +138,11 @@ export const RoleProvider = ({ children }: RoleProviderProps) => {
   const isEmployee = userRole?.role === 'employee' && isApproved;
   const isPending  = !!userRole && !isApproved;
 
+  const canFeature = (feature: Feature): boolean => {
+    if (!isApproved || !userRole) return false;
+    return hasFeature(userRole.role as AppRole, feature);
+  };
+
   const refetchRole = async () => {
     await queryClient.invalidateQueries({ queryKey: ['user-role-data', user?.id] });
   };
@@ -150,6 +158,7 @@ export const RoleProvider = ({ children }: RoleProviderProps) => {
     isPending,
     loading: isLoading,
     hasPermission,
+    canFeature,
     refetchRole,
   };
 

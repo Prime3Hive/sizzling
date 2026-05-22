@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./hooks/useAuth";
 import { RoleProvider, useRoles } from "./hooks/useRoles";
+import { Can } from "./components/Can";
 import * as Sentry from "@sentry/react";
 import Layout from "./components/Layout";
 
@@ -34,6 +35,8 @@ const BirthdayCalendar  = lazy(() => import("./pages/BirthdayCalendar"));
 const MyPayslip         = lazy(() => import("./pages/MyPayslip"));
 const DepartmentPermissions = lazy(() => import("./pages/admin/DepartmentPermissions"));
 const CompanyFiles      = lazy(() => import("./pages/admin/CompanyFiles"));
+const PendingApproval   = lazy(() => import("./pages/PendingApproval"));
+const Procurement       = lazy(() => import("./pages/Procurement"));
 const NotFound          = lazy(() => import("./pages/NotFound"));
 
 const PageLoader = () => (
@@ -52,52 +55,33 @@ const queryClient = new QueryClient({
   },
 });
 
-const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
-  const { user, loading } = useAuth();
-  if (loading) return <PageLoader />;
-  if (!user) return <Navigate to="/auth" replace />;
-  return <>{children}</>;
-};
-
-const AdminRoute = ({ children }: { children: React.ReactNode }) => {
+// Requires authentication. By default also blocks pending users (redirect to /pending-approval).
+// Pass allowPending for routes that pending users should be able to reach (dashboard, my-profile).
+const ProtectedRoute = ({
+  children,
+  allowPending = false,
+}: {
+  children: React.ReactNode;
+  allowPending?: boolean;
+}) => {
   const { user, loading: authLoading } = useAuth();
-  const { isAdmin, loading: roleLoading } = useRoles();
+  const { isPending, loading: roleLoading } = useRoles();
   if (authLoading || roleLoading) return <PageLoader />;
   if (!user) return <Navigate to="/auth" replace />;
-  if (!isAdmin) return <Navigate to="/dashboard" replace />;
+  if (isPending && !allowPending) return <Navigate to="/pending-approval" replace />;
   return <>{children}</>;
 };
 
-const AdminOrHRRoute = ({ children }: { children: React.ReactNode }) => {
-  const { user, loading: authLoading } = useAuth();
-  const { isAdmin, isHR, loading: roleLoading } = useRoles();
-  if (authLoading || roleLoading) return <PageLoader />;
-  if (!user) return <Navigate to="/auth" replace />;
-  if (!isAdmin && !isHR) return <Navigate to="/dashboard" replace />;
-  return <>{children}</>;
-};
-
-// Business overview page: any user with at least one business module permission
+// Business overview: any user with at least one business module permission.
 const BusinessRoute = ({ children }: { children: React.ReactNode }) => {
   const { user, loading: authLoading } = useAuth();
   const { isAdmin, isManager, hasPermission, loading: roleLoading } = useRoles();
   if (authLoading || roleLoading) return <PageLoader />;
   if (!user) return <Navigate to="/auth" replace />;
   const hasAny = isAdmin || isManager ||
-    ['sales','inventory','invoices','finance','budgets','reports']
+    (['sales', 'inventory', 'invoices', 'finance', 'budgets', 'reports'] as const)
       .some(m => hasPermission(m, 'view'));
   if (!hasAny) return <Navigate to="/dashboard" replace />;
-  return <>{children}</>;
-};
-
-// Module-level permission gate — uses department_permissions for granular access.
-// Admin and HR always pass (handled inside hasPermission).
-const PermissionRoute = ({ module, children }: { module: string; children: React.ReactNode }) => {
-  const { user, loading: authLoading } = useAuth();
-  const { hasPermission, loading: roleLoading } = useRoles();
-  if (authLoading || roleLoading) return <PageLoader />;
-  if (!user) return <Navigate to="/auth" replace />;
-  if (!hasPermission(module, 'view')) return <Navigate to="/dashboard" replace />;
   return <>{children}</>;
 };
 
@@ -114,115 +98,28 @@ const App = () => (
               <Route path="/auth" element={<Auth />} />
               <Route path="/" element={<Layout />}>
                 <Route index element={
-                  <ProtectedRoute>
+                  <ProtectedRoute allowPending>
                     <Navigate to="/dashboard" replace />
                   </ProtectedRoute>
                 } />
+                {/* Pending users land here until approved */}
+                <Route path="pending-approval" element={
+                  <ProtectedRoute allowPending>
+                    <PendingApproval />
+                  </ProtectedRoute>
+                } />
+                {/* Open to all authenticated users (including pending) */}
                 <Route path="dashboard" element={
-                  <ProtectedRoute>
+                  <ProtectedRoute allowPending>
                     <Dashboard />
                   </ProtectedRoute>
                 } />
-                <Route path="expenses" element={
-                  <PermissionRoute module="budgets">
-                    <Expenses />
-                  </PermissionRoute>
-                } />
-                <Route path="budgets" element={
-                  <PermissionRoute module="budgets">
-                    <Budgets />
-                  </PermissionRoute>
-                } />
-                <Route path="reports" element={
-                  <PermissionRoute module="reports">
-                    <Reports />
-                  </PermissionRoute>
-                } />
-                <Route path="business" element={
-                  <BusinessRoute>
-                    <BusinessManagement />
-                  </BusinessRoute>
-                } />
-                <Route path="business/inventory" element={
-                  <PermissionRoute module="inventory">
-                    <Inventory />
-                  </PermissionRoute>
-                } />
-                <Route path="business/inventory-requests" element={
-                  <ProtectedRoute>
-                    <InventoryRequests />
-                  </ProtectedRoute>
-                } />
-                <Route path="business/sku-management" element={
-                  <PermissionRoute module="inventory">
-                    <SKUManagement />
-                  </PermissionRoute>
-                } />
-                <Route path="business/payments" element={
-                  <PermissionRoute module="sales">
-                    <Payments />
-                  </PermissionRoute>
-                } />
-                <Route path="business/analytics" element={
-                  <PermissionRoute module="inventory">
-                    <Analytics />
-                  </PermissionRoute>
-                } />
-                <Route path="business/kpi" element={
-                  <ProtectedRoute>
-                    <KPIDashboard />
-                  </ProtectedRoute>
-                } />
-                <Route path="business/invoices" element={
-                  <PermissionRoute module="invoices">
-                    <Invoices />
-                  </PermissionRoute>
-                } />
-                <Route path="business/finance" element={
-                  <PermissionRoute module="finance">
-                    <Finance />
-                  </PermissionRoute>
-                } />
-                <Route path="users" element={
-                  <AdminRoute>
-                    <UserManagement />
-                  </AdminRoute>
-                } />
-                <Route path="department-permissions" element={
-                  <AdminRoute>
-                    <DepartmentPermissions />
-                  </AdminRoute>
-                } />
-                <Route path="company-files" element={
-                  <AdminRoute>
-                    <CompanyFiles />
-                  </AdminRoute>
-                } />
-                <Route path="staff-profiles" element={
-                  <AdminOrHRRoute>
-                    <StaffProfiles />
-                  </AdminOrHRRoute>
-                } />
-                <Route path="njc-supplies" element={
-                  <AdminRoute>
-                    <NJCSupplies />
-                  </AdminRoute>
-                } />
-                <Route path="profit-loss" element={
-                  <AdminRoute>
-                    <ProfitLoss />
-                  </AdminRoute>
-                } />
-                <Route path="payroll" element={
-                  <AdminRoute>
-                    <Payroll />
-                  </AdminRoute>
-                } />
                 <Route path="my-profile" element={
-                  <ProtectedRoute>
+                  <ProtectedRoute allowPending>
                     <MyProfile />
                   </ProtectedRoute>
                 } />
+                {/* Requires approved role (pending users → /pending-approval) */}
                 <Route path="staff-portal" element={
                   <ProtectedRoute>
                     <StaffPortal />
@@ -237,6 +134,108 @@ const App = () => (
                   <ProtectedRoute>
                     <MyPayslip />
                   </ProtectedRoute>
+                } />
+                <Route path="business/inventory-requests" element={
+                  <ProtectedRoute>
+                    <InventoryRequests />
+                  </ProtectedRoute>
+                } />
+                <Route path="business/kpi" element={
+                  <ProtectedRoute>
+                    <KPIDashboard />
+                  </ProtectedRoute>
+                } />
+                {/* Module-permission-gated routes */}
+                <Route path="expenses" element={
+                  <Can module="budgets" redirect="/dashboard">
+                    <Expenses />
+                  </Can>
+                } />
+                <Route path="budgets" element={
+                  <Can module="budgets" redirect="/dashboard">
+                    <Budgets />
+                  </Can>
+                } />
+                <Route path="reports" element={
+                  <Can module="reports" redirect="/dashboard">
+                    <Reports />
+                  </Can>
+                } />
+                <Route path="business" element={
+                  <BusinessRoute>
+                    <BusinessManagement />
+                  </BusinessRoute>
+                } />
+                <Route path="business/inventory" element={
+                  <Can module="inventory" redirect="/dashboard">
+                    <Inventory />
+                  </Can>
+                } />
+                <Route path="business/sku-management" element={
+                  <Can module="inventory" redirect="/dashboard">
+                    <SKUManagement />
+                  </Can>
+                } />
+                <Route path="business/payments" element={
+                  <Can module="sales" redirect="/dashboard">
+                    <Payments />
+                  </Can>
+                } />
+                <Route path="business/analytics" element={
+                  <Can module="inventory" redirect="/dashboard">
+                    <Analytics />
+                  </Can>
+                } />
+                <Route path="business/invoices" element={
+                  <Can module="invoices" redirect="/dashboard">
+                    <Invoices />
+                  </Can>
+                } />
+                <Route path="business/finance" element={
+                  <Can module="finance" redirect="/dashboard">
+                    <Finance />
+                  </Can>
+                } />
+                {/* Role-gated routes */}
+                <Route path="users" element={
+                  <Can roles={['admin']} redirect="/dashboard">
+                    <UserManagement />
+                  </Can>
+                } />
+                <Route path="department-permissions" element={
+                  <Can roles={['admin']} redirect="/dashboard">
+                    <DepartmentPermissions />
+                  </Can>
+                } />
+                <Route path="company-files" element={
+                  <Can roles={['admin']} redirect="/dashboard">
+                    <CompanyFiles />
+                  </Can>
+                } />
+                <Route path="staff-profiles" element={
+                  <Can roles={['admin', 'hr']} redirect="/dashboard">
+                    <StaffProfiles />
+                  </Can>
+                } />
+                <Route path="njc-supplies" element={
+                  <Can roles={['admin']} redirect="/dashboard">
+                    <NJCSupplies />
+                  </Can>
+                } />
+                <Route path="profit-loss" element={
+                  <Can roles={['admin']} redirect="/dashboard">
+                    <ProfitLoss />
+                  </Can>
+                } />
+                <Route path="payroll" element={
+                  <Can roles={['admin']} redirect="/dashboard">
+                    <Payroll />
+                  </Can>
+                } />
+                <Route path="procurement" element={
+                  <Can roles={['admin', 'manager']} redirect="/dashboard">
+                    <Procurement />
+                  </Can>
                 } />
               </Route>
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}

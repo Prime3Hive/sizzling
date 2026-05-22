@@ -29,10 +29,13 @@ import {
   ShoppingCart,
   User,
   Send,
+  FolderOpen,
+  Truck,
 } from "lucide-react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useRoles } from "@/hooks/useRoles";
 import { useAuth } from "@/hooks/useAuth";
+import { Can } from "@/components/Can";
 
 import {
   Sidebar,
@@ -102,8 +105,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     );
   }
 
-  const isStaff = !isAdmin && !isHR && !isManager && !isEmployee;
-
   // Hub access checks
   const hasCommerceAccess = isAdmin
     || isManager
@@ -162,8 +163,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     </SidebarFooter>
   );
 
-  // Minimal sidebar for pending/no-role users
-  if (isStaff) {
+  // Pending users: minimal sidebar — no staff portal until approved
+  if (isPending) {
     return (
       <Sidebar {...props}>
         <SidebarUserHeader />
@@ -187,11 +188,42 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarGroup>
+        </SidebarContent>
+        <SidebarSignOutFooter />
+      </Sidebar>
+    );
+  }
+
+  // Employee sidebar: no elevated role, no dept permissions → focused employee view
+  if (isEmployee && !isAdmin && !isHR && !isManager && !hasCommerceAccess && !hasFinanceAccess) {
+    return (
+      <Sidebar {...props}>
+        <SidebarUserHeader />
+        <SidebarContent>
+          <SidebarGroup>
+            <SidebarGroupLabel>Navigation</SidebarGroupLabel>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={location.pathname === '/dashboard'}>
+                  <Link to="/dashboard"><LayoutDashboard className="h-4 w-4" />Dashboard</Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={location.pathname === '/my-profile'}>
+                  <Link to="/my-profile"><User className="h-4 w-4" />My Profile</Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={location.pathname === '/my-payslip'}>
+                  <Link to="/my-payslip"><FileText className="h-4 w-4" />My Payslip</Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
               <SidebarMenuItem>
                 <SidebarMenuButton asChild isActive={location.pathname === '/business/inventory-requests'}>
                   <Link to="/business/inventory-requests">
-                    <ClipboardCheck className="h-4 w-4" />
-                    Inventory Requests
+                    <ClipboardCheck className="h-4 w-4" />Inventory Requests
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
@@ -224,6 +256,11 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                       <SidebarMenuSubItem>
                         <SidebarMenuSubButton asChild>
                           <Link to="/business/kpi"><TrendingUp className="h-3 w-3" /><span>My Performance</span></Link>
+                        </SidebarMenuSubButton>
+                      </SidebarMenuSubItem>
+                      <SidebarMenuSubItem>
+                        <SidebarMenuSubButton asChild isActive={location.search.includes('tab=documents')}>
+                          <Link to="/staff-portal?tab=documents"><FolderOpen className="h-3 w-3" /><span>My Documents</span></Link>
                         </SidebarMenuSubButton>
                       </SidebarMenuSubItem>
                     </SidebarMenuSub>
@@ -276,7 +313,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 </SidebarMenuItem>
 
                 {/* Inventory — collapsible */}
-                {hasPermission('inventory', 'view') && (
+                <Can module="inventory">
                   <SidebarMenuItem>
                     <Collapsible defaultOpen={isInventoryActive}>
                       <CollapsibleTrigger asChild>
@@ -307,9 +344,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                       </CollapsibleContent>
                     </Collapsible>
                   </SidebarMenuItem>
-                )}
+                </Can>
 
-                {/* Inventory Requests — all authenticated staff */}
+                {/* Inventory Requests — all approved staff */}
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild isActive={location.pathname === '/business/inventory-requests'}>
                     <Link to="/business/inventory-requests">
@@ -318,32 +355,26 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                   </SidebarMenuButton>
                 </SidebarMenuItem>
 
-                {/* Sales */}
-                {hasPermission('sales', 'view') && (
+                <Can module="sales">
                   <SidebarMenuItem>
                     <SidebarMenuButton asChild isActive={location.pathname === '/business/sales'}>
                       <Link to="/business/sales"><ShoppingCart className="h-4 w-4" />Sales</Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
-                )}
-
-                {/* Payments */}
-                {hasPermission('sales', 'view') && (
                   <SidebarMenuItem>
                     <SidebarMenuButton asChild isActive={location.pathname === '/business/payments'}>
                       <Link to="/business/payments"><CreditCard className="h-4 w-4" />Payments</Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
-                )}
+                </Can>
 
-                {/* Invoices */}
-                {hasPermission('invoices', 'view') && (
+                <Can module="invoices">
                   <SidebarMenuItem>
                     <SidebarMenuButton asChild isActive={location.pathname === '/business/invoices'}>
                       <Link to="/business/invoices"><ClipboardList className="h-4 w-4" />Invoices</Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
-                )}
+                </Can>
 
               </SidebarMenu>
             </SidebarGroup>
@@ -358,52 +389,57 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               <SidebarGroupLabel>Finance</SidebarGroupLabel>
               <SidebarMenu>
 
-                {hasPermission('finance', 'view') && (
+                <Can module="finance">
                   <SidebarMenuItem>
                     <SidebarMenuButton asChild isActive={location.pathname === '/business/finance'}>
                       <Link to="/business/finance"><Landmark className="h-4 w-4" />Finance Ledger</Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
-                )}
+                </Can>
 
-                {(hasPermission('budgets', 'view') || hasPermission('finance', 'view')) && (
+                <Can module="budgets">
                   <SidebarMenuItem>
                     <SidebarMenuButton asChild isActive={location.pathname === '/expenses'}>
                       <Link to="/expenses"><Receipt className="h-4 w-4" />Expenses</Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
-                )}
-
-                {hasPermission('budgets', 'view') && (
                   <SidebarMenuItem>
                     <SidebarMenuButton asChild isActive={location.pathname === '/budgets'}>
                       <Link to="/budgets"><Target className="h-4 w-4" />Budgets</Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
-                )}
+                </Can>
 
-                {hasPermission('reports', 'view') && (
+                <Can module="reports">
                   <SidebarMenuItem>
                     <SidebarMenuButton asChild isActive={location.pathname === '/reports'}>
                       <Link to="/reports"><BarChart3 className="h-4 w-4" />Reports</Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
-                )}
+                </Can>
 
-                {isAdmin && (
-                  <>
-                    <SidebarMenuItem>
-                      <SidebarMenuButton asChild isActive={location.pathname === '/profit-loss'}>
-                        <Link to="/profit-loss"><LineChart className="h-4 w-4" />Profit & Loss</Link>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                    <SidebarMenuItem>
-                      <SidebarMenuButton asChild isActive={location.pathname === '/njc-supplies'}>
-                        <Link to="/njc-supplies"><Package className="h-4 w-4" />NJC Supplies</Link>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  </>
-                )}
+                <Can feature="profit_loss">
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild isActive={location.pathname === '/profit-loss'}>
+                      <Link to="/profit-loss"><LineChart className="h-4 w-4" />Profit & Loss</Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                </Can>
+                <Can feature="njc_supplies">
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild isActive={location.pathname === '/njc-supplies'}>
+                      <Link to="/njc-supplies"><Package className="h-4 w-4" />NJC Supplies</Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                </Can>
+
+                <Can roles={['admin', 'manager']}>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild isActive={location.pathname === '/procurement'}>
+                      <Link to="/procurement"><Truck className="h-4 w-4" />Procurement</Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                </Can>
 
               </SidebarMenu>
             </SidebarGroup>
@@ -424,13 +460,13 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                   </SidebarMenuButton>
                 </SidebarMenuItem>
 
-                {isAdmin && (
+                <Can feature="view_payroll">
                   <SidebarMenuItem>
                     <SidebarMenuButton asChild isActive={location.pathname === '/payroll'}>
                       <Link to="/payroll"><Wallet className="h-4 w-4" />Payroll</Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
-                )}
+                </Can>
 
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild isActive={location.pathname === '/business/kpi'}>
@@ -506,39 +542,49 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               </SidebarMenuButton>
             </SidebarMenuItem>
 
+            <SidebarMenuItem>
+              <SidebarMenuButton asChild isActive={location.search.includes('tab=documents')}>
+                <Link to="/staff-portal?tab=documents"><FolderOpen className="h-4 w-4" />My Documents</Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+
           </SidebarMenu>
         </SidebarGroup>
 
         {/* ── ADMINISTRATION ── */}
-        {isAdmin && (
-          <>
-            <SidebarSeparator />
-            <SidebarGroup>
-              <SidebarGroupLabel>Administration</SidebarGroupLabel>
-              <SidebarMenu>
+        <Can roles={['admin']}>
+          <SidebarSeparator />
+          <SidebarGroup>
+            <SidebarGroupLabel>Administration</SidebarGroupLabel>
+            <SidebarMenu>
 
+              <Can feature="approve_roles">
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild isActive={location.pathname === '/users'}>
                     <Link to="/users"><Users className="h-4 w-4" />User Management</Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
+              </Can>
 
+              <Can feature="manage_departments">
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild isActive={location.pathname === '/department-permissions'}>
                     <Link to="/department-permissions"><ToggleLeft className="h-4 w-4" />Access Control</Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
+              </Can>
 
+              <Can feature="company_files">
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild isActive={location.pathname === '/company-files'}>
                     <Link to="/company-files"><HardDrive className="h-4 w-4" />Company Files</Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
+              </Can>
 
-              </SidebarMenu>
-            </SidebarGroup>
-          </>
-        )}
+            </SidebarMenu>
+          </SidebarGroup>
+        </Can>
 
       </SidebarContent>
 

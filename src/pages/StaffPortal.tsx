@@ -1,12 +1,13 @@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { CalendarDays, AlertTriangle, Mail, TrendingUp } from 'lucide-react';
+import { CalendarDays, AlertTriangle, Mail, TrendingUp, FileText } from 'lucide-react';
 import StaffLeaveRequests from '@/components/staff-portal/StaffLeaveRequests';
 import StaffComplaints from '@/components/staff-portal/StaffComplaints';
 import StaffMessages from '@/components/staff-portal/StaffMessages';
 import StaffKPITasks from '@/components/staff-portal/StaffKPITasks';
+import StaffMyDocuments from '@/components/staff-portal/StaffMyDocuments';
 import { useSearchParams } from 'react-router-dom';
 
-const VALID_TABS = ['leave', 'complaints', 'messages', 'performance'];
+const VALID_TABS = ['leave', 'complaints', 'messages', 'performance', 'documents'];
 
 const StaffPortal = () => {
   const [searchParams] = useSearchParams();
@@ -21,7 +22,7 @@ const StaffPortal = () => {
       </div>
 
       <Tabs defaultValue={defaultTab} className="space-y-6">
-        <TabsList className="bg-muted/50 p-1">
+        <TabsList className="bg-muted/50 p-1 flex-wrap h-auto gap-1">
           <TabsTrigger value="leave" className="data-[state=active]:bg-background data-[state=active]:shadow-card">
             <CalendarDays className="h-4 w-4 mr-2" />Leave Requests
           </TabsTrigger>
@@ -34,12 +35,16 @@ const StaffPortal = () => {
           <TabsTrigger value="performance" className="data-[state=active]:bg-background data-[state=active]:shadow-card">
             <TrendingUp className="h-4 w-4 mr-2" />My Performance
           </TabsTrigger>
+          <TabsTrigger value="documents" className="data-[state=active]:bg-background data-[state=active]:shadow-card">
+            <FileText className="h-4 w-4 mr-2" />My Documents
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="leave"><StaffLeaveRequests /></TabsContent>
         <TabsContent value="complaints"><StaffComplaints /></TabsContent>
         <TabsContent value="messages"><StaffMessages /></TabsContent>
         <TabsContent value="performance"><StaffKPITasks /></TabsContent>
+        <TabsContent value="documents"><StaffMyDocuments /></TabsContent>
       </Tabs>
     </div>
   );

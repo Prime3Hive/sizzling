@@ -1,33 +1,30 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useRoles } from "@/hooks/useRoles";
 import { useToast } from "@/hooks/use-toast";
-import { formatNairaCompact } from "@/lib/currency";
 import { format, parseISO } from "date-fns";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from "@/components/ui/table";
+  Tooltip, TooltipContent, TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
-  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
-} from "@/components/ui/dialog";
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
-import {
-  Plus, Package, Clock, CheckCircle2, XCircle, ShoppingCart,
-  Search, ClipboardList,
+  Plus, Clock, CheckCircle2, XCircle, ShoppingCart,
+  Search, ClipboardList, FileText, PackageCheck,
 } from "lucide-react";
+import LPOSheet, { type SourceRequest } from "@/components/procurement/LPOSheet";
 
-// ── Types ─────────────────────────────────────────────────────────
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 interface SKU {
   id: string;
@@ -58,7 +55,14 @@ interface InventoryRequest {
   profiles: { full_name: string } | null;
 }
 
-// ── Helpers ────────────────────────────────────────────────────────
+interface LinkedLPO {
+  id: string;
+  lpo_number: string;
+  status: string;
+  inventory_request_id: string;
+}
+
+// ── Status config ─────────────────────────────────────────────────────────────
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; icon: React.ElementType }> = {
   pending:   { label: "Pending",   color: "bg-amber-100  text-amber-700  border-amber-200",  icon: Clock },
@@ -68,13 +72,11 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; icon: React.
 };
 
 function StatusBadge({ status }: { status: string }) {
-  const cfg = STATUS_CONFIG[status] ?? { label: status, color: "bg-muted text-muted-foreground", icon: Clock };
-  return (
-    <Badge className={`text-xs border ${cfg.color}`}>{cfg.label}</Badge>
-  );
+  const cfg = STATUS_CONFIG[status] ?? { label: status, color: "bg-muted text-muted-foreground border-border", icon: Clock };
+  return <Badge className={`text-xs border ${cfg.color}`}>{cfg.label}</Badge>;
 }
 
-// ── Component ──────────────────────────────────────────────────────
+// ── Component ─────────────────────────────────────────────────────────────────
 
 export default function InventoryRequests() {
   const { user } = useAuth();
@@ -82,12 +84,12 @@ export default function InventoryRequests() {
   const { toast } = useToast();
   const qc = useQueryClient();
 
-  const canManage = isAdmin || isManager;
+  const canManage         = isAdmin || isManager;
   const canRecordPurchase = isAdmin || isManager || hasPermission("inventory", "create");
 
   const [search, setSearch] = useState("");
 
-  // New request dialog
+  // New request
   const [showNew, setShowNew] = useState(false);
   const [newForm, setNewForm] = useState({ sku_id: "", quantity: "", notes: "" });
 
@@ -95,11 +97,15 @@ export default function InventoryRequests() {
   const [rejectTarget, setRejectTarget] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState("");
 
-  // Record purchase dialog
+  // Direct purchase (unchanged legacy path)
   const [purchaseTarget, setPurchaseTarget] = useState<InventoryRequest | null>(null);
   const [purchaseForm, setPurchaseForm] = useState({ fulfilled_quantity: "", purchase_cost: "", notes: "" });
 
-  // ── Queries ───────────────────────────────────────────────────────
+  // LPO Sheet (new procurement path)
+  const [lpoSheetOpen, setLpoSheetOpen] = useState(false);
+  const [lpoSource, setLpoSource] = useState<SourceRequest | undefined>(undefined);
+
+  // ── Queries ───────────────────────────────────────────────────────────────
 
   const { data: skus = [] } = useQuery<SKU[]>({
     queryKey: ["inv-req-skus"],
@@ -136,7 +142,26 @@ export default function InventoryRequests() {
     enabled: !!user,
   });
 
-  // ── Mutations ─────────────────────────────────────────────────────
+  // Fetch LPOs that were raised from inventory requests
+  const { data: linkedLPOs = [] } = useQuery<LinkedLPO[]>({
+    queryKey: ["inventory-request-lpos"],
+    queryFn: async () => {
+      const { data } = await (supabase as any)
+        .from("lpos")
+        .select("id, lpo_number, status, inventory_request_id")
+        .not("inventory_request_id", "is", null);
+      return (data ?? []) as LinkedLPO[];
+    },
+    staleTime: 2 * 60_000,
+  });
+
+  // Map: inventory_request_id → LinkedLPO
+  const lpoByRequest = useMemo(
+    () => Object.fromEntries(linkedLPOs.map(l => [l.inventory_request_id, l])),
+    [linkedLPOs],
+  );
+
+  // ── Mutations ─────────────────────────────────────────────────────────────
 
   const submitRequest = useMutation({
     mutationFn: async () => {
@@ -171,7 +196,7 @@ export default function InventoryRequests() {
       if (error) throw error;
     },
     onSuccess: () => {
-      toast({ title: "Approved", description: "Request has been approved." });
+      toast({ title: "Approved", description: "Request approved. You can now raise an LPO or record a direct purchase." });
       qc.invalidateQueries({ queryKey: ["inventory-requests"] });
     },
     onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
@@ -189,7 +214,7 @@ export default function InventoryRequests() {
       if (error) throw error;
     },
     onSuccess: () => {
-      toast({ title: "Rejected", description: "Request has been rejected." });
+      toast({ title: "Rejected" });
       setRejectTarget(null);
       setRejectReason("");
       qc.invalidateQueries({ queryKey: ["inventory-requests"] });
@@ -197,14 +222,14 @@ export default function InventoryRequests() {
     onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
   });
 
+  // Direct (informal) purchase — unchanged legacy path
   const recordPurchase = useMutation({
     mutationFn: async () => {
       if (!purchaseTarget) return;
-      const qty = parseInt(purchaseForm.fulfilled_quantity);
+      const qty  = parseInt(purchaseForm.fulfilled_quantity);
       const cost = parseFloat(purchaseForm.purchase_cost) || null;
       if (!qty || qty <= 0) throw new Error("Enter a valid quantity");
 
-      // 1. Mark request fulfilled
       const { error: reqErr } = await supabase.from("inventory_requests").update({
         status:             "fulfilled",
         fulfilled_quantity: qty,
@@ -213,7 +238,6 @@ export default function InventoryRequests() {
       }).eq("id", purchaseTarget.id);
       if (reqErr) throw reqErr;
 
-      // 2. Update SKU stock
       if (purchaseTarget.sku_id) {
         const sku = skus.find(s => s.id === purchaseTarget.sku_id);
         if (sku) {
@@ -222,15 +246,13 @@ export default function InventoryRequests() {
           }).eq("id", purchaseTarget.sku_id);
           if (skuErr) throw skuErr;
         }
-
-        // 3. Record transaction
         await supabase.from("transactions").insert({
           sku_id:           purchaseTarget.sku_id,
           transaction_type: "PURCHASE",
           quantity:         qty,
           unit_price:       cost ? cost / qty : 0,
           total_amount:     cost ?? 0,
-          notes:            purchaseForm.notes || `Purchase from request #${purchaseTarget.id.slice(0, 8)}`,
+          notes:            purchaseForm.notes || `Direct purchase from request #${purchaseTarget.id.slice(0, 8)}`,
           user_id:          user!.id,
         });
       }
@@ -245,22 +267,103 @@ export default function InventoryRequests() {
     onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
   });
 
-  // ── Derived data ──────────────────────────────────────────────────
+  // ── Helpers ───────────────────────────────────────────────────────────────
 
-  const filtered = requests.filter(r => {
-    const name = r.skus?.name ?? "";
-    return name.toLowerCase().includes(search.toLowerCase());
-  });
+  const openRaiseLPO = (row: InventoryRequest) => {
+    const sku = skus.find(s => s.id === row.sku_id);
+    setLpoSource({
+      id:             row.id,
+      item_name:      row.skus?.name ?? "",
+      sku_id:         row.sku_id,
+      quantity:       row.requested_quantity,
+      unit_of_measure: row.skus?.unit_of_measure ?? "unit",
+      unit_price:     sku?.cost_per_unit ?? 0,
+    });
+    setLpoSheetOpen(true);
+  };
 
+  const openDirectPurchase = (row: InventoryRequest) => {
+    setPurchaseTarget(row);
+    setPurchaseForm({ fulfilled_quantity: String(row.requested_quantity), purchase_cost: "", notes: "" });
+  };
+
+  // ── Derived ───────────────────────────────────────────────────────────────
+
+  const filtered  = requests.filter(r => (r.skus?.name ?? "").toLowerCase().includes(search.toLowerCase()));
   const pending   = requests.filter(r => r.status === "pending").length;
   const approved  = requests.filter(r => r.status === "approved").length;
   const fulfilled = requests.filter(r => r.status === "fulfilled").length;
+  const byStatus  = (s: string) => filtered.filter(r => r.status === s);
 
-  const byStatus = (s: string) => filtered.filter(r => r.status === s);
+  if (isLoading) return (
+    <div className="flex items-center justify-center h-64 text-muted-foreground">Loading…</div>
+  );
 
-  // ── Render ─────────────────────────────────────────────────────────
+  // ── Action buttons for approved rows ─────────────────────────────────────
 
-  if (isLoading) return <div className="flex items-center justify-center h-64 text-muted-foreground">Loading…</div>;
+  const ApprovedActions = ({ row }: { row: InventoryRequest }) => {
+    const linked = lpoByRequest[row.id];
+    if (!canRecordPurchase) return null;
+
+    if (linked) {
+      // LPO already raised — show its reference; block direct purchase
+      const lpoStatusColors: Record<string, string> = {
+        draft:              "text-slate-600 border-slate-200 bg-slate-50",
+        sent:               "text-blue-700 border-blue-200 bg-blue-50",
+        received:           "text-emerald-700 border-emerald-200 bg-emerald-50",
+        partially_received: "text-amber-700 border-amber-200 bg-amber-50",
+        cancelled:          "text-red-700 border-red-200 bg-red-50",
+      };
+      return (
+        <div className="flex items-center gap-2 justify-end">
+          <Badge
+            variant="outline"
+            className={`text-xs font-mono gap-1 ${lpoStatusColors[linked.status] ?? ""}`}
+          >
+            <FileText className="h-3 w-3" />
+            {linked.lpo_number}
+          </Badge>
+          <span className="text-xs text-muted-foreground capitalize">
+            {linked.status.replace(/_/g, " ")}
+          </span>
+        </div>
+      );
+    }
+
+    return (
+      <div className="flex items-center gap-2 justify-end">
+        {/* Primary: formal procurement via LPO */}
+        <Button
+          size="sm"
+          className="gap-1.5"
+          onClick={() => openRaiseLPO(row)}
+        >
+          <FileText className="h-3.5 w-3.5" />
+          Raise LPO
+        </Button>
+
+        {/* Secondary: direct informal purchase */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5 text-muted-foreground"
+              onClick={() => openDirectPurchase(row)}
+            >
+              <ShoppingCart className="h-3.5 w-3.5" />
+              Direct
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="top" className="text-xs max-w-[220px]">
+            Record a direct purchase without creating an LPO. Use for informal or cash purchases.
+          </TooltipContent>
+        </Tooltip>
+      </div>
+    );
+  };
+
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div className="space-y-6">
@@ -271,7 +374,7 @@ export default function InventoryRequests() {
           <h1 className="text-2xl sm:text-3xl font-bold">Inventory Requests</h1>
           <p className="text-muted-foreground mt-1 text-sm">
             {canManage
-              ? "Review and approve staff inventory requests, then record purchases."
+              ? "Review and approve staff requests, then raise an LPO or record a direct purchase."
               : "Submit requests for inventory items. Admin will review and approve."}
           </p>
         </div>
@@ -300,31 +403,51 @@ export default function InventoryRequests() {
       {/* Search */}
       <div className="relative max-w-sm">
         <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-        <Input className="pl-10" placeholder="Search by item name…" value={search} onChange={e => setSearch(e.target.value)} />
+        <Input
+          className="pl-10"
+          placeholder="Search by item name…"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+        />
       </div>
 
       {/* Tabs */}
       <Tabs defaultValue={canManage ? "pending" : "mine"}>
         <TabsList>
-          {canManage && <TabsTrigger value="pending">Pending Approval <Badge className="ml-2 text-xs">{pending}</Badge></TabsTrigger>}
-          {canManage && <TabsTrigger value="approved">Approved <Badge className="ml-2 text-xs">{approved}</Badge></TabsTrigger>}
+          {canManage && (
+            <TabsTrigger value="pending">
+              Pending Approval
+              {pending > 0 && <Badge className="ml-2 text-xs">{pending}</Badge>}
+            </TabsTrigger>
+          )}
+          {canManage && (
+            <TabsTrigger value="approved">
+              Approved
+              {approved > 0 && <Badge className="ml-2 text-xs">{approved}</Badge>}
+            </TabsTrigger>
+          )}
           <TabsTrigger value="mine">{canManage ? "All Requests" : "My Requests"}</TabsTrigger>
         </TabsList>
 
-        {/* Pending approval — admin/manager only */}
+        {/* Pending tab — approve / reject */}
         {canManage && (
           <TabsContent value="pending" className="mt-4">
             <RequestsTable
               rows={byStatus("pending")}
               emptyMsg="No pending requests."
               actions={(row) => (
-                <div className="flex gap-2">
-                  <Button size="sm" variant="outline" className="text-green-700 border-green-300 hover:bg-green-50"
-                    onClick={() => approveRequest.mutate(row.id)} disabled={approveRequest.isPending}>
+                <div className="flex gap-2 justify-end">
+                  <Button size="sm" variant="outline"
+                    className="text-green-700 border-green-300 hover:bg-green-50"
+                    onClick={() => approveRequest.mutate(row.id)}
+                    disabled={approveRequest.isPending}
+                  >
                     <CheckCircle2 className="h-3.5 w-3.5 mr-1" />Approve
                   </Button>
-                  <Button size="sm" variant="outline" className="text-red-700 border-red-300 hover:bg-red-50"
-                    onClick={() => { setRejectTarget(row.id); setRejectReason(""); }}>
+                  <Button size="sm" variant="outline"
+                    className="text-red-700 border-red-300 hover:bg-red-50"
+                    onClick={() => { setRejectTarget(row.id); setRejectReason(""); }}
+                  >
                     <XCircle className="h-3.5 w-3.5 mr-1" />Reject
                   </Button>
                 </div>
@@ -333,20 +456,21 @@ export default function InventoryRequests() {
           </TabsContent>
         )}
 
-        {/* Approved — ready to record purchase */}
+        {/* Approved tab — Raise LPO or direct purchase */}
         {canManage && (
           <TabsContent value="approved" className="mt-4">
+            <div className="mb-3 flex items-center gap-2 text-sm text-muted-foreground rounded-lg border border-blue-100 bg-blue-50/60 px-4 py-2.5">
+              <PackageCheck className="h-4 w-4 text-blue-600 shrink-0" />
+              <span>
+                <strong className="text-blue-700">Raise LPO</strong> to handle procurement formally through the LPO workflow, or use{" "}
+                <strong>Direct</strong> for informal cash purchases. Once an LPO is raised, it must be completed through Procurement.
+              </span>
+            </div>
             <RequestsTable
               rows={byStatus("approved")}
               emptyMsg="No approved requests awaiting purchase."
-              actions={(row) => canRecordPurchase ? (
-                <Button size="sm" onClick={() => {
-                  setPurchaseTarget(row);
-                  setPurchaseForm({ fulfilled_quantity: String(row.requested_quantity), purchase_cost: "", notes: "" });
-                }}>
-                  <ShoppingCart className="h-3.5 w-3.5 mr-1" />Record Purchase
-                </Button>
-              ) : null}
+              showRequester
+              actions={(row) => <ApprovedActions row={row} />}
             />
           </TabsContent>
         )}
@@ -357,15 +481,11 @@ export default function InventoryRequests() {
             rows={filtered}
             emptyMsg={canManage ? "No requests found." : "You have not submitted any requests yet."}
             showRequester={canManage}
+            lpoByRequest={lpoByRequest}
             actions={(row) =>
-              row.status === "approved" && canRecordPurchase ? (
-                <Button size="sm" variant="outline" onClick={() => {
-                  setPurchaseTarget(row);
-                  setPurchaseForm({ fulfilled_quantity: String(row.requested_quantity), purchase_cost: "", notes: "" });
-                }}>
-                  <ShoppingCart className="h-3.5 w-3.5 mr-1" />Record Purchase
-                </Button>
-              ) : null
+              row.status === "approved" && canRecordPurchase && canManage
+                ? <ApprovedActions row={row} />
+                : null
             }
           />
         </TabsContent>
@@ -428,17 +548,22 @@ export default function InventoryRequests() {
         </DialogContent>
       </Dialog>
 
-      {/* ── Record Purchase Dialog ── */}
+      {/* ── Direct Purchase Dialog (unchanged legacy path) ── */}
       <Dialog open={!!purchaseTarget} onOpenChange={open => !open && setPurchaseTarget(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Record Purchase</DialogTitle>
+            <DialogTitle>Record Direct Purchase</DialogTitle>
           </DialogHeader>
           {purchaseTarget && (
             <div className="space-y-4 py-2">
-              <div className="rounded-lg bg-muted/40 border px-4 py-3 text-sm space-y-1">
-                <p><span className="text-muted-foreground">Item:</span> <span className="font-medium">{purchaseTarget.skus?.name}</span></p>
-                <p><span className="text-muted-foreground">Requested:</span> {purchaseTarget.requested_quantity} {purchaseTarget.skus?.unit_of_measure}</p>
+              <div className="rounded-lg bg-amber-50 border border-amber-100 px-4 py-3 text-sm space-y-1">
+                <p className="font-medium text-amber-800">
+                  Direct purchase — no LPO will be created
+                </p>
+                <p className="text-muted-foreground">
+                  Item: <span className="font-medium text-foreground">{purchaseTarget.skus?.name}</span>
+                  {" · "}Requested: {purchaseTarget.requested_quantity} {purchaseTarget.skus?.unit_of_measure}
+                </p>
               </div>
               <div className="space-y-2">
                 <Label>Quantity Purchased</Label>
@@ -466,21 +591,43 @@ export default function InventoryRequests() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ── LPO Sheet (procurement path) ── */}
+      <LPOSheet
+        mode="create"
+        sourceRequest={lpoSource}
+        open={lpoSheetOpen}
+        onOpenChange={open => {
+          setLpoSheetOpen(open);
+          if (!open) setLpoSource(undefined);
+        }}
+        onSuccess={() => {
+          qc.invalidateQueries({ queryKey: ["inventory-requests"] });
+          qc.invalidateQueries({ queryKey: ["inventory-request-lpos"] });
+          qc.invalidateQueries({ queryKey: ["lpos"] });
+          toast({
+            title: "LPO created",
+            description: "Continue the procurement process in the Procurement module.",
+          });
+        }}
+      />
     </div>
   );
 }
 
-// ── RequestsTable sub-component ────────────────────────────────────
+// ── RequestsTable ─────────────────────────────────────────────────────────────
 
 function RequestsTable({
   rows,
   emptyMsg,
   showRequester = false,
+  lpoByRequest = {},
   actions,
 }: {
   rows: InventoryRequest[];
   emptyMsg: string;
   showRequester?: boolean;
+  lpoByRequest?: Record<string, LinkedLPO>;
   actions?: (row: InventoryRequest) => React.ReactNode;
 }) {
   return (
@@ -506,37 +653,51 @@ function RequestsTable({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rows.map(row => (
-                  <TableRow key={row.id}>
-                    <TableCell>
-                      <div className="font-medium">{row.skus?.name ?? "—"}</div>
-                      <div className="text-xs text-muted-foreground capitalize">{row.skus?.category}</div>
-                    </TableCell>
-                    {showRequester && (
-                      <TableCell className="text-sm text-muted-foreground">
-                        {row.user_id.slice(0, 8)}…
+                {rows.map(row => {
+                  const linked = lpoByRequest[row.id];
+                  return (
+                    <TableRow key={row.id}>
+                      <TableCell>
+                        <div className="font-medium">{row.skus?.name ?? "—"}</div>
+                        <div className="text-xs text-muted-foreground capitalize">{row.skus?.category}</div>
                       </TableCell>
-                    )}
-                    <TableCell>
-                      {row.fulfilled_quantity > 0
-                        ? <><span className="font-semibold">{row.fulfilled_quantity}</span><span className="text-muted-foreground">/{row.requested_quantity}</span></>
-                        : row.requested_quantity
-                      } <span className="text-xs text-muted-foreground">{row.skus?.unit_of_measure}</span>
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
-                      {format(parseISO(row.created_at), "dd MMM yyyy")}
-                    </TableCell>
-                    <TableCell><StatusBadge status={row.status} /></TableCell>
-                    <TableCell className="max-w-xs truncate text-sm text-muted-foreground">
-                      {row.rejected_reason
-                        ? <span className="text-red-600 text-xs">Rejected: {row.rejected_reason}</span>
-                        : (row.notes || "—")}
-                    </TableCell>
-                    {actions && (
-                      <TableCell className="text-right">{actions(row)}</TableCell>
-                    )}
-                  </TableRow>
-                ))}
+                      {showRequester && (
+                        <TableCell className="text-sm text-muted-foreground">
+                          {row.user_id.slice(0, 8)}…
+                        </TableCell>
+                      )}
+                      <TableCell>
+                        {row.fulfilled_quantity > 0
+                          ? <><span className="font-semibold">{row.fulfilled_quantity}</span><span className="text-muted-foreground">/{row.requested_quantity}</span></>
+                          : row.requested_quantity
+                        }{" "}
+                        <span className="text-xs text-muted-foreground">{row.skus?.unit_of_measure}</span>
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                        {format(parseISO(row.created_at), "dd MMM yyyy")}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-col gap-1">
+                          <StatusBadge status={row.status} />
+                          {/* Show LPO badge in All Requests view */}
+                          {linked && row.status !== "fulfilled" && (
+                            <Badge variant="outline" className="text-[10px] font-mono gap-1 text-indigo-700 border-indigo-200 bg-indigo-50 w-fit">
+                              <FileText className="h-2.5 w-2.5" />{linked.lpo_number}
+                            </Badge>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="max-w-xs truncate text-sm text-muted-foreground">
+                        {row.rejected_reason
+                          ? <span className="text-red-600 text-xs">Rejected: {row.rejected_reason}</span>
+                          : (row.notes || "—")}
+                      </TableCell>
+                      {actions && (
+                        <TableCell className="text-right">{actions(row)}</TableCell>
+                      )}
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </div>
