@@ -195,7 +195,7 @@ export default function KPIAssignTasks() {
   });
 
   // Templates filtered by selected category for the picker
-  const pickerTemplates = templatePickerCatId
+  const pickerTemplates = (templatePickerCatId && templatePickerCatId !== "all")
     ? templates.filter(t => t.category_id === templatePickerCatId)
     : templates;
 
@@ -313,7 +313,7 @@ export default function KPIAssignTasks() {
                       <SelectValue placeholder="Filter by category…" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">All categories</SelectItem>
+                      <SelectItem value="all">All categories</SelectItem>
                       {(categories as any[]).map((c) => (
                         <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
                       ))}

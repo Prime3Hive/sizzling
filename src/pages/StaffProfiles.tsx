@@ -32,6 +32,7 @@ import {
   Heart, Home, IdCard,
 } from "lucide-react";
 import StaffDocuments from "@/components/staff/StaffDocuments";
+import StaffKPIPanel from "@/components/staff-profiles/StaffKPIPanel";
 import { formatNairaCompact } from "@/lib/currency";
 import { exportStaffProfilePDF, printStaffProfile } from "@/lib/staffProfileExport";
 import StaffProfilePrintable from "@/components/StaffProfilePrintable";
@@ -211,6 +212,7 @@ function ProfileSheet({
   onClose,
   passportUrl,
   isAdmin,
+  canScore,
   onEdit,
   onDelete,
   onExport,
@@ -221,6 +223,7 @@ function ProfileSheet({
   onClose: () => void;
   passportUrl: string | null;
   isAdmin: boolean;
+  canScore: boolean;
   onEdit: (p: StaffProfile) => void;
   onDelete: (id: string) => void;
   onExport: (p: StaffProfile) => void;
@@ -373,6 +376,16 @@ function ProfileSheet({
                 </div>
               </>
             )}
+
+            {/* KPI Performance */}
+            <SectionHeading>KPI Performance</SectionHeading>
+            <div className="pt-1">
+              <StaffKPIPanel
+                staffProfileId={profile.id}
+                staffName={profile.full_name}
+                canScore={canScore}
+              />
+            </div>
 
             {/* Documents */}
             <SectionHeading>Documents</SectionHeading>
@@ -653,7 +666,7 @@ const DEFAULT_FORM = {
 
 const StaffProfiles = () => {
   const navigate = useNavigate();
-  const { isAdmin, isHR, loading: rolesLoading } = useRoles();
+  const { isAdmin, isHR, isManager, loading: rolesLoading } = useRoles();
   const { toast } = useToast();
 
   const [staffProfiles, setStaffProfiles] = useState<StaffProfile[]>([]);
@@ -675,6 +688,7 @@ const StaffProfiles = () => {
   const [formData, setFormData]               = useState(DEFAULT_FORM);
 
   const canAccess = isAdmin || isHR;
+  const canScore  = isAdmin || isManager;
 
   const filteredProfiles = staffProfiles.filter(p => {
     const q = searchQuery.toLowerCase();
@@ -1070,6 +1084,7 @@ const StaffProfiles = () => {
         onClose={() => setSelectedProfile(null)}
         passportUrl={getPassportUrl(selectedProfile?.passport_path ?? null)}
         isAdmin={isAdmin}
+        canScore={canScore}
         onEdit={p => { setSelectedProfile(null); handleEdit(p); }}
         onDelete={handleDelete}
         onExport={handleExportPDF}
