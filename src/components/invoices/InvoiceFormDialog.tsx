@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -150,12 +150,16 @@ export default function InvoiceFormDialog({ open, onOpenChange, editingInvoice, 
     }
   }, [editingInvoice, defaultType, open]);
 
-  // Reset when dialog closes
+  // Reset when dialog closes — capture selectedType in a ref to avoid stale closure
+  const selectedTypeRef = useRef(selectedType);
+  useEffect(() => { selectedTypeRef.current = selectedType; }, [selectedType]);
+
   useEffect(() => {
     if (!open) {
+      const type = selectedTypeRef.current;
       setTimeout(() => {
         setStep(defaultType || editingInvoice ? "form" : "type-select");
-        setForm(blankForm(selectedType));
+        setForm(blankForm(type));
         setItems([makeBlankItem()]);
       }, 300);
     }
@@ -288,6 +292,7 @@ export default function InvoiceFormDialog({ open, onOpenChange, editingInvoice, 
       };
 
       let invoiceId: string;
+      let oldItemIds: string[] = [];
 
       if (editingInvoice) {
         const { error } = await supabase
@@ -296,7 +301,14 @@ export default function InvoiceFormDialog({ open, onOpenChange, editingInvoice, 
           .eq("id", editingInvoice.id);
         if (error) throw error;
         invoiceId = editingInvoice.id;
-        await supabase.from("invoice_items").delete().eq("invoice_id", invoiceId);
+
+        // Capture existing item IDs before any mutation so we can safely delete them
+        // only after the new rows are successfully inserted
+        const { data: existingItems } = await supabase
+          .from("invoice_items")
+          .select("id")
+          .eq("invoice_id", invoiceId);
+        oldItemIds = (existingItems ?? []).map((r: any) => r.id);
       } else {
         const { data, error } = await supabase
           .from("invoices")
@@ -323,8 +335,14 @@ export default function InvoiceFormDialog({ open, onOpenChange, editingInvoice, 
         }));
 
       if (itemRows.length > 0) {
+        // Insert new rows FIRST — if this fails, old rows are still intact
         const { error: itemErr } = await supabase.from("invoice_items").insert(itemRows);
         if (itemErr) throw itemErr;
+      }
+
+      // Only delete old rows after new ones are safely inserted
+      if (oldItemIds.length > 0) {
+        await supabase.from("invoice_items").delete().in("id", oldItemIds);
       }
 
       await queryClient.invalidateQueries({ queryKey: ["invoices"] });

@@ -265,7 +265,6 @@ const Sales = () => {
         total_amount: totalAmount,
         status: formData.get('status') as string,
         notes: formData.get('notes') as string,
-        invoiced_at: new Date().toISOString(), // Stamp the invoice date
       };
 
       const { data: saleResult, error: saleError } = await supabase
@@ -275,6 +274,16 @@ const Sales = () => {
         .single();
 
       if (saleError) throw saleError;
+
+      // Validate all items have a product selected
+      if (saleItems.some(item => !item.product_id)) {
+        toast({
+          title: "Incomplete items",
+          description: "All sale items must have a product selected",
+          variant: "destructive",
+        });
+        return;
+      }
 
       // Insert sale items
       const saleItemsData = saleItems
@@ -337,7 +346,16 @@ const Sales = () => {
     try {
       const paymentAmount = parseFloat(formData.get('amount') as string);
       const invoicedAmount = paymentSale.total_amount;
-      
+
+      if (isNaN(paymentAmount) || paymentAmount <= 0) {
+        toast({ title: "Invalid amount", description: "Payment amount must be greater than zero", variant: "destructive" });
+        return;
+      }
+      if (paymentAmount > invoicedAmount) {
+        toast({ title: "Amount exceeds total", description: `Payment cannot exceed the invoiced amount of ${invoicedAmount.toLocaleString('en-NG', { style: 'currency', currency: 'NGN' })}`, variant: "destructive" });
+        return;
+      }
+
       const paymentData = {
         sale_id: paymentSale.id,
         amount: paymentAmount,
@@ -370,8 +388,8 @@ const Sales = () => {
       if (saleError) throw saleError;
 
       // Write finance ledger entries
+      // Always record cash received for every payment (partial or full)
       const ledgerRows: any[] = [
-        // Cash received entry
         {
           user_id: user.id,
           entry_date: formData.get('payment_date') as string,
@@ -384,10 +402,8 @@ const Sales = () => {
           reference_number: paymentSale.sale_number,
           recorded_by: user.id,
         },
-      ];
-      // When fully paid, also record the revenue recognition
-      if (newStatus === 'paid') {
-        ledgerRows.push({
+        // Revenue recognition posted on first payment (not deferred until full payment)
+        {
           user_id: user.id,
           entry_date: paymentSale.sale_date,
           entry_type: 'revenue',
@@ -398,8 +414,8 @@ const Sales = () => {
           cost_center: 'Daily Orders',
           reference_number: paymentSale.sale_number,
           recorded_by: user.id,
-        });
-      }
+        },
+      ];
       await supabase.from('finance_ledger').insert(ledgerRows);
 
       toast({
@@ -411,7 +427,7 @@ const Sales = () => {
       
       setShowPaymentDialog(false);
       setPaymentSale(null);
-      fetchData();
+      await fetchData();
     } catch (error) {
       console.error('Error recording payment:', error);
       toast({
@@ -436,7 +452,7 @@ const Sales = () => {
 
   const totalSales = sales.reduce((sum, sale) => sum + sale.total_amount, 0);
   const pendingSales = sales.filter(sale => sale.status === 'pending').length;
-  const completedSales = sales.filter(sale => sale.status === 'completed' || sale.status === 'paid' || sale.status === 'partially_paid').length;
+  const completedSales = sales.filter(sale => sale.status === 'completed' || sale.status === 'paid').length;
 
   if (loading) {
     return <div className="flex items-center justify-center h-64">Loading...</div>;
@@ -784,6 +800,7 @@ const Sales = () => {
                <Receipt
                  saleNumber={selectedSale.sale_number}
                  saleDate={selectedSale.sale_date}
+                 createdAt={selectedSale.created_at}
                  customerName={selectedSale.customer_name}
                  customerEmail={selectedSale.customer_email}
                  items={selectedSaleItems}

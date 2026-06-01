@@ -89,9 +89,7 @@ export default function Invoices() {
   const stats = useMemo(() => {
     const quotations = invoices.filter((i) => i.status === "quotation");
     const active = invoices.filter((i) => i.status === "invoice");
-    const totalRevenue = active
-      .filter((i) => !i.recorded_in_finance === false || i.recorded_in_finance)
-      .reduce((s, i) => s + i.total_amount, 0);
+    const totalRevenue = active.reduce((s, i) => s + i.total_amount, 0);
     const outstanding = active
       .filter((i) => i.payment_status !== "paid")
       .reduce((s, i) => s + (i.total_amount - i.amount_paid), 0);

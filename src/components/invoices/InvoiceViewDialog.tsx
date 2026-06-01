@@ -63,6 +63,14 @@ export default function InvoiceViewDialog({ invoice, open, onOpenChange, onEdit 
     invoice?.payment_status ?? "unpaid"
   );
   const [amountPaid, setAmountPaid] = useState(invoice?.amount_paid?.toString() ?? "0");
+
+  // Sync local payment state whenever the viewed invoice changes
+  useEffect(() => {
+    if (invoice) {
+      setPaymentStatus(invoice.payment_status ?? "unpaid");
+      setAmountPaid(invoice.amount_paid?.toString() ?? "0");
+    }
+  }, [invoice?.id]);
   const [updatingPayment, setUpdatingPayment] = useState(false);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
 
@@ -236,6 +244,17 @@ export default function InvoiceViewDialog({ invoice, open, onOpenChange, onEdit 
     setUpdatingPayment(true);
     try {
       const newAmountPaid = parseFloat(amountPaid) || 0;
+      const prevAmountPaid = invoice.amount_paid ?? 0;
+
+      if (newAmountPaid < 0) {
+        toast({ title: "Invalid amount", description: "Amount paid cannot be negative", variant: "destructive" });
+        return;
+      }
+      if (newAmountPaid > invoice.total_amount) {
+        toast({ title: "Amount exceeds total", description: "Amount paid cannot exceed the invoice total", variant: "destructive" });
+        return;
+      }
+
       const { error } = await supabase
         .from("invoices")
         .update({
@@ -246,22 +265,40 @@ export default function InvoiceViewDialog({ invoice, open, onOpenChange, onEdit 
         .eq("id", invoice.id);
       if (error) throw error;
 
-      // If the invoice is already in the ledger and payment increased, record the delta
-      if (invoice.recorded_in_finance && newAmountPaid > (invoice.amount_paid ?? 0)) {
-        const delta = newAmountPaid - (invoice.amount_paid ?? 0);
-        await supabase.from("finance_ledger").insert({
-          user_id: invoice.user_id,
-          entry_date: new Date().toISOString().split("T")[0],
-          entry_type: "payment_received",
-          source_type: "invoice",
-          source_id: invoice.id,
-          description: `Payment update — ${invoice.invoice_number ?? invoice.quotation_number} (${invoice.customer_name})`,
-          amount: delta,
-          cost_center: invoice.invoice_type === "event" ? "Event Account" : "Daily Orders",
-          invoice_type: invoice.invoice_type,
-          reference_number: invoice.invoice_number ?? invoice.quotation_number,
-          recorded_by: user?.id ?? null,
-        });
+      // Only post ledger entries if invoice has already been posted to finance
+      if (invoice.recorded_in_finance) {
+        const delta = newAmountPaid - prevAmountPaid;
+        if (delta > 0) {
+          // Payment increased — record additional cash received
+          await supabase.from("finance_ledger").insert({
+            user_id: invoice.user_id,
+            entry_date: new Date().toISOString().split("T")[0],
+            entry_type: "payment_received",
+            source_type: "invoice",
+            source_id: invoice.id,
+            description: `Payment received — ${invoice.invoice_number ?? invoice.quotation_number} (${invoice.customer_name})`,
+            amount: delta,
+            cost_center: invoice.invoice_type === "event" ? "Event Account" : "Daily Orders",
+            invoice_type: invoice.invoice_type,
+            reference_number: invoice.invoice_number ?? invoice.quotation_number,
+            recorded_by: user?.id ?? null,
+          });
+        } else if (delta < 0) {
+          // Payment decreased — record a reversal so the ledger stays accurate
+          await supabase.from("finance_ledger").insert({
+            user_id: invoice.user_id,
+            entry_date: new Date().toISOString().split("T")[0],
+            entry_type: "payment_reversal",
+            source_type: "invoice",
+            source_id: invoice.id,
+            description: `Payment correction (reversal) — ${invoice.invoice_number ?? invoice.quotation_number} (${invoice.customer_name})`,
+            amount: Math.abs(delta),
+            cost_center: invoice.invoice_type === "event" ? "Event Account" : "Daily Orders",
+            invoice_type: invoice.invoice_type,
+            reference_number: invoice.invoice_number ?? invoice.quotation_number,
+            recorded_by: user?.id ?? null,
+          });
+        }
       }
 
       queryClient.invalidateQueries({ queryKey: ["invoices"] });

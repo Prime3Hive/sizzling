@@ -12,6 +12,7 @@ interface ReceiptItem {
 interface ReceiptProps {
   saleNumber: string;
   saleDate: string;
+  createdAt?: string;
   customerName?: string;
   customerEmail?: string;
   items: ReceiptItem[];
@@ -22,6 +23,7 @@ interface ReceiptProps {
 export const Receipt: React.FC<ReceiptProps> = ({
   saleNumber,
   saleDate,
+  createdAt,
   customerName,
   customerEmail,
   items,
@@ -51,7 +53,11 @@ export const Receipt: React.FC<ReceiptProps> = ({
         </div>
         <div className="flex justify-between">
           <span>Date:</span>
-          <span>{format(new Date(saleDate), 'dd/MM/yyyy HH:mm')}</span>
+          <span>
+            {createdAt
+              ? format(new Date(createdAt), 'dd/MM/yyyy HH:mm')
+              : format(new Date(saleDate), 'dd/MM/yyyy')}
+          </span>
         </div>
         {customerName && (
           <div className="flex justify-between">
