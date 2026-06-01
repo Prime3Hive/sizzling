@@ -19,6 +19,7 @@ import {
   makeBlankItem, DEFAULT_TERMS, UNITS,
 } from "@/types/invoices";
 import { formatNairaCompact } from "@/lib/currency";
+import CustomerPicker, { type CustomerRecord, WALK_IN } from "./CustomerPicker";
 
 interface Props {
   open: boolean;
@@ -49,7 +50,7 @@ function toNum(val: string) {
 
 const blankForm = (type: InvoiceType): InvoiceFormData => ({
   invoice_type: type,
-  customer_name: "",
+  customer_name: "Walk-in Customer",
   customer_email: "",
   customer_phone: "",
   customer_address: "",
@@ -86,6 +87,7 @@ export default function InvoiceFormDialog({ open, onOpenChange, editingInvoice, 
   const [form, setForm] = useState<InvoiceFormData>(blankForm(selectedType));
   const [items, setItems] = useState<InvoiceFormItem[]>([makeBlankItem()]);
   const [saving, setSaving] = useState(false);
+  const [selectedCustomer, setSelectedCustomer] = useState<CustomerRecord>(WALK_IN);
 
   // Products for daily sales inventory selection
   const { data: products = [] } = useQuery({
@@ -106,6 +108,21 @@ export default function InvoiceFormDialog({ open, onOpenChange, editingInvoice, 
     if (editingInvoice) {
       setSelectedType(editingInvoice.invoice_type);
       setStep("form");
+      // Restore the customer picker state from the invoice being edited
+      const editName = editingInvoice.customer_name ?? "";
+      const isWalkIn = !editName || editName.toLowerCase() === "walk-in customer";
+      setSelectedCustomer(
+        isWalkIn
+          ? WALK_IN
+          : {
+              id: `__edit__${editingInvoice.id}`,
+              name: editName,
+              email: editingInvoice.customer_email ?? "",
+              phone: editingInvoice.customer_phone ?? "",
+              address: editingInvoice.customer_address ?? "",
+              source: "invoice",
+            }
+      );
       setForm({
         invoice_type: editingInvoice.invoice_type,
         customer_name: editingInvoice.customer_name,
@@ -161,6 +178,7 @@ export default function InvoiceFormDialog({ open, onOpenChange, editingInvoice, 
         setStep(defaultType || editingInvoice ? "form" : "type-select");
         setForm(blankForm(type));
         setItems([makeBlankItem()]);
+        setSelectedCustomer(WALK_IN);
       }, 300);
     }
   }, [open]);
@@ -170,6 +188,17 @@ export default function InvoiceFormDialog({ open, onOpenChange, editingInvoice, 
       setForm((f) => ({ ...f, [k]: v })),
     []
   );
+
+  const handleCustomerSelect = useCallback((customer: CustomerRecord) => {
+    setSelectedCustomer(customer);
+    setForm((f) => ({
+      ...f,
+      customer_name: customer.name || "",
+      customer_email: customer.email,
+      customer_phone: customer.phone,
+      customer_address: customer.address,
+    }));
+  }, []);
 
   // Item management
   const setItemField = (idx: number, field: keyof InvoiceFormItem, value: string | number) => {
@@ -223,6 +252,7 @@ export default function InvoiceFormDialog({ open, onOpenChange, editingInvoice, 
     setSelectedType(type);
     setForm(blankForm(type));
     setItems([makeBlankItem()]);
+    setSelectedCustomer(WALK_IN);
     setStep("form");
   };
 
@@ -409,50 +439,80 @@ export default function InvoiceFormDialog({ open, onOpenChange, editingInvoice, 
 
         <div className="space-y-6">
 
-          {/* ── Customer Info ── */}
-          <section>
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground mb-3">
-              Customer Information
-            </h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <Label htmlFor="customer_name">Customer Name *</Label>
-                <Input
-                  id="customer_name"
-                  value={form.customer_name}
-                  onChange={(e) => setField("customer_name", e.target.value)}
-                  placeholder="Full name or company"
-                />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="customer_email">Email</Label>
-                <Input
-                  id="customer_email"
-                  type="email"
-                  value={form.customer_email}
-                  onChange={(e) => setField("customer_email", e.target.value)}
-                  placeholder="email@example.com"
-                />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="customer_phone">Phone</Label>
-                <Input
-                  id="customer_phone"
-                  value={form.customer_phone}
-                  onChange={(e) => setField("customer_phone", e.target.value)}
-                  placeholder="+234…"
-                />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="customer_address">Address</Label>
-                <Input
-                  id="customer_address"
-                  value={form.customer_address}
-                  onChange={(e) => setField("customer_address", e.target.value)}
-                  placeholder="Customer address"
-                />
-              </div>
+          {/* ── Customer ── */}
+          <section className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+                Customer
+              </h3>
+              {selectedCustomer.id !== "__walkin__" && (
+                <button
+                  type="button"
+                  className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2"
+                  onClick={() => handleCustomerSelect(WALK_IN)}
+                >
+                  Reset to walk-in
+                </button>
+              )}
             </div>
+
+            {/* Searchable customer picker */}
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Select or search customer</Label>
+              <CustomerPicker
+                value={selectedCustomer}
+                onChange={handleCustomerSelect}
+                disabled={saving}
+              />
+            </div>
+
+            {/* Walk-in: no fields needed */}
+            {selectedCustomer.id === "__walkin__" ? (
+              <div className="rounded-lg border border-dashed bg-muted/30 p-3 text-sm text-muted-foreground text-center">
+                Walk-in customer — no details required
+              </div>
+            ) : (
+              /* Any other customer: show editable fields */
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                <div className="space-y-1">
+                  <Label htmlFor="customer_name">Customer Name *</Label>
+                  <Input
+                    id="customer_name"
+                    value={form.customer_name}
+                    onChange={(e) => setField("customer_name", e.target.value)}
+                    placeholder="Full name or company"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="customer_email">Email</Label>
+                  <Input
+                    id="customer_email"
+                    type="email"
+                    value={form.customer_email}
+                    onChange={(e) => setField("customer_email", e.target.value)}
+                    placeholder="email@example.com"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="customer_phone">Phone</Label>
+                  <Input
+                    id="customer_phone"
+                    value={form.customer_phone}
+                    onChange={(e) => setField("customer_phone", e.target.value)}
+                    placeholder="+234…"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="customer_address">Address</Label>
+                  <Input
+                    id="customer_address"
+                    value={form.customer_address}
+                    onChange={(e) => setField("customer_address", e.target.value)}
+                    placeholder="Customer address"
+                  />
+                </div>
+              </div>
+            )}
           </section>
 
           {/* ── Event Details ── */}
