@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent } from "@/components/ui/card";
@@ -156,6 +156,22 @@ export default function KPIAssignTasks() {
       return (data || []) as unknown as TaskAssignment[];
     },
   });
+
+  // Periods selectable for assignment: prefer open (non-closed); if every period
+  // is closed, fall back to showing all so the user is never stuck with an empty list.
+  const openPeriods = useMemo(
+    () => (periods as any[]).filter((p) => p.status !== "closed"),
+    [periods],
+  );
+  const periodOptions = openPeriods.length ? openPeriods : (periods as any[]);
+
+  // Auto-select the active period (or first open one) once the dialog is open
+  // and periods have loaded, so Review Period isn't left blank.
+  useEffect(() => {
+    if (!open || form.period_id || periodOptions.length === 0) return;
+    const active = (periods as any[]).find((p) => p.status === "active");
+    setForm((prev) => ({ ...prev, period_id: (active ?? periodOptions[0])?.id ?? "" }));
+  }, [open, periods, periodOptions, form.period_id]);
 
   // ── Department-scoped derived lists ────────────────────────────────────────────
 
@@ -404,9 +420,16 @@ export default function KPIAssignTasks() {
               <Select value={form.period_id} onValueChange={(v) => setForm({ ...form, period_id: v })}>
                 <SelectTrigger><SelectValue placeholder="Select period" /></SelectTrigger>
                 <SelectContent>
-                  {(periods as any[]).filter((p) => p.status !== "closed").map((p: any) => (
-                    <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                  {periodOptions.map((p: any) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name}{p.status === "closed" ? " (closed)" : ""}
+                    </SelectItem>
                   ))}
+                  {periodOptions.length === 0 && (
+                    <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                      No review periods yet. Create one in the KPI Periods tab.
+                    </div>
+                  )}
                 </SelectContent>
               </Select>
             </div>
@@ -449,6 +472,11 @@ export default function KPIAssignTasks() {
                       </div>
                     </SelectItem>
                   ))}
+                  {form.department_id && deptCategories.length === 0 && (
+                    <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                      No categories for this department yet. Add one in the Task Library tab.
+                    </div>
+                  )}
                 </SelectContent>
               </Select>
             </div>
