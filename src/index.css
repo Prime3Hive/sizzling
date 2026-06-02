@@ -143,3 +143,84 @@ All colors MUST be HSL.
     text-wrap: balance;
   }
 }
+
+/* ── Page loader animations ─────────────────────────────────────── */
+
+@keyframes logo-float {
+  0%, 100% { transform: translateY(0px) scale(1); }
+  50%       { transform: translateY(-10px) scale(1.06); }
+}
+
+@keyframes logo-glow {
+  0%, 100% {
+    box-shadow:
+      0 0 24px 6px hsl(280 100% 70% / 0.35),
+      0 0 48px 12px hsl(25 95% 53% / 0.18);
+  }
+  50% {
+    box-shadow:
+      0 0 40px 12px hsl(280 100% 70% / 0.55),
+      0 0 80px 24px hsl(25 95% 53% / 0.30);
+  }
+}
+
+@keyframes ring-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+@keyframes ring-spin-reverse {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(-360deg); }
+}
+
+@keyframes shimmer-gradient {
+  0%   { background-position: 0%   50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0%   50%; }
+}
+
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes dot-wave {
+  0%, 60%, 100% { transform: translateY(0);     opacity: 0.35; }
+  30%            { transform: translateY(-7px);  opacity: 1; }
+}
+
+@keyframes particle-orbit {
+  from { transform: rotate(var(--start-angle)) translateX(var(--orbit-r)) rotate(calc(-1 * var(--start-angle))); }
+  to   { transform: rotate(calc(var(--start-angle) + 360deg)) translateX(var(--orbit-r)) rotate(calc(-1 * (var(--start-angle) + 360deg))); }
+}
+
+@keyframes particle-pulse {
+  0%, 100% { opacity: 0.7; transform: scale(1); }
+  50%       { opacity: 1;   transform: scale(1.4); }
+}
+
+/* Utility classes for the loader */
+.loader-logo-float  { animation: logo-float  2.4s ease-in-out infinite; }
+.loader-logo-glow   { animation: logo-glow   2.4s ease-in-out infinite; }
+.loader-ring-cw     { animation: ring-spin   2s   linear infinite; }
+.loader-ring-ccw    { animation: ring-spin-reverse 3s linear infinite; }
+.loader-fade-in-up  { animation: fade-in-up  0.6s ease both; }
+.loader-shimmer     {
+  background: linear-gradient(90deg,
+    hsl(280 100% 70%),
+    hsl(25 95% 53%),
+    hsl(280 100% 75%),
+    hsl(25 95% 60%)
+  );
+  background-size: 300% 300%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: shimmer-gradient 3s ease infinite;
+}
+
+.loader-dot { animation: dot-wave 1.4s ease-in-out infinite; }
+.loader-dot:nth-child(1) { animation-delay: 0s; }
+.loader-dot:nth-child(2) { animation-delay: 0.18s; }
+.loader-dot:nth-child(3) { animation-delay: 0.36s; }

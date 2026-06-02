@@ -10,6 +10,7 @@ import { Can } from "./components/Can";
 import * as Sentry from "@sentry/react";
 import Layout from "./components/Layout";
 import SessionTimeoutWarning from "./components/SessionTimeoutWarning";
+import PageLoader from "./components/PageLoader";
 
 const Dashboard         = lazy(() => import("./pages/Dashboard"));
 const Auth              = lazy(() => import("./pages/Auth"));
@@ -41,11 +42,6 @@ const PendingApproval   = lazy(() => import("./pages/PendingApproval"));
 const Procurement       = lazy(() => import("./pages/Procurement"));
 const NotFound          = lazy(() => import("./pages/NotFound"));
 
-const PageLoader = () => (
-  <div className="min-h-screen flex items-center justify-center">
-    <div className="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full" />
-  </div>
-);
 
 const queryClient = new QueryClient({
   defaultOptions: {
