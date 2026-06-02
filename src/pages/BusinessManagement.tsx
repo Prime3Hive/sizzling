@@ -16,9 +16,9 @@ const BusinessManagement = () => {
     },
     {
       title: "Sales Management",
-      description: "Record sales transactions and manage customer orders",
+      description: "Create invoices and quotations, and manage customer orders",
       icon: ShoppingCart,
-      route: "/business/sales",
+      route: "/business/invoices",
       color: "from-green-500 to-green-600"
     },
     {

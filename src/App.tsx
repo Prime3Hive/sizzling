@@ -20,7 +20,6 @@ const Reports           = lazy(() => import("./pages/Reports"));
 const BusinessManagement = lazy(() => import("./pages/BusinessManagement"));
 const Inventory         = lazy(() => import("./pages/business/Inventory"));
 const InventoryRequests = lazy(() => import("./pages/business/InventoryRequests"));
-const Sales             = lazy(() => import("./pages/business/Sales"));
 const Payments          = lazy(() => import("./pages/business/Payments"));
 const Analytics         = lazy(() => import("./pages/business/Analytics"));
 const KPIDashboard      = lazy(() => import("./pages/business/KPIDashboard"));
@@ -174,11 +173,6 @@ const App = () => (
                 <Route path="business/sku-management" element={
                   <Can module="inventory" redirect="/dashboard">
                     <SKUManagement />
-                  </Can>
-                } />
-                <Route path="business/sales" element={
-                  <Can module="sales" redirect="/dashboard">
-                    <Sales />
                   </Can>
                 } />
                 <Route path="business/payments" element={

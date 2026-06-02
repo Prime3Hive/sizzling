@@ -26,7 +26,6 @@ import {
   ToggleLeft,
   ClipboardCheck,
   HardDrive,
-  ShoppingCart,
   User,
   Send,
   FolderOpen,
@@ -356,11 +355,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 </SidebarMenuItem>
 
                 <Can module="sales">
-                  <SidebarMenuItem>
-                    <SidebarMenuButton asChild isActive={location.pathname === '/business/sales'}>
-                      <Link to="/business/sales"><ShoppingCart className="h-4 w-4" />Sales</Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
                   <SidebarMenuItem>
                     <SidebarMenuButton asChild isActive={location.pathname === '/business/payments'}>
                       <Link to="/business/payments"><CreditCard className="h-4 w-4" />Payments</Link>
