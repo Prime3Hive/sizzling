@@ -582,6 +582,14 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 </SidebarMenuItem>
               </Can>
 
+              <Can roles={['admin']}>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={location.pathname === '/bank-accounts'}>
+                    <Link to="/bank-accounts"><Landmark className="h-4 w-4" />Bank Accounts</Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              </Can>
+
             </SidebarMenu>
           </SidebarGroup>
         </Can>

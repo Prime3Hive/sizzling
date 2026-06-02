@@ -20,6 +20,7 @@ import {
 } from "@/types/invoices";
 import { formatNairaCompact } from "@/lib/currency";
 import CustomerPicker, { type CustomerRecord, WALK_IN } from "./CustomerPicker";
+import BankAccountPicker, { type BankAccount } from "./BankAccountPicker";
 
 interface Props {
   open: boolean;
@@ -88,6 +89,7 @@ export default function InvoiceFormDialog({ open, onOpenChange, editingInvoice, 
   const [items, setItems] = useState<InvoiceFormItem[]>([makeBlankItem()]);
   const [saving, setSaving] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerRecord>(WALK_IN);
+  const [selectedBankId, setSelectedBankId] = useState<string>("");
 
   // Products for daily sales inventory selection
   const { data: products = [] } = useQuery({
@@ -179,6 +181,7 @@ export default function InvoiceFormDialog({ open, onOpenChange, editingInvoice, 
         setForm(blankForm(type));
         setItems([makeBlankItem()]);
         setSelectedCustomer(WALK_IN);
+        setSelectedBankId("");
       }, 300);
     }
   }, [open]);
@@ -197,6 +200,16 @@ export default function InvoiceFormDialog({ open, onOpenChange, editingInvoice, 
       customer_email: customer.email,
       customer_phone: customer.phone,
       customer_address: customer.address,
+    }));
+  }, []);
+
+  const handleBankSelect = useCallback((account: BankAccount | null) => {
+    setSelectedBankId(account?.id ?? "");
+    setForm((f) => ({
+      ...f,
+      bank_name:      account?.bank_name      ?? "",
+      account_number: account?.account_number ?? "",
+      account_name:   account?.account_name   ?? "",
     }));
   }, []);
 
@@ -253,6 +266,7 @@ export default function InvoiceFormDialog({ open, onOpenChange, editingInvoice, 
     setForm(blankForm(type));
     setItems([makeBlankItem()]);
     setSelectedCustomer(WALK_IN);
+    setSelectedBankId("");
     setStep("form");
   };
 
@@ -876,47 +890,82 @@ export default function InvoiceFormDialog({ open, onOpenChange, editingInvoice, 
             </div>
           </section>
 
-          {/* ── Account Details ── */}
+          {/* ── Payment Account ── */}
           <Separator />
-          <section>
-            <div className="flex items-center gap-2 mb-3">
+          <section className="space-y-3">
+            <div className="flex items-center gap-2">
               <Building2 className="h-4 w-4 text-muted-foreground" />
               <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
                 Payment Account Details
               </h3>
             </div>
-            <p className="text-xs text-muted-foreground mb-3">
-              Bank account for client to remit payment. This will appear on the printed invoice.
+            <p className="text-xs text-muted-foreground">
+              Select a registered account — the details will be printed on the invoice for client remittance.
             </p>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="space-y-1">
-                <Label htmlFor="bank_name">Bank Name</Label>
-                <Input
-                  id="bank_name"
-                  value={form.bank_name}
-                  onChange={(e) => setField("bank_name", e.target.value)}
-                  placeholder="e.g. GTBank"
-                />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="account_number">Account Number</Label>
-                <Input
-                  id="account_number"
-                  value={form.account_number}
-                  onChange={(e) => setField("account_number", e.target.value)}
-                  placeholder="0123456789"
-                />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="account_name">Account Name</Label>
-                <Input
-                  id="account_name"
-                  value={form.account_name}
-                  onChange={(e) => setField("account_name", e.target.value)}
-                  placeholder="Sizzling Spices Ltd"
-                />
-              </div>
+
+            {/* Picker */}
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Select bank account</Label>
+              <BankAccountPicker
+                value={selectedBankId}
+                onChange={handleBankSelect}
+                disabled={saving}
+              />
             </div>
+
+            {/* Preview of selected account */}
+            {selectedBankId && form.bank_name && (
+              <div className="rounded-lg border bg-muted/30 p-3 grid grid-cols-3 gap-3 text-sm">
+                <div>
+                  <p className="text-xs text-muted-foreground mb-0.5">Bank</p>
+                  <p className="font-semibold">{form.bank_name}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground mb-0.5">Account No.</p>
+                  <p className="font-mono font-semibold tracking-wider">{form.account_number}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground mb-0.5">Account Name</p>
+                  <p className="font-semibold">{form.account_name}</p>
+                </div>
+              </div>
+            )}
+
+            {/* Manual override if no account selected */}
+            {!selectedBankId && (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="space-y-1">
+                  <Label htmlFor="bank_name" className="text-xs">Bank Name</Label>
+                  <Input
+                    id="bank_name"
+                    value={form.bank_name}
+                    onChange={(e) => setField("bank_name", e.target.value)}
+                    placeholder="e.g. GTBank"
+                    className="h-9 text-sm"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="account_number" className="text-xs">Account Number</Label>
+                  <Input
+                    id="account_number"
+                    value={form.account_number}
+                    onChange={(e) => setField("account_number", e.target.value)}
+                    placeholder="0123456789"
+                    className="h-9 text-sm"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="account_name" className="text-xs">Account Name</Label>
+                  <Input
+                    id="account_name"
+                    value={form.account_name}
+                    onChange={(e) => setField("account_name", e.target.value)}
+                    placeholder="Sizzling Spices Ltd"
+                    className="h-9 text-sm"
+                  />
+                </div>
+              </div>
+            )}
           </section>
 
           {/* ── Notes & Terms ── */}

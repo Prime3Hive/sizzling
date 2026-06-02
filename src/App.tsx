@@ -9,6 +9,7 @@ import { RoleProvider, useRoles } from "./hooks/useRoles";
 import { Can } from "./components/Can";
 import * as Sentry from "@sentry/react";
 import Layout from "./components/Layout";
+import SessionTimeoutWarning from "./components/SessionTimeoutWarning";
 
 const Dashboard         = lazy(() => import("./pages/Dashboard"));
 const Auth              = lazy(() => import("./pages/Auth"));
@@ -35,6 +36,7 @@ const BirthdayCalendar  = lazy(() => import("./pages/BirthdayCalendar"));
 const MyPayslip         = lazy(() => import("./pages/MyPayslip"));
 const DepartmentPermissions = lazy(() => import("./pages/admin/DepartmentPermissions"));
 const CompanyFiles      = lazy(() => import("./pages/admin/CompanyFiles"));
+const BankAccounts      = lazy(() => import("./pages/admin/BankAccounts"));
 const PendingApproval   = lazy(() => import("./pages/PendingApproval"));
 const Procurement       = lazy(() => import("./pages/Procurement"));
 const NotFound          = lazy(() => import("./pages/NotFound"));
@@ -89,6 +91,7 @@ const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <AuthProvider>
+        <SessionTimeoutWarning />
         <RoleProvider>
           <Toaster />
           <Sonner />
@@ -210,6 +213,11 @@ const App = () => (
                 <Route path="company-files" element={
                   <Can roles={['admin']} redirect="/dashboard">
                     <CompanyFiles />
+                  </Can>
+                } />
+                <Route path="bank-accounts" element={
+                  <Can roles={['admin']} redirect="/dashboard">
+                    <BankAccounts />
                   </Can>
                 } />
                 <Route path="staff-profiles" element={
