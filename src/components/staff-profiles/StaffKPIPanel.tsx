@@ -33,6 +33,7 @@ interface Category {
   name: string;
   color: string;
   weight: number;
+  department_id: string | null;
 }
 
 interface TaskTemplate {
@@ -201,11 +202,26 @@ export default function StaffKPIPanel({
     queryFn: async () => {
       const { data, error } = await supabase
         .from("kpi_categories")
-        .select("id, name, color, weight")
+        .select("id, name, color, weight, department_id")
         .order("sort_order")
         .order("name");
       if (error) throw error;
-      return (data ?? []) as Category[];
+      return (data ?? []) as unknown as Category[];
+    },
+    staleTime: 10 * 60_000,
+  });
+
+  // The staff member's department — scopes which categories/templates can be assigned
+  const { data: staffDeptId } = useQuery<string | null>({
+    queryKey: ["staff-department", staffProfileId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("staff_profiles")
+        .select("department_id")
+        .eq("id", staffProfileId)
+        .single();
+      if (error) throw error;
+      return (data as any)?.department_id ?? null;
     },
     staleTime: 10 * 60_000,
   });
@@ -235,6 +251,12 @@ export default function StaffKPIPanel({
     const active  = ofType.find((p) => p.status === "active");
     return active?.id ?? ofType[0]?.id ?? selectedPeriodId;
   }, [periods, assignPeriodType, selectedPeriodId]);
+
+  // Categories scoped to the staff member's department
+  const deptCategories = useMemo(
+    () => staffDeptId ? categories.filter((c) => c.department_id === staffDeptId) : categories,
+    [categories, staffDeptId],
+  );
 
   const filteredTemplates = useMemo(
     () => templates.filter((t) => t.category_id === assignForm.category_id),
@@ -679,7 +701,7 @@ export default function StaffKPIPanel({
                   <SelectValue placeholder="Select category…" />
                 </SelectTrigger>
                 <SelectContent>
-                  {categories.map((c) => (
+                  {deptCategories.map((c) => (
                     <SelectItem key={c.id} value={c.id}>
                       <div className="flex items-center gap-2">
                         <div className="h-2.5 w-2.5 rounded-full" style={{ background: c.color }} />
@@ -687,6 +709,11 @@ export default function StaffKPIPanel({
                       </div>
                     </SelectItem>
                   ))}
+                  {deptCategories.length === 0 && (
+                    <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                      No categories for this staff member's department.
+                    </div>
+                  )}
                 </SelectContent>
               </Select>
             </div>

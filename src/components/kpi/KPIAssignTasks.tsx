@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent } from "@/components/ui/card";
@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
-import { ClipboardList, Plus, Trash2, Loader2, UserCircle, Library } from "lucide-react";
+import { ClipboardList, Plus, Trash2, Loader2, UserCircle, Library, Building2 } from "lucide-react";
 import { format } from "date-fns";
 
 interface TaskAssignment {
@@ -29,6 +29,13 @@ interface TaskAssignment {
   kpi_periods: { name: string } | null;
 }
 
+interface Category {
+  id: string;
+  name: string;
+  color: string;
+  department_id: string | null;
+}
+
 interface TaskTemplate {
   id: string;
   category_id: string;
@@ -39,7 +46,19 @@ interface TaskTemplate {
   max_score: number;
 }
 
+interface StaffMember {
+  id: string;
+  full_name: string;
+  department_id: string | null;
+}
+
+interface Department {
+  id: string;
+  name: string;
+}
+
 const blank = {
+  department_id:    "",
   period_id:        "",
   staff_profile_id: "",
   category_id:      "",
@@ -65,9 +84,19 @@ export default function KPIAssignTasks() {
   const [open, setOpen]             = useState(false);
   const [form, setForm]             = useState(blank);
   const [filterPeriod, setFilterPeriod] = useState("all");
-  const [templatePickerCatId, setTemplatePickerCatId] = useState("");
+  const [selectedTemplate, setSelectedTemplate] = useState("");
 
   // ── Queries ──────────────────────────────────────────────────────────────────
+
+  const { data: departments = [] } = useQuery<Department[]>({
+    queryKey: ["departments"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("departments").select("id, name").order("name");
+      if (error) throw error;
+      return (data || []) as Department[];
+    },
+  });
 
   const { data: periods = [] } = useQuery({
     queryKey: ["kpi-periods"],
@@ -80,16 +109,16 @@ export default function KPIAssignTasks() {
     },
   });
 
-  const { data: categories = [] } = useQuery({
+  const { data: categories = [] } = useQuery<Category[]>({
     queryKey: ["kpi-categories"],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("kpi_categories")
-        .select("id, name, color")
+        .select("id, name, color, department_id")
         .order("sort_order")
         .order("name");
       if (error) throw error;
-      return data || [];
+      return (data || []) as unknown as Category[];
     },
   });
 
@@ -105,13 +134,13 @@ export default function KPIAssignTasks() {
     },
   });
 
-  const { data: staff = [] } = useQuery({
+  const { data: staff = [] } = useQuery<StaffMember[]>({
     queryKey: ["staff-profiles-select"],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("staff_profiles").select("id, full_name").order("full_name");
+        .from("staff_profiles").select("id, full_name, department_id").order("full_name");
       if (error) throw error;
-      return data || [];
+      return (data || []) as unknown as StaffMember[];
     },
   });
 
@@ -127,6 +156,32 @@ export default function KPIAssignTasks() {
       return (data || []) as unknown as TaskAssignment[];
     },
   });
+
+  // ── Department-scoped derived lists ────────────────────────────────────────────
+
+  // Staff strictly within the selected department
+  const deptStaff = useMemo(
+    () => form.department_id ? staff.filter(s => s.department_id === form.department_id) : [],
+    [staff, form.department_id],
+  );
+
+  // Categories belonging to the selected department
+  const deptCategories = useMemo(
+    () => form.department_id ? categories.filter(c => c.department_id === form.department_id) : [],
+    [categories, form.department_id],
+  );
+
+  // Template library scoped to the selected department's categories
+  const deptCategoryIds = useMemo(() => new Set(deptCategories.map(c => c.id)), [deptCategories]);
+  const deptTemplates = useMemo(
+    () => templates.filter(t => deptCategoryIds.has(t.category_id)),
+    [templates, deptCategoryIds],
+  );
+  // Optionally narrow templates by chosen category
+  const pickerTemplates = useMemo(
+    () => form.category_id ? deptTemplates.filter(t => t.category_id === form.category_id) : deptTemplates,
+    [deptTemplates, form.category_id],
+  );
 
   // ── Mutations ────────────────────────────────────────────────────────────────
 
@@ -149,7 +204,7 @@ export default function KPIAssignTasks() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["kpi-task-assignments"] });
       toast({ title: "Task assigned successfully" });
-      setOpen(false); setForm(blank);
+      setOpen(false); setForm(blank); setSelectedTemplate("");
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -169,24 +224,30 @@ export default function KPIAssignTasks() {
   // ── Handlers ─────────────────────────────────────────────────────────────────
 
   const handleSubmit = () => {
-    if (!form.period_id || !form.staff_profile_id || !form.title) {
-      toast({ title: "Please fill in Period, Staff member and Task Title", variant: "destructive" });
+    if (!form.department_id || !form.period_id || !form.staff_profile_id || !form.title) {
+      toast({ title: "Please fill in Department, Period, Staff member and Task Title", variant: "destructive" });
       return;
     }
     assign.mutate(form);
   };
 
+  // Changing department resets staff, category and template (they are now out of scope)
+  const setDepartment = (deptId: string) => {
+    setForm(prev => ({ ...prev, department_id: deptId, staff_profile_id: "", category_id: "" }));
+    setSelectedTemplate("");
+  };
+
   const applyTemplate = (t: TaskTemplate) => {
     setForm(prev => ({
       ...prev,
-      title:       t.title,
-      description: t.description || "",
+      title:        t.title,
+      description:  t.description || "",
       target_value: t.target || "",
-      category_id: t.category_id,
-      weight:      String(t.weight),
-      max_score:   String(t.max_score),
+      category_id:  t.category_id,
+      weight:       String(t.weight),
+      max_score:    String(t.max_score),
     }));
-    setTemplatePickerCatId("");
+    setSelectedTemplate(t.id);
   };
 
   const filtered = filterPeriod === "all" ? tasks : tasks.filter((t) => {
@@ -194,12 +255,7 @@ export default function KPIAssignTasks() {
     return period?.id === filterPeriod;
   });
 
-  // Templates filtered by selected category for the picker
-  const pickerTemplates = (templatePickerCatId && templatePickerCatId !== "all")
-    ? templates.filter(t => t.category_id === templatePickerCatId)
-    : templates;
-
-  const openDialog = () => { setForm(blank); setTemplatePickerCatId(""); setOpen(true); };
+  const openDialog = () => { setForm(blank); setSelectedTemplate(""); setOpen(true); };
 
   // ── Render ────────────────────────────────────────────────────────────────────
 
@@ -209,7 +265,7 @@ export default function KPIAssignTasks() {
         <div>
           <h2 className="text-xl font-semibold">Assign Tasks</h2>
           <p className="text-sm text-muted-foreground">
-            Assign KPI tasks to individual staff members. Pick from the library or create a custom task.
+            Pick a department, then assign KPI tasks to staff within that department.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -301,32 +357,35 @@ export default function KPIAssignTasks() {
           </DialogHeader>
           <div className="grid gap-4 py-2">
 
-            {/* ── Library picker ── */}
-            {templates.length > 0 && (
+            {/* ── Department (drives everything below) ── */}
+            <div className="grid gap-1.5">
+              <Label className="flex items-center gap-1.5">
+                <Building2 className="h-3.5 w-3.5" /> Department *
+              </Label>
+              <Select value={form.department_id} onValueChange={setDepartment}>
+                <SelectTrigger><SelectValue placeholder="Select department" /></SelectTrigger>
+                <SelectContent>
+                  {departments.map((d) => (
+                    <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* ── Library picker (scoped to department) ── */}
+            {form.department_id && deptTemplates.length > 0 && (
               <div className="rounded-lg border bg-muted/30 p-3 space-y-2">
                 <p className="text-xs font-medium flex items-center gap-1.5">
                   <Library className="h-3.5 w-3.5" /> Pick from library (pre-fills the form below)
                 </p>
-                <div className="flex gap-2">
-                  <Select value={templatePickerCatId} onValueChange={setTemplatePickerCatId}>
-                    <SelectTrigger className="h-8 text-xs flex-1">
-                      <SelectValue placeholder="Filter by category…" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All categories</SelectItem>
-                      {(categories as any[]).map((c) => (
-                        <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
                 <div className="max-h-40 overflow-y-auto space-y-1">
                   {pickerTemplates.map(t => (
                     <button
                       key={t.id}
                       type="button"
                       onClick={() => applyTemplate(t)}
-                      className="w-full text-left text-xs px-2.5 py-1.5 rounded-md hover:bg-primary/10 transition-colors flex items-center justify-between gap-2 group"
+                      className={`w-full text-left text-xs px-2.5 py-1.5 rounded-md transition-colors flex items-center justify-between gap-2 group
+                        ${selectedTemplate === t.id ? "bg-primary/15" : "hover:bg-primary/10"}`}
                     >
                       <span className="font-medium truncate">{t.title}</span>
                       <span className="text-muted-foreground shrink-0 group-hover:text-primary">{t.weight}% wt</span>
@@ -353,22 +412,42 @@ export default function KPIAssignTasks() {
             </div>
             <div className="grid gap-1.5">
               <Label>Staff Member *</Label>
-              <Select value={form.staff_profile_id} onValueChange={(v) => setForm({ ...form, staff_profile_id: v })}>
-                <SelectTrigger><SelectValue placeholder="Select staff" /></SelectTrigger>
+              <Select
+                value={form.staff_profile_id}
+                onValueChange={(v) => setForm({ ...form, staff_profile_id: v })}
+                disabled={!form.department_id}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder={form.department_id ? "Select staff" : "Select a department first"} />
+                </SelectTrigger>
                 <SelectContent>
-                  {(staff as any[]).map((s) => (
+                  {deptStaff.map((s) => (
                     <SelectItem key={s.id} value={s.id}>{s.full_name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              {form.department_id && deptStaff.length === 0 && (
+                <p className="text-xs text-amber-600">No staff assigned to this department yet.</p>
+              )}
             </div>
             <div className="grid gap-1.5">
               <Label>Category</Label>
-              <Select value={form.category_id} onValueChange={(v) => setForm({ ...form, category_id: v })}>
-                <SelectTrigger><SelectValue placeholder="Select category" /></SelectTrigger>
+              <Select
+                value={form.category_id}
+                onValueChange={(v) => { setForm({ ...form, category_id: v }); setSelectedTemplate(""); }}
+                disabled={!form.department_id}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder={form.department_id ? "Select category" : "Select a department first"} />
+                </SelectTrigger>
                 <SelectContent>
-                  {(categories as any[]).map((c) => (
-                    <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                  {deptCategories.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      <div className="flex items-center gap-2">
+                        <div className="h-2.5 w-2.5 rounded-full" style={{ background: c.color }} />
+                        {c.name}
+                      </div>
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
