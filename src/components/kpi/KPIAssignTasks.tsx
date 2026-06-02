@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { ClipboardList, Plus, Trash2, Loader2, UserCircle, Library, Building2 } from "lucide-react";
@@ -370,6 +370,9 @@ export default function KPIAssignTasks() {
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Assign New Task</DialogTitle>
+            <DialogDescription>
+              Choose a department, then assign a KPI task to a staff member in that department.
+            </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-2">
 

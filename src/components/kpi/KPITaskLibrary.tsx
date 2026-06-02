@@ -11,7 +11,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel,
@@ -557,6 +557,9 @@ export default function KPITaskLibrary() {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>{catEditing ? "Edit Category" : "Add Category"}</DialogTitle>
+            <DialogDescription>
+              A category groups related KPI tasks under a department. Its weight is its share of the department's overall score.
+            </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-2">
             <div className="grid gap-1.5">
@@ -626,6 +629,9 @@ export default function KPITaskLibrary() {
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>{taskEditing ? "Edit Task" : "Add Task"}</DialogTitle>
+            <DialogDescription>
+              A reusable task template within this category. Its weight is its share of the category's score.
+            </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-2">
             <div className="grid gap-1.5">

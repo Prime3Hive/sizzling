@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -409,8 +409,8 @@ export default function InvoiceFormDialog({ open, onOpenChange, editingInvoice, 
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>New Quotation / Invoice</DialogTitle>
+            <DialogDescription>Select the type of invoice to create:</DialogDescription>
           </DialogHeader>
-          <p className="text-sm text-muted-foreground">Select the type of invoice to create:</p>
           <div className="grid gap-3 mt-2">
             {(Object.entries(TYPE_CONFIGS) as [InvoiceType, typeof TYPE_CONFIGS.event][]).map(
               ([type, config]) => {
@@ -449,6 +449,9 @@ export default function InvoiceFormDialog({ open, onOpenChange, editingInvoice, 
             <Icon className="h-5 w-5" />
             {editingInvoice ? "Edit Quotation" : `New ${config.label} Quotation`}
           </DialogTitle>
+          <DialogDescription>
+            Enter the customer, line items, charges and payment details for this {config.label.toLowerCase()}.
+          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-6">

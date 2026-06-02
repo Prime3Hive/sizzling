@@ -12,7 +12,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
 import {
   Plus, Star, BarChart2, Loader2, Library, PlayCircle, ChevronDown,
@@ -657,6 +657,9 @@ export default function StaffKPIPanel({
               <Plus className="h-4 w-4" />
               Assign Task — {staffName}
             </DialogTitle>
+            <DialogDescription>
+              Assign a KPI task to {staffName} for the selected period.
+            </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-1">
