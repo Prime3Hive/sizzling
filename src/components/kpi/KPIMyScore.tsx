@@ -10,7 +10,7 @@ import {
   Loader2, ChevronDown, ChevronRight, Trophy, Award,
   Target, Star, Users, TrendingUp, CheckCircle, Clock, Medal,
 } from "lucide-react";
-import { format } from "date-fns";
+import { safeFormat } from "@/lib/safeDate";
 import { useRoles } from "@/hooks/useRoles";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -229,8 +229,8 @@ function TaskRow({ task }: { task: TaskAssignment }) {
           <div className="flex flex-wrap gap-x-5 gap-y-1">
             <span>Weight: <strong className="text-foreground">{task.weight}</strong></span>
             <span>Max: <strong className="text-foreground">{task.max_score} pts</strong></span>
-            {task.due_date && <span>Due: <strong className="text-foreground">{format(new Date(task.due_date), "MMM d, yyyy")}</strong></span>}
-            {task.scored_at && <span>Scored: <strong className="text-foreground">{format(new Date(task.scored_at), "MMM d, yyyy")}</strong></span>}
+            {task.due_date && <span>Due: <strong className="text-foreground">{safeFormat(task.due_date, "MMM d, yyyy")}</strong></span>}
+            {task.scored_at && <span>Scored: <strong className="text-foreground">{safeFormat(task.scored_at, "MMM d, yyyy")}</strong></span>}
           </div>
           {task.description && <p>{task.description}</p>}
           {task.score_comment && (

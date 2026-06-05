@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { ClipboardList, Loader2, TrendingUp, PlayCircle, SendHorizonal, Info, Award } from "lucide-react";
-import { format } from "date-fns";
+import { safeFormat } from "@/lib/safeDate";
 
 interface MyTask {
   id: string;
@@ -268,7 +268,7 @@ export default function StaffKPITasks() {
                         <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
                           <span>Period: {task.kpi_periods?.name || "—"}</span>
                           {task.due_date && (
-                            <span>Due: {format(new Date(task.due_date), "MMM d, yyyy")}</span>
+                            <span>Due: {safeFormat(task.due_date, "MMM d, yyyy")}</span>
                           )}
                           <span>Weight: {task.weight} · Max: {task.max_score} pts</span>
                           {task.score !== null && (

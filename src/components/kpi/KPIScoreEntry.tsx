@@ -12,7 +12,24 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { useRoles } from "@/hooks/useRoles";
 import { Star, Loader2, UserCircle, CheckCircle, Pencil, PlayCircle } from "lucide-react";
-import { format } from "date-fns";
+import { safeFormat } from "@/lib/safeDate";
+
+/** Letter grade from a 0–100 percentage. */
+function letterGrade(pct: number): string {
+  if (pct >= 90) return "A";
+  if (pct >= 75) return "B";
+  if (pct >= 60) return "C";
+  if (pct >= 40) return "D";
+  return "F";
+}
+
+const gradeBadgeColors: Record<string, string> = {
+  A: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
+  B: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
+  C: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300",
+  D: "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300",
+  F: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300",
+};
 
 interface ScoredTask {
   id: string;
@@ -195,10 +212,21 @@ export default function KPIScoreEntry() {
             {task.staff_profiles?.full_name || "—"}
           </span>
           <span>Period: {task.kpi_periods?.name || "—"}</span>
-          {task.due_date && <span>Due: {format(new Date(task.due_date), "MMM d, yyyy")}</span>}
-          <span>Weight: {task.weight} · Max: {task.max_score} pts</span>
+          {task.due_date && <span>Due: {safeFormat(task.due_date, "MMM d, yyyy")}</span>}
+          <span>Weight: {task.weight}% · Max: {task.max_score} pts</span>
           {task.score != null && !editingScored.has(task.id) && (
-            <span className="text-green-600 font-semibold">Score: {task.score}/{task.max_score}</span>
+            <>
+              <span className="text-green-600 font-semibold">Score: {task.score}/{task.max_score}</span>
+              {(() => {
+                const pct = task.max_score > 0 ? (task.score / task.max_score) * 100 : 0;
+                const g = letterGrade(pct);
+                return (
+                  <Badge className={`text-xs font-bold ${gradeBadgeColors[g]}`}>
+                    Grade {g} · {pct.toFixed(0)}%
+                  </Badge>
+                );
+              })()}
+            </>
           )}
         </div>
 
@@ -333,7 +361,7 @@ export default function KPIScoreEntry() {
           <h2 className="text-xl font-semibold flex items-center gap-2">
             <Star className="h-5 w-5 text-amber-500" /> Score Tasks
           </h2>
-          <p className="text-sm text-muted-foreground">Enter scores for submitted tasks.</p>
+          <p className="text-sm text-muted-foreground">Grade each assigned task — scores roll up into the staff's overall KPI score.</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <Select value={selectedPeriod} onValueChange={setSelectedPeriod}>
@@ -388,7 +416,7 @@ export default function KPIScoreEntry() {
             <>
               <SectionHeader label="In Progress" count={inProgress.length} />
               <div className="space-y-3">
-                {inProgress.map((t) => renderTaskCard(t, false, false))}
+                {inProgress.map((t) => renderTaskCard(t, true, false))}
               </div>
             </>
           )}
@@ -397,7 +425,7 @@ export default function KPIScoreEntry() {
             <>
               <SectionHeader label="Pending" count={pending.length} />
               <div className="space-y-3">
-                {pending.map((t) => renderTaskCard(t, false, true))}
+                {pending.map((t) => renderTaskCard(t, true, true))}
               </div>
             </>
           )}

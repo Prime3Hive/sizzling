@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { ClipboardList, Plus, Trash2, Loader2, UserCircle, Library, Building2, Check, ListPlus } from "lucide-react";
-import { format } from "date-fns";
+import { safeFormat } from "@/lib/safeDate";
 
 interface TaskAssignment {
   id: string;
@@ -420,7 +420,7 @@ export default function KPIAssignTasks() {
                         {task.staff_profiles?.full_name || "—"}
                       </span>
                       <span>Period: {task.kpi_periods?.name || "—"}</span>
-                      {task.due_date && <span>Due: {format(new Date(task.due_date), "MMM d, yyyy")}</span>}
+                      {task.due_date && <span>Due: {safeFormat(task.due_date, "MMM d, yyyy")}</span>}
                       <span>Weight: {task.weight}% · Max: {task.max_score} pts</span>
                       {task.score != null && (
                         <span className="text-green-600 font-semibold">Score: {task.score}/{task.max_score}</span>

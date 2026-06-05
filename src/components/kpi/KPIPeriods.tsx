@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { CalendarRange, Plus, Play, Lock, Pencil, Loader2 } from "lucide-react";
-import { format } from "date-fns";
+import { safeFormat } from "@/lib/safeDate";
 
 interface Period {
   id: string;
@@ -154,7 +154,7 @@ export default function KPIPeriods() {
               <CardContent className="space-y-3">
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <CalendarRange className="h-3.5 w-3.5" />
-                  <span>{format(new Date(p.start_date), "MMM d, yyyy")} – {format(new Date(p.end_date), "MMM d, yyyy")}</span>
+                  <span>{safeFormat(p.start_date, "MMM d, yyyy")} – {safeFormat(p.end_date, "MMM d, yyyy")}</span>
                 </div>
                 {p.description && (
                   <p className="text-xs text-muted-foreground line-clamp-2">{p.description}</p>
