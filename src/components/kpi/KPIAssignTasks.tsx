@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
-import { ClipboardList, Plus, Trash2, Loader2, UserCircle, Library, Building2 } from "lucide-react";
+import { ClipboardList, Plus, Trash2, Loader2, UserCircle, Library, Building2, Check, ListPlus } from "lucide-react";
 import { format } from "date-fns";
 
 interface TaskAssignment {
@@ -57,6 +57,18 @@ interface Department {
   name: string;
 }
 
+/** A single task queued for assignment (from the library or entered manually). */
+interface TaskDraft {
+  _key: string;
+  title: string;
+  description: string;
+  target_value: string;
+  category_id: string;
+  weight: string;
+  max_score: string;
+  due_date: string;
+}
+
 const blank = {
   department_id:    "",
   period_id:        "",
@@ -84,7 +96,7 @@ export default function KPIAssignTasks() {
   const [open, setOpen]             = useState(false);
   const [form, setForm]             = useState(blank);
   const [filterPeriod, setFilterPeriod] = useState("all");
-  const [selectedTemplate, setSelectedTemplate] = useState("");
+  const [queue, setQueue]           = useState<TaskDraft[]>([]);
 
   // ── Queries ──────────────────────────────────────────────────────────────────
 
@@ -199,28 +211,36 @@ export default function KPIAssignTasks() {
     [deptTemplates, form.category_id],
   );
 
+  const categoryById = useMemo(() => {
+    const m: Record<string, Category> = {};
+    categories.forEach(c => { m[c.id] = c; });
+    return m;
+  }, [categories]);
+
   // ── Mutations ────────────────────────────────────────────────────────────────
 
   const assign = useMutation({
-    mutationFn: async (payload: typeof blank) => {
-      const { error } = await supabase.from("kpi_task_assignments").insert({
-        period_id:        payload.period_id,
-        staff_profile_id: payload.staff_profile_id,
-        category_id:      payload.category_id || null,
-        title:            payload.title,
-        description:      payload.description || null,
-        target_value:     payload.target_value || null,
-        weight:           parseInt(payload.weight),
-        max_score:        parseInt(payload.max_score),
-        due_date:         payload.due_date || null,
+    mutationFn: async (vars: { drafts: TaskDraft[]; period_id: string; staff_profile_id: string }) => {
+      const rows = vars.drafts.map((d) => ({
+        period_id:        vars.period_id,
+        staff_profile_id: vars.staff_profile_id,
+        category_id:      d.category_id || null,
+        title:            d.title,
+        description:      d.description || null,
+        target_value:     d.target_value || null,
+        weight:           parseInt(d.weight) || 0,
+        max_score:        parseInt(d.max_score) || 100,
+        due_date:         d.due_date || null,
         assigned_by:      user?.id,
-      });
+      }));
+      const { error } = await supabase.from("kpi_task_assignments").insert(rows);
       if (error) throw error;
+      return rows.length;
     },
-    onSuccess: () => {
+    onSuccess: (count) => {
       qc.invalidateQueries({ queryKey: ["kpi-task-assignments"] });
-      toast({ title: "Task assigned successfully" });
-      setOpen(false); setForm(blank); setSelectedTemplate("");
+      toast({ title: `${count} task${count === 1 ? "" : "s"} assigned successfully` });
+      setOpen(false); resetDialog();
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -237,33 +257,91 @@ export default function KPIAssignTasks() {
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
-  // ── Handlers ─────────────────────────────────────────────────────────────────
+  // ── Queue helpers ──────────────────────────────────────────────────────────────
 
-  const handleSubmit = () => {
-    if (!form.department_id || !form.period_id || !form.staff_profile_id || !form.title) {
-      toast({ title: "Please fill in Department, Period, Staff member and Task Title", variant: "destructive" });
+  const isQueued = (templateId: string) => queue.some((d) => d._key === `tpl-${templateId}`);
+
+  const toggleTemplate = (t: TaskTemplate) => {
+    const key = `tpl-${t.id}`;
+    setQueue((prev) => {
+      if (prev.some((d) => d._key === key)) return prev.filter((d) => d._key !== key);
+      return [...prev, {
+        _key:         key,
+        title:        t.title,
+        description:  t.description || "",
+        target_value: t.target || "",
+        category_id:  t.category_id,
+        weight:       String(t.weight),
+        max_score:    String(t.max_score),
+        due_date:     "",
+      }];
+    });
+  };
+
+  const addCustomToQueue = () => {
+    if (!form.title.trim()) {
+      toast({ title: "Enter a task title to add it", variant: "destructive" });
       return;
     }
-    assign.mutate(form);
+    setQueue((prev) => [...prev, {
+      _key:         `custom-${Date.now()}`,
+      title:        form.title.trim(),
+      description:  form.description,
+      target_value: form.target_value,
+      category_id:  form.category_id,
+      weight:       form.weight,
+      max_score:    form.max_score,
+      due_date:     form.due_date,
+    }]);
+    // Clear the manual entry fields, keep weight/max defaults for the next one
+    setForm((prev) => ({ ...prev, title: "", description: "", target_value: "", due_date: "" }));
   };
 
-  // Changing department resets staff, category and template (they are now out of scope)
+  const removeFromQueue = (key: string) =>
+    setQueue((prev) => prev.filter((d) => d._key !== key));
+
+  const updateQueueWeight = (key: string, weight: string) =>
+    setQueue((prev) => prev.map((d) => (d._key === key ? { ...d, weight } : d)));
+
+  // ── Handlers ─────────────────────────────────────────────────────────────────
+
+  const resetDialog = () => { setForm(blank); setQueue([]); };
+
+  const handleSubmit = () => {
+    if (!form.department_id || !form.period_id || !form.staff_profile_id) {
+      toast({ title: "Please select Department, Review Period and Staff member", variant: "destructive" });
+      return;
+    }
+    // Include an in-progress manual task (title typed but not yet added to the list)
+    const drafts = [...queue];
+    if (form.title.trim()) {
+      drafts.push({
+        _key:         `inline-${Date.now()}`,
+        title:        form.title.trim(),
+        description:  form.description,
+        target_value: form.target_value,
+        category_id:  form.category_id,
+        weight:       form.weight,
+        max_score:    form.max_score,
+        due_date:     form.due_date,
+      });
+    }
+    if (drafts.length === 0) {
+      toast({
+        title: "No tasks to assign",
+        description: "Pick one or more tasks from the library, or enter a task title.",
+        variant: "destructive",
+      });
+      return;
+    }
+    assign.mutate({ drafts, period_id: form.period_id, staff_profile_id: form.staff_profile_id });
+  };
+
+  // Changing department resets staff, category, template selection and the queue
+  // (categories/templates are department-scoped, so the queue is no longer valid).
   const setDepartment = (deptId: string) => {
     setForm(prev => ({ ...prev, department_id: deptId, staff_profile_id: "", category_id: "" }));
-    setSelectedTemplate("");
-  };
-
-  const applyTemplate = (t: TaskTemplate) => {
-    setForm(prev => ({
-      ...prev,
-      title:        t.title,
-      description:  t.description || "",
-      target_value: t.target || "",
-      category_id:  t.category_id,
-      weight:       String(t.weight),
-      max_score:    String(t.max_score),
-    }));
-    setSelectedTemplate(t.id);
+    setQueue([]);
   };
 
   const filtered = filterPeriod === "all" ? tasks : tasks.filter((t) => {
@@ -271,7 +349,9 @@ export default function KPIAssignTasks() {
     return period?.id === filterPeriod;
   });
 
-  const openDialog = () => { setForm(blank); setSelectedTemplate(""); setOpen(true); };
+  const openDialog = () => { resetDialog(); setOpen(true); };
+
+  const selectedStaffName = deptStaff.find((s) => s.id === form.staff_profile_id)?.full_name;
 
   // ── Render ────────────────────────────────────────────────────────────────────
 
@@ -281,7 +361,7 @@ export default function KPIAssignTasks() {
         <div>
           <h2 className="text-xl font-semibold">Assign Tasks</h2>
           <p className="text-sm text-muted-foreground">
-            Pick a department, then assign KPI tasks to staff within that department.
+            Pick a department, then assign one or more KPI tasks to staff within that department.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -369,9 +449,9 @@ export default function KPIAssignTasks() {
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Assign New Task</DialogTitle>
+            <DialogTitle>Assign Tasks</DialogTitle>
             <DialogDescription>
-              Choose a department, then assign a KPI task to a staff member in that department.
+              Choose a department and staff member, then add one or more tasks to assign together.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-2">
@@ -391,25 +471,94 @@ export default function KPIAssignTasks() {
               </Select>
             </div>
 
-            {/* ── Library picker (scoped to department) ── */}
+            {/* ── Review Period + Staff ── */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-1.5">
+                <Label>Review Period *</Label>
+                <Select value={form.period_id} onValueChange={(v) => setForm({ ...form, period_id: v })}>
+                  <SelectTrigger><SelectValue placeholder="Select period" /></SelectTrigger>
+                  <SelectContent>
+                    {periodOptions.map((p: any) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.name}{p.status === "closed" ? " (closed)" : ""}
+                      </SelectItem>
+                    ))}
+                    {periodOptions.length === 0 && (
+                      <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                        No review periods yet. Create one in the KPI Periods tab.
+                      </div>
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-1.5">
+                <Label>Staff Member *</Label>
+                <Select
+                  value={form.staff_profile_id}
+                  onValueChange={(v) => setForm({ ...form, staff_profile_id: v })}
+                  disabled={!form.department_id}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder={form.department_id ? "Select staff" : "Select a department first"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {deptStaff.map((s) => (
+                      <SelectItem key={s.id} value={s.id}>{s.full_name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            {form.department_id && deptStaff.length === 0 && (
+              <p className="text-xs text-amber-600 -mt-2">No staff assigned to this department yet.</p>
+            )}
+
+            {/* ── Library picker (multi-select, scoped to department) ── */}
             {form.department_id && deptTemplates.length > 0 && (
               <div className="rounded-lg border bg-muted/30 p-3 space-y-2">
                 <p className="text-xs font-medium flex items-center gap-1.5">
-                  <Library className="h-3.5 w-3.5" /> Pick from library (pre-fills the form below)
+                  <Library className="h-3.5 w-3.5" /> Pick tasks from library
+                  <span className="text-muted-foreground font-normal">(tap to add / remove)</span>
                 </p>
-                <div className="max-h-40 overflow-y-auto space-y-1">
-                  {pickerTemplates.map(t => (
-                    <button
-                      key={t.id}
-                      type="button"
-                      onClick={() => applyTemplate(t)}
-                      className={`w-full text-left text-xs px-2.5 py-1.5 rounded-md transition-colors flex items-center justify-between gap-2 group
-                        ${selectedTemplate === t.id ? "bg-primary/15" : "hover:bg-primary/10"}`}
-                    >
-                      <span className="font-medium truncate">{t.title}</span>
-                      <span className="text-muted-foreground shrink-0 group-hover:text-primary">{t.weight}% wt</span>
-                    </button>
-                  ))}
+                {/* Optional category filter for the library list */}
+                {deptCategories.length > 0 && (
+                  <Select
+                    value={form.category_id || "all"}
+                    onValueChange={(v) => setForm({ ...form, category_id: v === "all" ? "" : v })}
+                  >
+                    <SelectTrigger className="h-8 text-xs">
+                      <SelectValue placeholder="All categories" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All categories</SelectItem>
+                      {deptCategories.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+                <div className="max-h-44 overflow-y-auto space-y-1">
+                  {pickerTemplates.map(t => {
+                    const queued = isQueued(t.id);
+                    return (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => toggleTemplate(t)}
+                        className={`w-full text-left text-xs px-2.5 py-1.5 rounded-md transition-colors flex items-center justify-between gap-2 group
+                          ${queued ? "bg-primary/15 ring-1 ring-primary/40" : "hover:bg-primary/10"}`}
+                      >
+                        <span className="flex items-center gap-2 min-w-0">
+                          <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border
+                            ${queued ? "bg-primary border-primary text-primary-foreground" : "border-muted-foreground/40"}`}>
+                            {queued && <Check className="h-3 w-3" />}
+                          </span>
+                          <span className="font-medium truncate">{t.title}</span>
+                        </span>
+                        <span className="text-muted-foreground shrink-0 group-hover:text-primary">{t.weight}% wt</span>
+                      </button>
+                    );
+                  })}
                   {pickerTemplates.length === 0 && (
                     <p className="text-xs text-muted-foreground text-center py-2">No templates in this category.</p>
                   )}
@@ -417,112 +566,127 @@ export default function KPIAssignTasks() {
               </div>
             )}
 
-            {/* ── Form fields ── */}
-            <div className="grid gap-1.5">
-              <Label>Review Period *</Label>
-              <Select value={form.period_id} onValueChange={(v) => setForm({ ...form, period_id: v })}>
-                <SelectTrigger><SelectValue placeholder="Select period" /></SelectTrigger>
-                <SelectContent>
-                  {periodOptions.map((p: any) => (
-                    <SelectItem key={p.id} value={p.id}>
-                      {p.name}{p.status === "closed" ? " (closed)" : ""}
-                    </SelectItem>
-                  ))}
-                  {periodOptions.length === 0 && (
-                    <div className="px-2 py-1.5 text-xs text-muted-foreground">
-                      No review periods yet. Create one in the KPI Periods tab.
-                    </div>
-                  )}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid gap-1.5">
-              <Label>Staff Member *</Label>
-              <Select
-                value={form.staff_profile_id}
-                onValueChange={(v) => setForm({ ...form, staff_profile_id: v })}
-                disabled={!form.department_id}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder={form.department_id ? "Select staff" : "Select a department first"} />
-                </SelectTrigger>
-                <SelectContent>
-                  {deptStaff.map((s) => (
-                    <SelectItem key={s.id} value={s.id}>{s.full_name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {form.department_id && deptStaff.length === 0 && (
-                <p className="text-xs text-amber-600">No staff assigned to this department yet.</p>
-              )}
-            </div>
-            <div className="grid gap-1.5">
-              <Label>Category</Label>
-              <Select
-                value={form.category_id}
-                onValueChange={(v) => { setForm({ ...form, category_id: v }); setSelectedTemplate(""); }}
-                disabled={!form.department_id}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder={form.department_id ? "Select category" : "Select a department first"} />
-                </SelectTrigger>
-                <SelectContent>
-                  {deptCategories.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      <div className="flex items-center gap-2">
-                        <div className="h-2.5 w-2.5 rounded-full" style={{ background: c.color }} />
-                        {c.name}
+            {/* ── Tasks queued for assignment ── */}
+            {queue.length > 0 && (
+              <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 space-y-2">
+                <p className="text-xs font-semibold flex items-center gap-1.5">
+                  <ListPlus className="h-3.5 w-3.5" /> Tasks to assign ({queue.length})
+                </p>
+                <div className="space-y-1.5">
+                  {queue.map((d) => {
+                    const cat = d.category_id ? categoryById[d.category_id] : undefined;
+                    return (
+                      <div key={d._key} className="flex items-center gap-2 rounded-md bg-background border px-2.5 py-1.5">
+                        {cat && (
+                          <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ background: cat.color }} />
+                        )}
+                        <span className="text-xs font-medium flex-1 truncate">{d.title}</span>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <Input
+                            type="number" min={0} max={100}
+                            value={d.weight}
+                            onChange={(e) => updateQueueWeight(d._key, e.target.value)}
+                            className="h-7 w-14 text-xs px-1.5 text-center"
+                          />
+                          <span className="text-[10px] text-muted-foreground">% wt</span>
+                        </div>
+                        <Button
+                          size="icon" variant="ghost"
+                          className="h-6 w-6 text-destructive shrink-0"
+                          onClick={() => removeFromQueue(d._key)}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
                       </div>
-                    </SelectItem>
-                  ))}
-                  {form.department_id && deptCategories.length === 0 && (
-                    <div className="px-2 py-1.5 text-xs text-muted-foreground">
-                      No categories for this department yet. Add one in the Task Library tab.
-                    </div>
-                  )}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid gap-1.5">
-              <Label>Task Title *</Label>
-              <Input placeholder="e.g. Daily walk-through completed"
-                value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
-            </div>
-            <div className="grid gap-1.5">
-              <Label>Scoring Criteria / Description</Label>
-              <Textarea rows={2} placeholder="100% = … | 80% = … | 60% = … | 0% = …"
-                value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
-            </div>
-            <div className="grid gap-1.5">
-              <Label>Target</Label>
-              <Input placeholder="e.g. ≥ 95% across all departments"
-                value={form.target_value} onChange={(e) => setForm({ ...form, target_value: e.target.value })} />
-            </div>
-            <div className="grid grid-cols-3 gap-3">
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* ── Custom / manual task entry ── */}
+            <div className="rounded-lg border p-3 space-y-3">
+              <p className="text-xs font-medium text-muted-foreground">Add a custom task</p>
               <div className="grid gap-1.5">
-                <Label>Weight %</Label>
-                <Input type="number" min={0} max={100}
-                  value={form.weight}
-                  onChange={(e) => setForm({ ...form, weight: e.target.value })} />
+                <Label>Category</Label>
+                <Select
+                  value={form.category_id}
+                  onValueChange={(v) => setForm({ ...form, category_id: v })}
+                  disabled={!form.department_id}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder={form.department_id ? "Select category" : "Select a department first"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {deptCategories.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        <div className="flex items-center gap-2">
+                          <div className="h-2.5 w-2.5 rounded-full" style={{ background: c.color }} />
+                          {c.name}
+                        </div>
+                      </SelectItem>
+                    ))}
+                    {form.department_id && deptCategories.length === 0 && (
+                      <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                        No categories for this department yet. Add one in the Task Library tab.
+                      </div>
+                    )}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="grid gap-1.5">
-                <Label>Max Score</Label>
-                <Input type="number" min={1} max={100}
-                  value={form.max_score}
-                  onChange={(e) => setForm({ ...form, max_score: e.target.value })} />
+                <Label>Task Title</Label>
+                <Input placeholder="e.g. Daily walk-through completed"
+                  value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
               </div>
               <div className="grid gap-1.5">
-                <Label>Due Date</Label>
-                <Input type="date" value={form.due_date}
-                  onChange={(e) => setForm({ ...form, due_date: e.target.value })} />
+                <Label>Scoring Criteria / Description</Label>
+                <Textarea rows={2} placeholder="100% = … | 80% = … | 60% = … | 0% = …"
+                  value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
               </div>
+              <div className="grid gap-1.5">
+                <Label>Target</Label>
+                <Input placeholder="e.g. ≥ 95% across all departments"
+                  value={form.target_value} onChange={(e) => setForm({ ...form, target_value: e.target.value })} />
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="grid gap-1.5">
+                  <Label>Weight %</Label>
+                  <Input type="number" min={0} max={100}
+                    value={form.weight}
+                    onChange={(e) => setForm({ ...form, weight: e.target.value })} />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label>Max Score</Label>
+                  <Input type="number" min={1} max={100}
+                    value={form.max_score}
+                    onChange={(e) => setForm({ ...form, max_score: e.target.value })} />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label>Due Date</Label>
+                  <Input type="date" value={form.due_date}
+                    onChange={(e) => setForm({ ...form, due_date: e.target.value })} />
+                </div>
+              </div>
+              <Button
+                type="button" variant="outline" size="sm" className="gap-1.5 w-full"
+                onClick={addCustomToQueue}
+              >
+                <ListPlus className="h-3.5 w-3.5" /> Add to list
+              </Button>
             </div>
           </div>
-          <DialogFooter>
+
+          <DialogFooter className="flex-col sm:flex-row gap-2">
+            <p className="text-xs text-muted-foreground mr-auto self-center">
+              {queue.length > 0
+                ? `${queue.length} task${queue.length === 1 ? "" : "s"} ready${selectedStaffName ? ` for ${selectedStaffName}` : ""}`
+                : "Pick tasks from the library or add a custom one"}
+            </p>
             <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
             <Button onClick={handleSubmit} disabled={assign.isPending}>
               {assign.isPending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
-              Assign Task
+              Assign {queue.length + (form.title.trim() ? 1 : 0) || ""} {queue.length + (form.title.trim() ? 1 : 0) === 1 ? "Task" : "Tasks"}
             </Button>
           </DialogFooter>
         </DialogContent>
