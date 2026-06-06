@@ -30,8 +30,11 @@ import {
   Send,
   FolderOpen,
   Truck,
+  Inbox,
 } from "lucide-react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
 import { useRoles } from "@/hooks/useRoles";
 import { useAuth } from "@/hooks/useAuth";
 import { Can } from "@/components/Can";
@@ -76,6 +79,21 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const { hasPermission, isAdmin, isHR, isManager, isEmployee, isPending, loading, userRole } = useRoles();
   const location = useLocation();
   const navigate = useNavigate();
+
+  // Unread contact-message count (admins only) — drives the Messages badge
+  const { data: unreadMessages = 0 } = useQuery({
+    queryKey: ["contact-messages-unread"],
+    enabled: !!isAdmin,
+    refetchInterval: 60_000,
+    queryFn: async () => {
+      const { count, error } = await (supabase as any)
+        .from("contact_messages")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "new");
+      if (error) throw error;
+      return count ?? 0;
+    },
+  });
 
   const handleSignOut = async () => {
     await signOut();
@@ -580,6 +598,19 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild isActive={location.pathname === '/bank-accounts'}>
                     <Link to="/bank-accounts"><Landmark className="h-4 w-4" />Bank Accounts</Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={location.pathname === '/messages'}>
+                    <Link to="/messages">
+                      <Inbox className="h-4 w-4" />
+                      <span>Messages</span>
+                      {unreadMessages > 0 && (
+                        <Badge className="ml-auto bg-blue-600 text-white text-[10px] h-5 min-w-5 px-1.5">
+                          {unreadMessages}
+                        </Badge>
+                      )}
+                    </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               </Can>

@@ -38,6 +38,8 @@ const MyPayslip         = lazy(() => import("./pages/MyPayslip"));
 const DepartmentPermissions = lazy(() => import("./pages/admin/DepartmentPermissions"));
 const CompanyFiles      = lazy(() => import("./pages/admin/CompanyFiles"));
 const BankAccounts      = lazy(() => import("./pages/admin/BankAccounts"));
+const Messages          = lazy(() => import("./pages/admin/Messages"));
+const Contact           = lazy(() => import("./pages/Contact"));
 const PendingApproval   = lazy(() => import("./pages/PendingApproval"));
 const Procurement       = lazy(() => import("./pages/Procurement"));
 const NotFound          = lazy(() => import("./pages/NotFound"));
@@ -95,6 +97,8 @@ const App = () => (
             <Suspense fallback={<PageLoader />}>
             <Routes>
               <Route path="/auth" element={<Auth />} />
+              {/* Public, no-login contact + newsletter page */}
+              <Route path="/contact" element={<Contact />} />
               <Route path="/" element={<Layout />}>
                 <Route index element={
                   <ProtectedRoute allowPending>
@@ -214,6 +218,11 @@ const App = () => (
                 <Route path="bank-accounts" element={
                   <Can roles={['admin']} redirect="/dashboard">
                     <BankAccounts />
+                  </Can>
+                } />
+                <Route path="messages" element={
+                  <Can roles={['admin']} redirect="/dashboard">
+                    <Messages />
                   </Can>
                 } />
                 <Route path="staff-profiles" element={
