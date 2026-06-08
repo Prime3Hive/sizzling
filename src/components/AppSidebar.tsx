@@ -32,6 +32,7 @@ import {
   Truck,
   Inbox,
 } from "lucide-react";
+import { useEffect } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -54,6 +55,7 @@ import {
   SidebarMenuSubButton,
   SidebarMenuSubItem,
   SidebarSeparator,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import {
   Collapsible,
@@ -79,6 +81,13 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const { hasPermission, isAdmin, isHR, isManager, isEmployee, isPending, loading, userRole } = useRoles();
   const location = useLocation();
   const navigate = useNavigate();
+  const { isMobile, setOpenMobile } = useSidebar();
+
+  // On mobile, auto-close the navigation drawer after navigating to a new route
+  // (covers query-param changes like ?tab=… too).
+  useEffect(() => {
+    if (isMobile) setOpenMobile(false);
+  }, [location.pathname, location.search, isMobile, setOpenMobile]);
 
   // Unread contact-message count (admins only) — drives the Messages badge
   const { data: unreadMessages = 0 } = useQuery({
