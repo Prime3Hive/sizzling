@@ -189,7 +189,7 @@ function DetailRow({ icon: Icon, label, value }: { icon: React.ElementType; labe
       </div>
       <div className="min-w-0">
         <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">{label}</p>
-        <p className="text-sm mt-0.5 leading-snug">{value}</p>
+        <p className="text-sm mt-0.5 leading-snug break-words">{value}</p>
       </div>
     </div>
   );
@@ -235,7 +235,7 @@ function ProfileSheet({
 
   return (
     <Sheet open={open} onOpenChange={open => !open && onClose()}>
-      <SheetContent side="right" className="w-[440px] sm:w-[480px] p-0 flex flex-col">
+      <SheetContent side="right" className="w-full sm:max-w-xl p-0 flex flex-col">
         {/* Gradient header */}
         <div className={`relative bg-gradient-to-br ${palette.card} pb-16 pt-8 px-6`}>
           <div className="flex items-start justify-between">
