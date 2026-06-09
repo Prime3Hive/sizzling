@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { formatNairaCompact } from "@/lib/currency";
+import { formatNairaCompact, formatNairaShort } from "@/lib/currency";
 import {
   format, startOfMonth, endOfMonth, subMonths,
   differenceInDays, parseISO, getMonth, getYear,
@@ -78,6 +78,17 @@ interface InvoiceRow {
   amount_paid: number;
   payment_status: string;
   issue_date: string;
+  valid_until?: string | null;
+}
+
+interface UnpaidSaleRow {
+  id: string;
+  sale_number: string;
+  customer_name: string | null;
+  total_amount: number;
+  status: string;
+  sale_date: string;
+  payments: { amount: number; status: string }[] | null;
 }
 
 interface LedgerRow {
@@ -93,13 +104,16 @@ interface LedgerRow {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const agingBucket = (issuedDate: string) => {
-  const days = differenceInDays(new Date(), parseISO(issuedDate));
+const agingBucket = (refDate: string) => {
+  const days = differenceInDays(new Date(), parseISO(refDate));
   if (days <= 30) return "0–30 days";
   if (days <= 60) return "31–60 days";
   if (days <= 90) return "61–90 days";
   return "90+ days";
 };
+// Due date for AR aging: prefer the invoice's valid_until, else fall back to issue date.
+const dueDateOf = (inv: { valid_until?: string | null; issue_date: string }) =>
+  inv.valid_until || inv.issue_date;
 const agingColor: Record<string, string> = {
   "0–30 days":  "bg-green-100 text-green-700 border-green-200",
   "31–60 days": "bg-amber-100 text-amber-700 border-amber-200",
@@ -156,6 +170,7 @@ export default function Finance() {
       const { data, error } = await supabase
         .from("payments")
         .select("id, sale_id, amount, payment_method, payment_date, status, bank_reference, sales(customer_name, sale_number, sale_type)")
+        .eq("status", "completed")
         .gte("payment_date", periodStart)
         .lte("payment_date", periodEnd)
         .order("payment_date", { ascending: false });
@@ -201,7 +216,7 @@ export default function Finance() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("invoices")
-        .select("id, invoice_number, quotation_number, customer_name, invoice_type, total_amount, amount_paid, payment_status, issue_date")
+        .select("id, invoice_number, quotation_number, customer_name, invoice_type, total_amount, amount_paid, payment_status, issue_date, valid_until")
         .eq("status", "invoice")
         .in("payment_status", ["unpaid", "partial"])
         .order("issue_date", { ascending: true });
@@ -263,6 +278,64 @@ export default function Finance() {
     },
   });
 
+  // 6-month invoices for chart (invoice revenue is the primary revenue source)
+  const { data: sixMonthInvoices = [] } = useQuery<InvoiceRow[]>({
+    queryKey: ["fin-6m-invoices"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("invoices")
+        .select("issue_date, total_amount, status")
+        .eq("status", "invoice")
+        .gte("issue_date", sixAgo);
+      if (error) throw error;
+      return (data ?? []) as InvoiceRow[];
+    },
+  });
+
+  // Dated invoice cash receipts in period (cash basis — from the audit ledger)
+  const { data: periodInvoiceReceipts = [] } = useQuery<{ amount: number }[]>({
+    queryKey: ["fin-invoice-receipts", periodStart, periodEnd],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("finance_ledger")
+        .select("amount, entry_date")
+        .eq("entry_type", "payment_received")
+        .eq("source_type", "invoice")
+        .gte("entry_date", periodStart)
+        .lte("entry_date", periodEnd);
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+
+  // Paid payroll for the period (a real operating cost — must hit net profit)
+  const { data: periodPayroll = [] } = useQuery<{ net_pay: number }[]>({
+    queryKey: ["fin-payroll", periodStart, periodEnd],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("payroll_records")
+        .select("net_pay, status, period_start")
+        .eq("status", "paid")
+        .gte("period_start", periodStart)
+        .lte("period_start", periodEnd);
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+
+  // Unpaid legacy sales (receivable that revenue recognition would otherwise leak)
+  const { data: unpaidSales = [] } = useQuery<UnpaidSaleRow[]>({
+    queryKey: ["fin-unpaid-sales"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("sales")
+        .select("id, sale_number, customer_name, total_amount, status, sale_date, payments(amount, status)")
+        .in("status", ["pending", "partially_paid"]);
+      if (error) throw error;
+      return (data ?? []) as UnpaidSaleRow[];
+    },
+  });
+
   // Finance ledger for the period (audit feed — period-filtered)
   const { data: periodLedger = [] } = useQuery<LedgerRow[]>({
     queryKey: ["fin-ledger", periodStart, periodEnd],
@@ -278,49 +351,81 @@ export default function Finance() {
     },
   });
 
+  // ── Unpaid legacy sales → receivables (F-4) ───────────────────────────────────
+  // Outstanding per sale = billed − completed payments collected to date.
+  const salesReceivables = useMemo(() => {
+    return unpaidSales
+      .map((s) => {
+        const paid = (s.payments ?? [])
+          .filter((p) => p.status === "completed")
+          .reduce((sum, p) => sum + Number(p.amount), 0);
+        const outstanding = Number(s.total_amount) - paid;
+        return {
+          id: s.id,
+          reference: s.sale_number,
+          customer: s.customer_name,
+          total: Number(s.total_amount),
+          paid,
+          outstanding,
+          date: s.sale_date,
+        };
+      })
+      .filter((r) => r.outstanding > 0.005);
+  }, [unpaidSales]);
+
   // ── KPI Derivations ──────────────────────────────────────────────────────────
 
   const kpi = useMemo(() => {
-    // Sales revenue: all non-cancelled sales in period (total invoice value)
-    const salesRevenue = periodSales.reduce((s, r) => s + Number(r.total_amount), 0);
-
-    // Invoice revenue: formally issued invoices in period
+    // Revenue (accrual): issued invoices (primary) + non-cancelled legacy sales (historical)
+    const salesRevenue   = periodSales.reduce((s, r) => s + Number(r.total_amount), 0);
     const invoiceRevenue = periodInvoices.reduce((s, r) => s + Number(r.total_amount), 0);
+    const totalRevenue   = salesRevenue + invoiceRevenue;
 
-    // Total gross revenue
-    const totalRevenue = salesRevenue + invoiceRevenue;
+    // Cash collected (cash basis) — dated payment events only.
+    // Sales: payments by payment_date. Invoices: ledger payment_received by entry_date.
+    const cashFromSales    = periodPayments.reduce((s, p) => s + Number(p.amount), 0);
+    const cashFromInvoices = periodInvoiceReceipts.reduce((s, r) => s + Number(r.amount), 0);
+    const totalCash        = cashFromSales + cashFromInvoices;
 
-    // Cash collected: actual payments received in the period
-    const cashFromSales = periodPayments.reduce((s, p) => s + Number(p.amount), 0);
-    const cashFromInvoices = periodInvoices.reduce((s, inv) => s + Number(inv.amount_paid), 0);
-    const totalCash = cashFromSales + cashFromInvoices;
+    // Costs: expense records + paid payroll (payroll is a real operating cost).
+    const expenseTotal = periodExpenses.reduce((s, e) => s + Number(e.amount), 0);
+    const payrollCost  = periodPayroll.reduce((s, p) => s + Number(p.net_pay), 0);
+    const totalExpenses = expenseTotal + payrollCost;
 
-    // Total expenses in period
-    const totalExpenses = periodExpenses.reduce((s, e) => s + Number(e.amount), 0);
-
-    // Net profit = gross revenue − expenses
+    // Net profit = revenue − (expenses + payroll)
     const netProfit = totalRevenue - totalExpenses;
     const margin    = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
 
-    // Outstanding receivables
-    const totalOutstanding = outstandingInvoices
+    // Outstanding receivables = unpaid invoices + unpaid legacy sales
+    const invoiceOutstanding = outstandingInvoices
       .reduce((s, inv) => s + (Number(inv.total_amount) - Number(inv.amount_paid)), 0);
-    const overdueCount = outstandingInvoices
-      .filter(inv => differenceInDays(new Date(), parseISO(inv.issue_date)) > 30).length;
+    const salesOutstanding = salesReceivables.reduce((s, r) => s + r.outstanding, 0);
+    const totalOutstanding = invoiceOutstanding + salesOutstanding;
+    const overdueCount =
+      outstandingInvoices.filter(inv => differenceInDays(new Date(), parseISO(dueDateOf(inv))) > 30).length +
+      salesReceivables.filter(r => differenceInDays(new Date(), parseISO(r.date)) > 30).length;
+    const receivableCount = outstandingInvoices.length + salesReceivables.length;
 
-    // Budget utilization (all time, across all budgets)
-    const totalBudgeted = allBudgets.reduce((s, b) => s + Number(b.total_budget), 0);
-    const totalSpent    = allExpenses.reduce((s, e) => s + Number(e.amount), 0);
+    // Budget utilization — scoped to the SELECTED period and its active budgets only.
+    const activeBudgets = allBudgets.filter(b =>
+      (!b.start_date || b.start_date <= periodEnd) &&
+      (!b.end_date   || b.end_date   >= periodStart)
+    );
+    const activeBudgetIds = new Set(activeBudgets.map(b => b.id));
+    const totalBudgeted = activeBudgets.reduce((s, b) => s + Number(b.total_budget), 0);
+    const totalSpent    = periodExpenses
+      .filter(e => e.budget_id && activeBudgetIds.has(e.budget_id))
+      .reduce((s, e) => s + Number(e.amount), 0);
     const budgetPct     = totalBudgeted > 0 ? Math.min((totalSpent / totalBudgeted) * 100, 100) : 0;
 
     return {
       salesRevenue, invoiceRevenue, totalRevenue,
       cashFromSales, cashFromInvoices, totalCash,
-      totalExpenses, netProfit, margin,
-      totalOutstanding, overdueCount,
-      totalBudgeted, totalSpent, budgetPct,
+      expenseTotal, payrollCost, totalExpenses, netProfit, margin,
+      totalOutstanding, overdueCount, receivableCount, salesOutstanding,
+      totalBudgeted, totalSpent, budgetPct, activeBudgetCount: activeBudgets.length,
     };
-  }, [periodSales, periodPayments, periodExpenses, periodInvoices, outstandingInvoices, allBudgets, allExpenses]);
+  }, [periodSales, periodPayments, periodInvoiceReceipts, periodPayroll, periodExpenses, periodInvoices, outstandingInvoices, salesReceivables, allBudgets, periodStart, periodEnd]);
 
   // ── 6-month Chart Data ───────────────────────────────────────────────────────
 
@@ -334,12 +439,16 @@ export default function Finance() {
       .filter(s => getMonth(parseISO(s.sale_date)) === m && getYear(parseISO(s.sale_date)) === y)
       .reduce((acc, s) => acc + Number(s.total_amount), 0);
 
+    const invoices = sixMonthInvoices
+      .filter(inv => getMonth(parseISO(inv.issue_date)) === m && getYear(parseISO(inv.issue_date)) === y)
+      .reduce((acc, inv) => acc + Number(inv.total_amount), 0);
+
     const expenses = sixMonthExpenses
       .filter(e => getMonth(parseISO(e.date)) === m && getYear(parseISO(e.date)) === y)
       .reduce((acc, e) => acc + Number(e.amount), 0);
 
-    return { name: label, "Sales Revenue": sales, Expenses: expenses };
-  }), [sixMonthSales, sixMonthExpenses]);
+    return { name: label, Revenue: sales + invoices, Expenses: expenses };
+  }), [sixMonthSales, sixMonthInvoices, sixMonthExpenses]);
 
   // ── Expense breakdown by category ───────────────────────────────────────────
 
@@ -348,8 +457,10 @@ export default function Finance() {
     periodExpenses.forEach(e => {
       map[e.category] = (map[e.category] ?? 0) + Number(e.amount);
     });
+    const payroll = periodPayroll.reduce((s, p) => s + Number(p.net_pay), 0);
+    if (payroll > 0) map["payroll"] = (map["payroll"] ?? 0) + payroll;
     return Object.entries(map).sort((a, b) => b[1] - a[1]);
-  }, [periodExpenses]);
+  }, [periodExpenses, periodPayroll]);
 
   // ── Budget utilization per budget ────────────────────────────────────────────
 
@@ -382,11 +493,13 @@ export default function Finance() {
       "0–30 days": 0, "31–60 days": 0, "61–90 days": 0, "90+ days": 0,
     };
     outstandingInvoices.forEach(inv => {
-      const b = agingBucket(inv.issue_date);
-      buckets[b] += Number(inv.total_amount) - Number(inv.amount_paid);
+      buckets[agingBucket(dueDateOf(inv))] += Number(inv.total_amount) - Number(inv.amount_paid);
+    });
+    salesReceivables.forEach(r => {
+      buckets[agingBucket(r.date)] += r.outstanding;
     });
     return buckets;
-  }, [outstandingInvoices]);
+  }, [outstandingInvoices, salesReceivables]);
 
   // ── KPI Card ─────────────────────────────────────────────────────────────────
 
@@ -450,7 +563,7 @@ export default function Finance() {
         <KpiCard
           title="Gross Revenue"
           value={formatNairaCompact(kpi.totalRevenue)}
-          sub={`Sales ₦${(kpi.salesRevenue / 1000).toFixed(0)}k · Inv ₦${(kpi.invoiceRevenue / 1000).toFixed(0)}k`}
+          sub={`Inv ${formatNairaShort(kpi.invoiceRevenue)} · Sales ${formatNairaShort(kpi.salesRevenue)}`}
           icon={TrendingUp}
           color="bg-green-100 text-green-700"
           trend="up"
@@ -458,15 +571,15 @@ export default function Finance() {
         <KpiCard
           title="Cash Collected"
           value={formatNairaCompact(kpi.totalCash)}
-          sub={`Sales ₦${(kpi.cashFromSales / 1000).toFixed(0)}k · Inv ₦${(kpi.cashFromInvoices / 1000).toFixed(0)}k`}
+          sub={`Inv ${formatNairaShort(kpi.cashFromInvoices)} · Sales ${formatNairaShort(kpi.cashFromSales)}`}
           icon={Banknote}
           color="bg-blue-100 text-blue-700"
           trend="up"
         />
         <KpiCard
-          title="Total Expenses"
+          title="Total Costs"
           value={formatNairaCompact(kpi.totalExpenses)}
-          sub={`${periodExpenses.length} expense entries`}
+          sub={`Expenses ${formatNairaShort(kpi.expenseTotal)} · Payroll ${formatNairaShort(kpi.payrollCost)}`}
           icon={TrendingDown}
           color="bg-red-100 text-red-700"
           trend="down"
@@ -474,22 +587,24 @@ export default function Finance() {
         <KpiCard
           title="Net Profit"
           value={formatNairaCompact(kpi.netProfit)}
-          sub={kpi.totalRevenue > 0 ? `${kpi.margin.toFixed(1)}% margin` : "No revenue yet"}
+          sub={kpi.totalRevenue > 0 ? `${kpi.margin.toFixed(1)}% margin · incl. payroll` : "No revenue yet"}
           icon={kpi.netProfit >= 0 ? DollarSign : AlertCircle}
           color={kpi.netProfit >= 0 ? "bg-primary/10 text-primary" : "bg-destructive/10 text-destructive"}
         />
         <KpiCard
           title="Receivables"
           value={formatNairaCompact(kpi.totalOutstanding)}
-          sub={`${outstandingInvoices.length} invoices · ${kpi.overdueCount} overdue`}
+          sub={`${kpi.receivableCount} open · ${kpi.overdueCount} overdue`}
           icon={CreditCard}
           color={kpi.overdueCount > 0 ? "bg-amber-100 text-amber-700" : "bg-muted text-muted-foreground"}
           trend={kpi.overdueCount > 0 ? "down" : "neutral"}
         />
         <KpiCard
           title="Budget Used"
-          value={`${kpi.budgetPct.toFixed(0)}%`}
-          sub={`${formatNairaCompact(kpi.totalSpent)} of ${formatNairaCompact(kpi.totalBudgeted)}`}
+          value={kpi.activeBudgetCount > 0 ? `${kpi.budgetPct.toFixed(0)}%` : "—"}
+          sub={kpi.activeBudgetCount > 0
+            ? `${formatNairaShort(kpi.totalSpent)} of ${formatNairaShort(kpi.totalBudgeted)} this period`
+            : "No active budget this period"}
           icon={Target}
           color={kpi.budgetPct > 90 ? "bg-red-100 text-red-700" : kpi.budgetPct > 70 ? "bg-amber-100 text-amber-700" : "bg-green-100 text-green-700"}
           trend={kpi.budgetPct > 80 ? "down" : "neutral"}
@@ -513,9 +628,9 @@ export default function Finance() {
           </TabsTrigger>
           <TabsTrigger value="receivables">
             <FileText className="h-3.5 w-3.5 mr-1.5" />Receivables
-            {outstandingInvoices.length > 0 && (
+            {kpi.receivableCount > 0 && (
               <Badge variant="destructive" className="ml-1.5 text-[10px] px-1.5 py-0">
-                {outstandingInvoices.length}
+                {kpi.receivableCount}
               </Badge>
             )}
           </TabsTrigger>
@@ -530,19 +645,19 @@ export default function Finance() {
           {/* 6-month chart */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Sales Revenue vs Expenses — Last 6 Months</CardTitle>
-              <CardDescription>Monthly sales revenue from all sales records against total expenses</CardDescription>
+              <CardTitle className="text-base">Revenue vs Expenses — Last 6 Months</CardTitle>
+              <CardDescription>Monthly revenue (invoices + sales) against total expenses</CardDescription>
             </CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={280}>
                 <BarChart data={chartData} barGap={4}>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.5} />
                   <XAxis dataKey="name" fontSize={12} tickLine={false} axisLine={false} />
-                  <YAxis tickFormatter={v => `₦${(v / 1000).toFixed(0)}k`} fontSize={11} tickLine={false} axisLine={false} />
+                  <YAxis tickFormatter={v => formatNairaShort(v)} fontSize={11} tickLine={false} axisLine={false} />
                   <Tooltip formatter={(v: number) => formatNairaCompact(v)} contentStyle={{ borderRadius: "0.75rem", border: "1px solid hsl(var(--border))" }} />
                   <Legend />
-                  <Bar dataKey="Sales Revenue" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="Expenses"      fill="hsl(0, 72%, 55%)"    radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="Revenue"  fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="Expenses" fill="hsl(0, 72%, 55%)"    radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </CardContent>
@@ -750,7 +865,9 @@ export default function Finance() {
                 <Target className="h-4 w-4" />Budget Utilization
               </CardTitle>
               <CardDescription>
-                {allBudgets.length} budget{allBudgets.length !== 1 ? "s" : ""} · {formatNairaCompact(kpi.totalSpent)} spent of {formatNairaCompact(kpi.totalBudgeted)} allocated
+                {allBudgets.length} budget{allBudgets.length !== 1 ? "s" : ""} · lifetime{" "}
+                {formatNairaCompact(budgetUtilization.reduce((s, b) => s + b.spent, 0))} spent of{" "}
+                {formatNairaCompact(budgetUtilization.reduce((s, b) => s + Number(b.total_budget), 0))} allocated
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -848,12 +965,13 @@ export default function Finance() {
             <CardHeader>
               <CardTitle className="text-base">Accounts Receivable</CardTitle>
               <CardDescription>
-                {outstandingInvoices.length} outstanding invoice{outstandingInvoices.length !== 1 ? "s" : ""} · Total owed: {formatNairaCompact(kpi.totalOutstanding)}
+                {kpi.receivableCount} outstanding item{kpi.receivableCount !== 1 ? "s" : ""} · Total owed: {formatNairaCompact(kpi.totalOutstanding)}
+                {kpi.salesOutstanding > 0 && ` (incl. ${formatNairaCompact(kpi.salesOutstanding)} from unpaid sales)`}
               </CardDescription>
             </CardHeader>
             <CardContent>
-              {outstandingInvoices.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-10">No outstanding invoices. All invoices are paid.</p>
+              {kpi.receivableCount === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-10">No outstanding receivables. Everything is paid.</p>
               ) : (
                 <div className="rounded-lg border overflow-hidden">
                   <Table>
@@ -872,7 +990,7 @@ export default function Finance() {
                     <TableBody>
                       {outstandingInvoices.map(inv => {
                         const outstanding = Number(inv.total_amount) - Number(inv.amount_paid);
-                        const bucket = agingBucket(inv.issue_date);
+                        const bucket = agingBucket(dueDateOf(inv));
                         return (
                           <TableRow key={inv.id}>
                             <TableCell className="font-mono text-xs font-semibold">
@@ -895,6 +1013,33 @@ export default function Finance() {
                               {Number(inv.amount_paid) > 0 ? formatNairaCompact(Number(inv.amount_paid)) : "—"}
                             </TableCell>
                             <TableCell className="text-right font-semibold">{formatNairaCompact(outstanding)}</TableCell>
+                            <TableCell>
+                              <Badge variant="outline" className={`text-xs ${agingColor[bucket]}`}>{bucket}</Badge>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                      {/* Unpaid legacy sales (receivables that revenue would otherwise leak) */}
+                      {salesReceivables.map(r => {
+                        const bucket = agingBucket(r.date);
+                        return (
+                          <TableRow key={r.id}>
+                            <TableCell className="font-mono text-xs font-semibold">{r.reference}</TableCell>
+                            <TableCell className="font-medium max-w-28 truncate">{r.customer ?? "—"}</TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-1.5 text-xs">
+                                <ShoppingCart className="h-3.5 w-3.5 text-muted-foreground" />
+                                sale
+                              </div>
+                            </TableCell>
+                            <TableCell className="hidden md:table-cell text-xs text-muted-foreground">
+                              {format(parseISO(r.date), "dd MMM yyyy")}
+                            </TableCell>
+                            <TableCell className="text-sm">{formatNairaCompact(r.total)}</TableCell>
+                            <TableCell className="text-sm text-green-700">
+                              {r.paid > 0 ? formatNairaCompact(r.paid) : "—"}
+                            </TableCell>
+                            <TableCell className="text-right font-semibold">{formatNairaCompact(r.outstanding)}</TableCell>
                             <TableCell>
                               <Badge variant="outline" className={`text-xs ${agingColor[bucket]}`}>{bucket}</Badge>
                             </TableCell>

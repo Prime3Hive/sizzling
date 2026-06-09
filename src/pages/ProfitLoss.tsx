@@ -148,16 +148,18 @@ const ProfitLoss = () => {
     },
   });
 
-  const { data: invoiceLedger = [], isLoading: invoiceLedgerLoading } = useQuery({
-    queryKey: ['pl-invoice-ledger', selectedYear],
+  // Invoice revenue — read from the invoices table (single source of truth),
+  // counting all formally issued invoices in the year. This reconciles with the
+  // Finance module, which also derives invoice revenue from the invoices table.
+  const { data: invoiceRevenueRows = [], isLoading: invoiceLedgerLoading } = useQuery({
+    queryKey: ['pl-invoice-revenue', selectedYear],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from('finance_ledger')
-        .select('entry_date, amount, invoice_type, cost_center')
-        .eq('entry_type', 'revenue')
-        .eq('source_type', 'invoice')
-        .gte('entry_date', yearStart)
-        .lte('entry_date', yearEnd);
+        .from('invoices')
+        .select('issue_date, total_amount, invoice_type, status')
+        .eq('status', 'invoice')
+        .gte('issue_date', yearStart)
+        .lte('issue_date', yearEnd);
       if (error) throw error;
       return data || [];
     },
@@ -182,10 +184,11 @@ const ProfitLoss = () => {
   // ── Monthly P&L Computation ────────────────────────────────────────────────
   const monthlyData: MonthlyPL[] = useMemo(() => {
     return MONTHS.map((month, index) => {
-      const monthSales    = sales.filter(s => new Date(s.sale_date).getMonth() === index);
+      // Exclude cancelled sales from revenue recognition
+      const monthSales    = sales.filter(s => new Date(s.sale_date).getMonth() === index && s.status !== 'cancelled');
       const monthExpenses = expenses.filter(e => new Date(e.date).getMonth() === index);
       const monthPayroll  = payrollRecords.filter(p => new Date(p.period_start).getMonth() === index);
-      const monthInvoices = invoiceLedger.filter(l => new Date(l.entry_date).getMonth() === index);
+      const monthInvoices = invoiceRevenueRows.filter(l => new Date(l.issue_date).getMonth() === index);
 
       const dailySales = monthSales
         .filter(s => (s.sale_type || 'daily') === 'daily')
@@ -193,7 +196,7 @@ const ProfitLoss = () => {
       const eventSales = monthSales
         .filter(s => s.sale_type === 'event')
         .reduce((sum, s) => sum + Number(s.total_amount), 0);
-      const invoiceRevenue = monthInvoices.reduce((sum, l) => sum + Number(l.amount), 0);
+      const invoiceRevenue = monthInvoices.reduce((sum, l) => sum + Number(l.total_amount), 0);
       const totalSales = dailySales + eventSales + invoiceRevenue;
 
       const dailyCOGS = monthExpenses
@@ -232,7 +235,7 @@ const ProfitLoss = () => {
         profitMargin,
       };
     });
-  }, [sales, expenses, payrollRecords, invoiceLedger]);
+  }, [sales, expenses, payrollRecords, invoiceRevenueRows]);
 
   const totals = useMemo(() => monthlyData.reduce((acc, m) => ({
     dailySales: acc.dailySales + m.dailySales,
