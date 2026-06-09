@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -20,14 +20,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Printer, FileCheck, TrendingUp, Edit, XCircle, CheckCircle2, Users, Building2,
-  Download, Archive, ArchiveRestore, Loader2,
+  Download, Archive, ArchiveRestore, Loader2, Banknote,
 } from "lucide-react";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
 import { format } from "date-fns";
 import { formatNairaCompact } from "@/lib/currency";
 import {
-  type Invoice, type PaymentStatus,
+  type Invoice,
   STATUS_LABELS, TYPE_LABELS, PAYMENT_STATUS_LABELS,
 } from "@/types/invoices";
 import InvoicePrintView from "./InvoicePrintView";
@@ -59,20 +59,33 @@ export default function InvoiceViewDialog({ invoice, open, onOpenChange, onEdit 
   const [auditNames, setAuditNames] = useState<Record<string, string>>({});
   const [showConvertConfirm, setShowConvertConfirm] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
-  const [paymentStatus, setPaymentStatus] = useState<PaymentStatus>(
-    invoice?.payment_status ?? "unpaid"
-  );
-  const [amountPaid, setAmountPaid] = useState(invoice?.amount_paid?.toString() ?? "0");
-
-  // Sync local payment state whenever the viewed invoice changes
-  useEffect(() => {
-    if (invoice) {
-      setPaymentStatus(invoice.payment_status ?? "unpaid");
-      setAmountPaid(invoice.amount_paid?.toString() ?? "0");
-    }
-  }, [invoice?.id]);
-  const [updatingPayment, setUpdatingPayment] = useState(false);
+  const [recordingPayment, setRecordingPayment] = useState(false);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
+
+  // New-payment form
+  const [payForm, setPayForm] = useState({
+    amount: "", date: new Date().toISOString().split("T")[0], method: "bank_transfer", reference: "",
+  });
+
+  // Reset the new-payment form when the viewed invoice changes
+  useEffect(() => {
+    setPayForm({ amount: "", date: new Date().toISOString().split("T")[0], method: "bank_transfer", reference: "" });
+  }, [invoice?.id]);
+
+  // Dated payment history for this invoice
+  const { data: invoicePayments = [] } = useQuery({
+    queryKey: ["invoice-payments", invoice?.id],
+    enabled: !!invoice?.id,
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("invoice_payments")
+        .select("id, amount, payment_date, payment_method, reference")
+        .eq("invoice_id", invoice!.id)
+        .order("payment_date", { ascending: false });
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
 
   // Fetch full names for created_by / updated_by
   useEffect(() => {
@@ -203,22 +216,9 @@ export default function InvoiceViewDialog({ invoice, open, onOpenChange, onEdit 
       });
       if (ledgerErr) throw ledgerErr;
 
-      // If already (partially) paid, record cash received too
-      if (invoice.amount_paid > 0) {
-        await supabase.from("finance_ledger").insert({
-          user_id: invoice.user_id,
-          entry_date: now.split("T")[0],
-          entry_type: "payment_received",
-          source_type: "invoice",
-          source_id: invoice.id,
-          description: `Payment received — ${invoice.invoice_number ?? invoice.quotation_number} (${invoice.customer_name})`,
-          amount: invoice.amount_paid,
-          cost_center: invoice.invoice_type === "event" ? "Event Account" : "Daily Orders",
-          invoice_type: invoice.invoice_type,
-          reference_number: invoice.invoice_number ?? invoice.quotation_number,
-          recorded_by: user?.id ?? null,
-        });
-      }
+      // Note: cash receipts are NOT written here. Each invoice payment records its
+      // own dated payment_received entry (via the Payments section), so posting to
+      // finance only recognises revenue and avoids double-counting cash.
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["invoices"] });
@@ -239,75 +239,61 @@ export default function InvoiceViewDialog({ invoice, open, onOpenChange, onEdit 
   const isInvoice = invoice.status === "invoice";
   const isCancelled = invoice.status === "cancelled";
 
-  // Update payment status (+ ledger entry if invoice already posted to finance)
-  const updatePayment = async () => {
-    setUpdatingPayment(true);
+  const balanceDue = Number(invoice.total_amount) - Number(invoice.amount_paid ?? 0);
+
+  // Record a dated payment. Inserts into invoice_payments (a DB trigger keeps
+  // invoices.amount_paid / payment_status in sync) and mirrors a dated receipt
+  // into the finance ledger — independent of "Record in Finance".
+  const recordPayment = async () => {
+    const amt = parseFloat(payForm.amount) || 0;
+    if (amt <= 0) {
+      toast({ title: "Enter a valid amount", variant: "destructive" });
+      return;
+    }
+    if (amt > balanceDue + 0.005) {
+      toast({ title: "Amount exceeds balance due", description: `Balance due is ${formatNairaCompact(balanceDue)}.`, variant: "destructive" });
+      return;
+    }
+    if (!payForm.date) {
+      toast({ title: "Pick a payment date", variant: "destructive" });
+      return;
+    }
+    setRecordingPayment(true);
     try {
-      const newAmountPaid = parseFloat(amountPaid) || 0;
-      const prevAmountPaid = invoice.amount_paid ?? 0;
+      const { error: payErr } = await (supabase as any).from("invoice_payments").insert({
+        invoice_id: invoice.id,
+        amount: amt,
+        payment_date: payForm.date,
+        payment_method: payForm.method,
+        reference: payForm.reference.trim() || null,
+        recorded_by: user?.id ?? null,
+      });
+      if (payErr) throw payErr;
 
-      if (newAmountPaid < 0) {
-        toast({ title: "Invalid amount", description: "Amount paid cannot be negative", variant: "destructive" });
-        return;
-      }
-      if (newAmountPaid > invoice.total_amount) {
-        toast({ title: "Amount exceeds total", description: "Amount paid cannot exceed the invoice total", variant: "destructive" });
-        return;
-      }
-
-      const { error } = await supabase
-        .from("invoices")
-        .update({
-          payment_status: paymentStatus,
-          amount_paid: newAmountPaid,
-          updated_by: user?.id ?? null,
-        })
-        .eq("id", invoice.id);
-      if (error) throw error;
-
-      // Only post ledger entries if invoice has already been posted to finance
-      if (invoice.recorded_in_finance) {
-        const delta = newAmountPaid - prevAmountPaid;
-        if (delta > 0) {
-          // Payment increased — record additional cash received
-          await supabase.from("finance_ledger").insert({
-            user_id: invoice.user_id,
-            entry_date: new Date().toISOString().split("T")[0],
-            entry_type: "payment_received",
-            source_type: "invoice",
-            source_id: invoice.id,
-            description: `Payment received — ${invoice.invoice_number ?? invoice.quotation_number} (${invoice.customer_name})`,
-            amount: delta,
-            cost_center: invoice.invoice_type === "event" ? "Event Account" : "Daily Orders",
-            invoice_type: invoice.invoice_type,
-            reference_number: invoice.invoice_number ?? invoice.quotation_number,
-            recorded_by: user?.id ?? null,
-          });
-        } else if (delta < 0) {
-          // Payment decreased — record a reversal so the ledger stays accurate
-          await supabase.from("finance_ledger").insert({
-            user_id: invoice.user_id,
-            entry_date: new Date().toISOString().split("T")[0],
-            entry_type: "payment_reversal",
-            source_type: "invoice",
-            source_id: invoice.id,
-            description: `Payment correction (reversal) — ${invoice.invoice_number ?? invoice.quotation_number} (${invoice.customer_name})`,
-            amount: Math.abs(delta),
-            cost_center: invoice.invoice_type === "event" ? "Event Account" : "Daily Orders",
-            invoice_type: invoice.invoice_type,
-            reference_number: invoice.invoice_number ?? invoice.quotation_number,
-            recorded_by: user?.id ?? null,
-          });
-        }
-      }
+      // Mirror a dated receipt into the audit ledger (feeds Finance Feed + P&L cash)
+      await supabase.from("finance_ledger").insert({
+        user_id: invoice.user_id,
+        entry_date: payForm.date,
+        entry_type: "payment_received",
+        source_type: "invoice",
+        source_id: invoice.id,
+        description: `Payment received — ${invoice.invoice_number ?? invoice.quotation_number} (${invoice.customer_name})`,
+        amount: amt,
+        cost_center: invoice.invoice_type === "event" ? "Event Account" : "Daily Orders",
+        invoice_type: invoice.invoice_type,
+        reference_number: invoice.invoice_number ?? invoice.quotation_number,
+        recorded_by: user?.id ?? null,
+      });
 
       queryClient.invalidateQueries({ queryKey: ["invoices"] });
+      queryClient.invalidateQueries({ queryKey: ["invoice-payments", invoice.id] });
       queryClient.invalidateQueries({ queryKey: ["finance-ledger"] });
-      toast({ title: "Payment status updated" });
+      setPayForm({ amount: "", date: new Date().toISOString().split("T")[0], method: "bank_transfer", reference: "" });
+      toast({ title: "Payment recorded", description: `${formatNairaCompact(amt)} recorded.` });
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
     } finally {
-      setUpdatingPayment(false);
+      setRecordingPayment(false);
     }
   };
 
@@ -650,46 +636,98 @@ export default function InvoiceViewDialog({ invoice, open, onOpenChange, onEdit 
             </>
           )}
 
-          {/* Payment update (invoice only) */}
+          {/* Payments (invoice only) */}
           {isInvoice && (
             <>
               <Separator />
-              <section>
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">
-                  Update Payment
-                </h3>
-                <div className="flex gap-3 flex-wrap items-end">
-                  <div className="space-y-1">
-                    <Label className="text-xs">Payment Status</Label>
-                    <Select
-                      value={paymentStatus}
-                      onValueChange={(v) => setPaymentStatus(v as PaymentStatus)}
-                    >
-                      <SelectTrigger className="h-8 w-32 text-xs">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="unpaid">Unpaid</SelectItem>
-                        <SelectItem value="partial">Partial</SelectItem>
-                        <SelectItem value="paid">Paid</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">Amount Paid (₦)</Label>
-                    <Input
-                      className="h-8 w-40 text-xs"
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={amountPaid}
-                      onChange={(e) => setAmountPaid(e.target.value)}
-                    />
-                  </div>
-                  <Button size="sm" className="h-8" onClick={updatePayment} disabled={updatingPayment}>
-                    {updatingPayment ? "Saving…" : "Update"}
-                  </Button>
+              <section className="space-y-3">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Payments
+                  </h3>
+                  <span className="text-xs text-muted-foreground">
+                    Balance due:{" "}
+                    <span className="font-semibold text-foreground">{formatNairaCompact(balanceDue)}</span>
+                  </span>
                 </div>
+
+                {/* Dated payment history */}
+                {invoicePayments.length > 0 && (
+                  <div className="rounded-lg border divide-y">
+                    {invoicePayments.map((p: any) => (
+                      <div key={p.id} className="flex items-center justify-between px-3 py-2 text-sm gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Banknote className="h-3.5 w-3.5 text-green-600 shrink-0" />
+                          <span className="text-muted-foreground whitespace-nowrap">
+                            {format(new Date(p.payment_date), "dd MMM yyyy")}
+                          </span>
+                          {p.payment_method && (
+                            <Badge variant="outline" className="text-[10px] capitalize">
+                              {String(p.payment_method).replace("_", " ")}
+                            </Badge>
+                          )}
+                          {p.reference && (
+                            <span className="text-xs text-muted-foreground truncate">· {p.reference}</span>
+                          )}
+                        </div>
+                        <span className="font-semibold shrink-0">{formatNairaCompact(Number(p.amount))}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Record a new payment (only while a balance remains) */}
+                {balanceDue > 0.005 ? (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 items-end rounded-lg border bg-muted/20 p-3">
+                    <div className="space-y-1">
+                      <Label className="text-xs">Amount (₦)</Label>
+                      <Input
+                        className="h-8 text-xs" type="number" min="0" step="0.01"
+                        placeholder={String(balanceDue)}
+                        value={payForm.amount}
+                        onChange={(e) => setPayForm(f => ({ ...f, amount: e.target.value }))}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Date</Label>
+                      <Input
+                        className="h-8 text-xs" type="date"
+                        value={payForm.date}
+                        onChange={(e) => setPayForm(f => ({ ...f, date: e.target.value }))}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Method</Label>
+                      <Select value={payForm.method} onValueChange={(v) => setPayForm(f => ({ ...f, method: v }))}>
+                        <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="cash">Cash</SelectItem>
+                          <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
+                          <SelectItem value="card">Card</SelectItem>
+                          <SelectItem value="pos">POS</SelectItem>
+                          <SelectItem value="cheque">Cheque</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Reference</Label>
+                      <Input
+                        className="h-8 text-xs" placeholder="Optional"
+                        value={payForm.reference}
+                        onChange={(e) => setPayForm(f => ({ ...f, reference: e.target.value }))}
+                      />
+                    </div>
+                    <div className="col-span-2 sm:col-span-4">
+                      <Button size="sm" className="h-8 w-full sm:w-auto" onClick={recordPayment} disabled={recordingPayment}>
+                        {recordingPayment ? "Recording…" : "Record Payment"}
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-green-700 dark:text-green-400 flex items-center gap-1.5">
+                    <CheckCircle2 className="h-3.5 w-3.5" /> Fully paid.
+                  </p>
+                )}
               </section>
             </>
           )}

@@ -292,17 +292,16 @@ export default function Finance() {
     },
   });
 
-  // Dated invoice cash receipts in period (cash basis — from the audit ledger)
+  // Dated invoice cash receipts in period (cash basis — authoritative source).
+  // Reads the dated invoice_payments ledger, independent of "Record in Finance".
   const { data: periodInvoiceReceipts = [] } = useQuery<{ amount: number }[]>({
     queryKey: ["fin-invoice-receipts", periodStart, periodEnd],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("finance_ledger")
-        .select("amount, entry_date")
-        .eq("entry_type", "payment_received")
-        .eq("source_type", "invoice")
-        .gte("entry_date", periodStart)
-        .lte("entry_date", periodEnd);
+      const { data, error } = await (supabase as any)
+        .from("invoice_payments")
+        .select("amount, payment_date")
+        .gte("payment_date", periodStart)
+        .lte("payment_date", periodEnd);
       if (error) throw error;
       return data ?? [];
     },
