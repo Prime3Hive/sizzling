@@ -31,6 +31,7 @@ import {
   FolderOpen,
   Truck,
   Inbox,
+  Scale,
 } from "lucide-react";
 import { useEffect } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
@@ -414,6 +415,14 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                   <SidebarMenuItem>
                     <SidebarMenuButton asChild isActive={location.pathname === '/business/finance'}>
                       <Link to="/business/finance"><Landmark className="h-4 w-4" />Finance Ledger</Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                </Can>
+
+                <Can roles={['admin']}>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild isActive={location.pathname === '/accounting'}>
+                      <Link to="/accounting"><Scale className="h-4 w-4" />Accounting</Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 </Can>

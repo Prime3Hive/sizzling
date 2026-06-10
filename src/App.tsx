@@ -39,6 +39,7 @@ const DepartmentPermissions = lazy(() => import("./pages/admin/DepartmentPermiss
 const CompanyFiles      = lazy(() => import("./pages/admin/CompanyFiles"));
 const BankAccounts      = lazy(() => import("./pages/admin/BankAccounts"));
 const Messages          = lazy(() => import("./pages/admin/Messages"));
+const Accounting        = lazy(() => import("./pages/admin/Accounting"));
 const Contact           = lazy(() => import("./pages/Contact"));
 const PendingApproval   = lazy(() => import("./pages/PendingApproval"));
 const Procurement       = lazy(() => import("./pages/Procurement"));
@@ -223,6 +224,11 @@ const App = () => (
                 <Route path="messages" element={
                   <Can roles={['admin']} redirect="/dashboard">
                     <Messages />
+                  </Can>
+                } />
+                <Route path="accounting" element={
+                  <Can roles={['admin']} redirect="/dashboard">
+                    <Accounting />
                   </Can>
                 } />
                 <Route path="staff-profiles" element={
