@@ -1,300 +1,225 @@
-import React, { useState, useEffect } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Calendar as CalendarComponent } from '@/components/ui/calendar';
-import { BarChart3, PieChart, Download, TrendingUp, Calendar, DollarSign, Package, ShoppingCart, Warehouse } from 'lucide-react';
-import { supabase } from '@/integrations/supabase/client';
-import { useAuth } from '@/hooks/useAuth';
-import { useToast } from '@/hooks/use-toast';
-import { formatNairaCompact } from '@/lib/currency';
-import { format } from 'date-fns';
-import { cn } from '@/lib/utils';
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar as CalendarComponent } from "@/components/ui/calendar";
+import { Progress } from "@/components/ui/progress";
+import {
+  BarChart3, Download, TrendingUp, TrendingDown, Calendar, DollarSign,
+  Banknote, CreditCard, Wallet, Receipt, FileText, ShoppingCart,
+} from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
+import { useToast } from "@/hooks/use-toast";
+import { formatNairaCompact, formatNairaShort } from "@/lib/currency";
+import { format } from "date-fns";
 
-interface SalesData {
-  total_revenue: number;
-  total_sales: number;
-  completed_sales: number;
-  pending_sales: number;
-  avg_sale_value: number;
-}
-
-interface InventoryData {
-  total_products: number;
-  total_quantity: number;
-  total_value: number;
-  low_stock_items: number;
-}
-
-interface CategoryData {
-  category: string;
-  amount: number;
-  count: number;
-}
+const RANGE_LABELS: Record<string, string> = {
+  "current-week": "This Week",
+  "current-month": "This Month",
+  "last-month": "Last Month",
+  "current-year": "This Year",
+  custom: "Custom Range",
+};
 
 const Reports = () => {
-  const [loading, setLoading] = useState(true);
-  const [timeRange, setTimeRange] = useState('current-month');
-  const [customStartDate, setCustomStartDate] = useState<Date>();
-  const [customEndDate, setCustomEndDate] = useState<Date>();
-  const [salesData, setSalesData] = useState<SalesData>({
-    total_revenue: 0,
-    total_sales: 0,
-    completed_sales: 0,
-    pending_sales: 0,
-    avg_sale_value: 0
-  });
-  const [inventoryData, setInventoryData] = useState<InventoryData>({
-    total_products: 0,
-    total_quantity: 0,
-    total_value: 0,
-    low_stock_items: 0
-  });
-  const [topProductsData, setTopProductsData] = useState<CategoryData[]>([]);
-
-  const { user } = useAuth();
   const { toast } = useToast();
+  const [timeRange, setTimeRange] = useState("current-month");
+  const [customStart, setCustomStart] = useState<Date>();
+  const [customEnd, setCustomEnd] = useState<Date>();
 
-  useEffect(() => {
-    if (user) {
-      fetchReportData();
-    }
-  }, [user, timeRange]);
-
-  const getDateRange = () => {
+  const { start, end } = useMemo(() => {
     const now = new Date();
-    let startDate: Date;
-    let endDate: Date;
-
+    let s: Date, e: Date;
     switch (timeRange) {
-      case 'current-week':
-        const currentDay = now.getDay();
-        const mondayOffset = currentDay === 0 ? 6 : currentDay - 1; // Monday is 1, Sunday is 0
-        startDate = new Date(now);
-        startDate.setDate(now.getDate() - mondayOffset);
-        endDate = new Date(startDate);
-        endDate.setDate(startDate.getDate() + 6);
-        break;
-      case 'current-month':
-        startDate = new Date(now.getFullYear(), now.getMonth(), 1);
-        endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-        break;
-      case 'last-month':
-        startDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-        endDate = new Date(now.getFullYear(), now.getMonth(), 0);
-        break;
-      case 'current-year':
-        startDate = new Date(now.getFullYear(), 0, 1);
-        endDate = new Date(now.getFullYear(), 11, 31);
-        break;
-      case 'custom':
-        startDate = customStartDate || new Date(now.getFullYear(), now.getMonth(), 1);
-        endDate = customEndDate || new Date(now.getFullYear(), now.getMonth() + 1, 0);
-        break;
+      case "current-week": {
+        const day = now.getDay();
+        const offset = day === 0 ? 6 : day - 1;
+        s = new Date(now); s.setDate(now.getDate() - offset);
+        e = new Date(s); e.setDate(s.getDate() + 6); break;
+      }
+      case "last-month":
+        s = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        e = new Date(now.getFullYear(), now.getMonth(), 0); break;
+      case "current-year":
+        s = new Date(now.getFullYear(), 0, 1);
+        e = new Date(now.getFullYear(), 11, 31); break;
+      case "custom":
+        s = customStart || new Date(now.getFullYear(), now.getMonth(), 1);
+        e = customEnd || new Date(now.getFullYear(), now.getMonth() + 1, 0); break;
+      case "current-month":
       default:
-        startDate = new Date(now.getFullYear(), now.getMonth(), 1);
-        endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+        s = new Date(now.getFullYear(), now.getMonth(), 1);
+        e = new Date(now.getFullYear(), now.getMonth() + 1, 0);
     }
+    return { start: s.toISOString().split("T")[0], end: e.toISOString().split("T")[0] };
+  }, [timeRange, customStart, customEnd]);
+
+  // ── Queries (company-wide finance) ──
+  const { data: invoices = [] } = useQuery({
+    queryKey: ["rep-invoices", start, end],
+    queryFn: async () => {
+      const { data, error } = await supabase.from("invoices")
+        .select("total_amount, invoice_type, issue_date, status")
+        .eq("status", "invoice").gte("issue_date", start).lte("issue_date", end);
+      if (error) throw error; return data || [];
+    },
+  });
+  const { data: sales = [] } = useQuery({
+    queryKey: ["rep-sales", start, end],
+    queryFn: async () => {
+      const { data, error } = await supabase.from("sales")
+        .select("total_amount, sale_date, status").neq("status", "cancelled")
+        .gte("sale_date", start).lte("sale_date", end);
+      if (error) throw error; return data || [];
+    },
+  });
+  const { data: expenses = [] } = useQuery({
+    queryKey: ["rep-expenses", start, end],
+    queryFn: async () => {
+      const { data, error } = await supabase.from("expenses")
+        .select("amount, category, account_type, date").gte("date", start).lte("date", end);
+      if (error) throw error; return data || [];
+    },
+  });
+  const { data: payroll = [] } = useQuery({
+    queryKey: ["rep-payroll", start, end],
+    queryFn: async () => {
+      const { data, error } = await supabase.from("payroll_records")
+        .select("net_pay, status, period_start").eq("status", "paid")
+        .gte("period_start", start).lte("period_start", end);
+      if (error) throw error; return data || [];
+    },
+  });
+  const { data: salePayments = [] } = useQuery({
+    queryKey: ["rep-sale-payments", start, end],
+    queryFn: async () => {
+      const { data, error } = await supabase.from("payments")
+        .select("amount, payment_date, status").eq("status", "completed")
+        .gte("payment_date", start).lte("payment_date", end);
+      if (error) throw error; return data || [];
+    },
+  });
+  const { data: invoiceReceipts = [] } = useQuery({
+    queryKey: ["rep-invoice-receipts", start, end],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any).from("invoice_payments")
+        .select("amount, payment_date").gte("payment_date", start).lte("payment_date", end);
+      if (error) throw error; return data || [];
+    },
+  });
+  const { data: outstanding = [] } = useQuery({
+    queryKey: ["rep-outstanding"],
+    queryFn: async () => {
+      const { data, error } = await supabase.from("invoices")
+        .select("total_amount, amount_paid, payment_status, status")
+        .eq("status", "invoice").in("payment_status", ["unpaid", "partial"]);
+      if (error) throw error; return data || [];
+    },
+  });
+
+  // ── Derived ──
+  const r = useMemo(() => {
+    const invoiceRevenue = invoices.reduce((s: number, i: any) => s + Number(i.total_amount), 0);
+    const eventRevenue = invoices.filter((i: any) => i.invoice_type === "event").reduce((s: number, i: any) => s + Number(i.total_amount), 0);
+    const dailyInvoiceRevenue = invoiceRevenue - eventRevenue;
+    const salesRevenue = sales.reduce((s: number, x: any) => s + Number(x.total_amount), 0);
+    const grossRevenue = invoiceRevenue + salesRevenue;
+
+    const cogs = expenses.filter((e: any) => (e.account_type || "COGS") === "COGS").reduce((s: number, e: any) => s + Number(e.amount), 0);
+    const opex = expenses.filter((e: any) => e.account_type === "OpEX").reduce((s: number, e: any) => s + Number(e.amount), 0);
+    const otherExp = expenses.filter((e: any) => e.account_type && e.account_type !== "COGS" && e.account_type !== "OpEX").reduce((s: number, e: any) => s + Number(e.amount), 0);
+    const expenseTotal = expenses.reduce((s: number, e: any) => s + Number(e.amount), 0);
+    const payrollCost = payroll.reduce((s: number, p: any) => s + Number(p.net_pay), 0);
+
+    const grossProfit = grossRevenue - cogs;
+    const totalCosts = expenseTotal + payrollCost;
+    const netProfit = grossRevenue - totalCosts;
+    const margin = grossRevenue > 0 ? (netProfit / grossRevenue) * 100 : 0;
+
+    const cashCollected =
+      salePayments.reduce((s: number, p: any) => s + Number(p.amount), 0) +
+      invoiceReceipts.reduce((s: number, p: any) => s + Number(p.amount), 0);
+
+    const receivables = outstanding.reduce((s: number, i: any) => s + (Number(i.total_amount) - Number(i.amount_paid)), 0);
+
+    const byCat: Record<string, number> = {};
+    expenses.forEach((e: any) => { byCat[e.category] = (byCat[e.category] ?? 0) + Number(e.amount); });
+    if (payrollCost > 0) byCat["payroll"] = (byCat["payroll"] ?? 0) + payrollCost;
+    const expenseByCategory = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
 
     return {
-      start: startDate.toISOString().split('T')[0],
-      end: endDate.toISOString().split('T')[0]
+      invoiceRevenue, eventRevenue, dailyInvoiceRevenue, salesRevenue, grossRevenue,
+      cogs, opex, otherExp, expenseTotal, payrollCost, totalCosts,
+      grossProfit, netProfit, margin, cashCollected, receivables, expenseByCategory,
     };
-  };
+  }, [invoices, sales, expenses, payroll, salePayments, invoiceReceipts, outstanding]);
 
-  const fetchReportData = async () => {
-    try {
-      setLoading(true);
-      const { start, end } = getDateRange();
+  const rangeLabel = RANGE_LABELS[timeRange] ?? "This Month";
 
-      // Fetch sales data
-      const { data: sales, error: salesError } = await supabase
-        .from('sales')
-        .select('*')
-        .eq('user_id', user?.id)
-        .gte('sale_date', start)
-        .lte('sale_date', end);
+  const exportCSV = () => {
+    const rows: string[] = [];
+    rows.push("Finance Report");
+    rows.push(`Period,${start} to ${end} (${rangeLabel})`);
+    rows.push("");
+    rows.push("Income Statement,Amount (NGN)");
+    rows.push(`Invoice Revenue,${r.invoiceRevenue.toFixed(2)}`);
+    rows.push(`  Daily Sales Invoices,${r.dailyInvoiceRevenue.toFixed(2)}`);
+    rows.push(`  Event Invoices,${r.eventRevenue.toFixed(2)}`);
+    rows.push(`Legacy Sales Revenue,${r.salesRevenue.toFixed(2)}`);
+    rows.push(`Gross Revenue,${r.grossRevenue.toFixed(2)}`);
+    rows.push(`Cost of Goods Sold,${r.cogs.toFixed(2)}`);
+    rows.push(`Gross Profit,${r.grossProfit.toFixed(2)}`);
+    rows.push(`Operating Expenses,${r.opex.toFixed(2)}`);
+    rows.push(`Payroll,${r.payrollCost.toFixed(2)}`);
+    rows.push(`Other Expenses,${r.otherExp.toFixed(2)}`);
+    rows.push(`Total Costs,${r.totalCosts.toFixed(2)}`);
+    rows.push(`Net Profit,${r.netProfit.toFixed(2)}`);
+    rows.push(`Net Margin %,${r.margin.toFixed(1)}`);
+    rows.push("");
+    rows.push("Cash & Receivables,Amount (NGN)");
+    rows.push(`Cash Collected,${r.cashCollected.toFixed(2)}`);
+    rows.push(`Outstanding Receivables,${r.receivables.toFixed(2)}`);
+    rows.push("");
+    rows.push("Expense Breakdown,Amount (NGN)");
+    r.expenseByCategory.forEach(([cat, amt]) => rows.push(`${cat},${amt.toFixed(2)}`));
 
-      if (salesError) throw salesError;
-
-      // Calculate sales metrics
-      const totalRevenue = sales?.reduce((sum, sale) => sum + Number(sale.total_amount), 0) || 0;
-      const totalSales = sales?.length || 0;
-      const completedSales = sales?.filter(sale => sale.status === 'paid' || sale.status === 'partially_paid').length || 0;
-      const pendingSales = sales?.filter(sale => sale.status === 'pending').length || 0;
-      const avgSaleValue = totalSales > 0 ? totalRevenue / totalSales : 0;
-
-      setSalesData({
-        total_revenue: totalRevenue,
-        total_sales: totalSales,
-        completed_sales: completedSales,
-        pending_sales: pendingSales,
-        avg_sale_value: avgSaleValue
-      });
-
-      // Fetch inventory data
-      const { data: inventory, error: inventoryError } = await supabase
-        .from('inventory')
-        .select('*');
-
-      if (inventoryError) throw inventoryError;
-
-      // Fetch products data separately
-      const { data: products, error: productsError } = await supabase
-        .from('products')
-        .select('*');
-
-      if (productsError) throw productsError;
-
-      // Create product lookup map for inventory
-      const inventoryProductMap = new Map();
-      products?.forEach(product => {
-        inventoryProductMap.set(product.id, product);
-      });
-
-      // Calculate inventory metrics
-      const totalProducts = inventory?.length || 0;
-      const totalQuantity = inventory?.reduce((sum, item) => sum + item.quantity, 0) || 0;
-      const totalValue = inventory?.reduce((sum, item) => {
-        const product = inventoryProductMap.get(item.product_id);
-        const price = product?.price || 0;
-        return sum + (item.quantity * Number(price));
-      }, 0) || 0;
-      const lowStockItems = inventory?.filter(item => item.quantity <= item.reorder_level).length || 0;
-
-      setInventoryData({
-        total_products: totalProducts,
-        total_quantity: totalQuantity,
-        total_value: totalValue,
-        low_stock_items: lowStockItems
-      });
-
-      // Fetch top products by sales
-      const { data: saleItems, error: saleItemsError } = await supabase
-        .from('sale_items')
-        .select(`
-          *,
-          products(name, category),
-          sales!inner(user_id, sale_date)
-        `)
-        .eq('sales.user_id', user?.id)
-        .gte('sales.sale_date', start)
-        .lte('sales.sale_date', end);
-
-      if (saleItemsError) throw saleItemsError;
-
-      // Process top products data
-      const productMap = new Map<string, { amount: number; count: number }>();
-
-      saleItems?.forEach(item => {
-        const productName = item.products?.name || 'Unknown Product';
-        const amount = Number(item.total_price);
-        const quantity = item.quantity;
-
-        if (productMap.has(productName)) {
-          const existing = productMap.get(productName)!;
-          productMap.set(productName, {
-            amount: existing.amount + amount,
-            count: existing.count + quantity
-          });
-        } else {
-          productMap.set(productName, { amount, count: quantity });
-        }
-      });
-
-      const topProducts = Array.from(productMap.entries()).map(([category, data]) => ({
-        category,
-        amount: data.amount,
-        count: data.count
-      }));
-
-      setTopProductsData(topProducts.sort((a, b) => b.amount - a.amount));
-
-    } catch (error: any) {
-      toast({
-        title: 'Error loading report data',
-        description: error.message,
-        variant: 'destructive',
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const getTimeRangeLabel = () => {
-    switch (timeRange) {
-      case 'current-week': return 'This Week';
-      case 'current-month': return 'This Month';
-      case 'last-month': return 'Last Month';
-      case 'current-year': return 'This Year';
-      case 'custom': return 'Custom Range';
-      default: return 'This Month';
-    }
-  };
-
-  const exportToCSV = () => {
-    const salesCsv = [
-      ['Metric', 'Value'].join(','),
-      ['Total Revenue', salesData.total_revenue.toFixed(2)],
-      ['Total Sales', salesData.total_sales.toString()],
-      ['Completed Sales', salesData.completed_sales.toString()],
-      ['Pending Sales', salesData.pending_sales.toString()],
-      ['Average Sale Value', salesData.avg_sale_value.toFixed(2)]
-    ].join('\n');
-
-    const inventoryCsv = [
-      ['Metric', 'Value'].join(','),
-      ['Total Products', inventoryData.total_products.toString()],
-      ['Total Quantity', inventoryData.total_quantity.toString()],
-      ['Total Value', inventoryData.total_value.toFixed(2)],
-      ['Low Stock Items', inventoryData.low_stock_items.toString()]
-    ].join('\n');
-
-    const topProductsCsv = [
-      ['Product', 'Revenue', 'Quantity Sold'].join(','),
-      ...topProductsData.map(item => [
-        item.category,
-        item.amount.toFixed(2),
-        item.count.toString()
-      ].join(','))
-    ].join('\n');
-
-    const fullReport = `Sales Report\n${salesCsv}\n\nInventory Report\n${inventoryCsv}\n\nTop Products\n${topProductsCsv}`;
-
-    const blob = new Blob([fullReport], { type: 'text/csv' });
+    const blob = new Blob([rows.join("\n")], { type: "text/csv" });
     const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
+    const a = document.createElement("a");
     a.href = url;
-    a.download = `business-report-${timeRange}-${format(new Date(), 'yyyy-MM-dd')}.csv`;
+    a.download = `finance-report-${start}_to_${end}.csv`;
     a.click();
     window.URL.revokeObjectURL(url);
-
-    toast({
-      title: 'Report exported',
-      description: 'Your business report has been downloaded as CSV.',
-    });
+    toast({ title: "Finance report exported", description: "Downloaded as CSV." });
   };
 
-  if (loading) {
-    return <div className="text-center py-12">Loading reports...</div>;
-  }
+  const Kpi = ({ label, value, sub, icon: Icon, accent, valueClass }: any) => (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between pb-2">
+        <CardTitle className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</CardTitle>
+        <div className={`h-8 w-8 rounded-lg flex items-center justify-center ${accent}`}><Icon className="h-4 w-4" /></div>
+      </CardHeader>
+      <CardContent>
+        <div className={`text-xl font-bold ${valueClass ?? ""}`}>{value}</div>
+        {sub && <p className="text-xs text-muted-foreground mt-0.5">{sub}</p>}
+      </CardContent>
+    </Card>
+  );
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-foreground">Analytics & Reports</h1>
-          <p className="text-muted-foreground">Real-time business insights and performance metrics.</p>
+          <h1 className="text-2xl sm:text-3xl font-bold text-foreground flex items-center gap-2">
+            <BarChart3 className="h-6 w-6 text-primary" />Finance Report
+          </h1>
+          <p className="text-muted-foreground">Revenue, costs, profit, cash and receivables for the selected period.</p>
         </div>
-
-        <div className="flex gap-4">
+        <div className="flex gap-2 flex-wrap">
           <Select value={timeRange} onValueChange={setTimeRange}>
-            <SelectTrigger className="w-48">
-              <SelectValue />
-            </SelectTrigger>
+            <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="current-week">This Week</SelectItem>
               <SelectItem value="current-month">This Month</SelectItem>
@@ -303,191 +228,95 @@ const Reports = () => {
               <SelectItem value="custom">Custom Range</SelectItem>
             </SelectContent>
           </Select>
-          
-          {timeRange === 'custom' && (
+          {timeRange === "custom" && (
             <div className="flex gap-2">
               <Popover>
                 <PopoverTrigger asChild>
-                  <Button variant="outline" className="w-40 justify-start text-left font-normal">
-                    <Calendar className="mr-2 h-4 w-4" />
-                    {customStartDate ? format(customStartDate, "MMM d, yyyy") : "Start Date"}
+                  <Button variant="outline" className="w-36 justify-start text-left font-normal">
+                    <Calendar className="mr-2 h-4 w-4" />{customStart ? format(customStart, "MMM d, yyyy") : "Start"}
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent className="w-auto p-0" align="start">
-                  <CalendarComponent
-                    mode="single"
-                    selected={customStartDate}
-                    onSelect={setCustomStartDate}
-                    initialFocus
-                    className="p-3 pointer-events-auto"
-                  />
+                  <CalendarComponent mode="single" selected={customStart} onSelect={setCustomStart} initialFocus className="p-3 pointer-events-auto" />
                 </PopoverContent>
               </Popover>
-              
               <Popover>
                 <PopoverTrigger asChild>
-                  <Button variant="outline" className="w-40 justify-start text-left font-normal">
-                    <Calendar className="mr-2 h-4 w-4" />
-                    {customEndDate ? format(customEndDate, "MMM d, yyyy") : "End Date"}
+                  <Button variant="outline" className="w-36 justify-start text-left font-normal">
+                    <Calendar className="mr-2 h-4 w-4" />{customEnd ? format(customEnd, "MMM d, yyyy") : "End"}
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent className="w-auto p-0" align="start">
-                  <CalendarComponent
-                    mode="single"
-                    selected={customEndDate}
-                    onSelect={setCustomEndDate}
-                    initialFocus
-                    className="p-3 pointer-events-auto"
-                  />
+                  <CalendarComponent mode="single" selected={customEnd} onSelect={setCustomEnd} initialFocus className="p-3 pointer-events-auto" />
                 </PopoverContent>
               </Popover>
             </div>
           )}
-          
-          <Button onClick={exportToCSV} variant="outline">
-            <Download className="h-4 w-4 mr-2" />
-            Export CSV
+          <Button onClick={exportCSV} variant="outline">
+            <Download className="h-4 w-4 mr-2" />Export CSV
           </Button>
         </div>
       </div>
 
-      {/* Sales Metrics */}
-      <div>
-        <h2 className="text-xl font-semibold mb-4">Sales Performance</h2>
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Revenue</CardTitle>
-              <DollarSign className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{formatNairaCompact(salesData.total_revenue)}</div>
-              <p className="text-xs text-muted-foreground">{getTimeRangeLabel()}</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Sales</CardTitle>
-              <ShoppingCart className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{salesData.total_sales}</div>
-              <p className="text-xs text-muted-foreground">
-                {salesData.completed_sales} completed, {salesData.pending_sales} pending
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Average Sale Value</CardTitle>
-              <TrendingUp className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{formatNairaCompact(salesData.avg_sale_value)}</div>
-              <p className="text-xs text-muted-foreground">Per transaction</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Completion Rate</CardTitle>
-              <BarChart3 className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">
-                {salesData.total_sales > 0 ? `${((salesData.completed_sales / salesData.total_sales) * 100).toFixed(1)}%` : '0%'}
-              </div>
-              <p className="text-xs text-muted-foreground">Sales completed</p>
-            </CardContent>
-          </Card>
-        </div>
+      {/* KPI grid */}
+      <div className="grid gap-4 grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+        <Kpi label="Gross Revenue" value={formatNairaCompact(r.grossRevenue)} sub={rangeLabel} icon={DollarSign} accent="bg-green-100 text-green-700" />
+        <Kpi label="Net Profit" value={`${r.netProfit < 0 ? "−" : ""}${formatNairaCompact(Math.abs(r.netProfit))}`} sub={`${r.margin.toFixed(1)}% margin`} icon={r.netProfit >= 0 ? TrendingUp : TrendingDown} accent={r.netProfit >= 0 ? "bg-primary/10 text-primary" : "bg-destructive/10 text-destructive"} valueClass={r.netProfit >= 0 ? "text-success" : "text-destructive"} />
+        <Kpi label="Cash Collected" value={formatNairaCompact(r.cashCollected)} sub="Received in period" icon={Banknote} accent="bg-blue-100 text-blue-700" />
+        <Kpi label="Receivables" value={formatNairaCompact(r.receivables)} sub="Outstanding now" icon={CreditCard} accent="bg-amber-100 text-amber-700" />
+        <Kpi label="Total Costs" value={formatNairaCompact(r.totalCosts)} sub={`Exp ${formatNairaShort(r.expenseTotal)} · Pay ${formatNairaShort(r.payrollCost)}`} icon={Receipt} accent="bg-red-100 text-red-700" />
+        <Kpi label="Payroll" value={formatNairaCompact(r.payrollCost)} sub={rangeLabel} icon={Wallet} accent="bg-orange-100 text-orange-700" />
       </div>
 
-      {/* Inventory Metrics */}
-      <div>
-        <h2 className="text-xl font-semibold mb-4">Inventory Overview</h2>
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Products</CardTitle>
-              <Package className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{inventoryData.total_products}</div>
-              <p className="text-xs text-muted-foreground">Unique products</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Stock</CardTitle>
-              <Warehouse className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{inventoryData.total_quantity.toLocaleString()}</div>
-              <p className="text-xs text-muted-foreground">Units in stock</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Stock Value</CardTitle>
-              <DollarSign className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{formatNairaCompact(inventoryData.total_value)}</div>
-              <p className="text-xs text-muted-foreground">Total inventory value</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Low Stock Alert</CardTitle>
-              <Package className="h-4 w-4 text-destructive" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-destructive">{inventoryData.low_stock_items}</div>
-              <p className="text-xs text-muted-foreground">Items need restock</p>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-
-      <div className="grid gap-6 md:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>Top Selling Products</CardTitle>
-            <CardDescription>
-              Best performing products by revenue for {getTimeRangeLabel().toLowerCase()}
-            </CardDescription>
+      <div className="grid gap-6 lg:grid-cols-3">
+        {/* Income statement summary */}
+        <Card className="lg:col-span-2">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Income Statement — {rangeLabel}</CardTitle>
+            <CardDescription>{start} to {end}</CardDescription>
           </CardHeader>
           <CardContent>
-            {topProductsData.length === 0 ? (
-              <div className="text-center py-6">
-                <Package className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                <p className="text-muted-foreground">No sales data in selected period</p>
+            <div className="space-y-2 text-sm max-w-lg">
+              <Line label="Invoice Revenue" value={r.invoiceRevenue} />
+              <Sub label="Daily Sales Invoices" value={r.dailyInvoiceRevenue} />
+              <Sub label="Event Invoices" value={r.eventRevenue} />
+              <Line label="Legacy Sales Revenue" value={r.salesRevenue} />
+              <Total label="Gross Revenue" value={r.grossRevenue} />
+              <Line label="Cost of Goods Sold" value={-r.cogs} neg />
+              <Total label="Gross Profit" value={r.grossProfit} />
+              <Line label="Operating Expenses" value={-r.opex} neg />
+              <Line label="Payroll" value={-r.payrollCost} neg />
+              {r.otherExp > 0 && <Line label="Other Expenses" value={-r.otherExp} neg />}
+              <div className="border-t-2 pt-2 flex justify-between font-bold text-base">
+                <span>Net {r.netProfit >= 0 ? "Profit" : "Loss"}</span>
+                <span className={r.netProfit >= 0 ? "text-success" : "text-destructive"}>
+                  {r.netProfit < 0 ? "−" : ""}{formatNairaCompact(Math.abs(r.netProfit))}
+                </span>
               </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Expense breakdown */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Expense Breakdown</CardTitle>
+            <CardDescription>{rangeLabel} · {formatNairaCompact(r.totalCosts)}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {r.expenseByCategory.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-6">No costs in this period.</p>
             ) : (
-              <div className="space-y-4">
-                {topProductsData.slice(0, 6).map((item, index) => {
-                  const percentage = salesData.total_revenue > 0 ? (item.amount / salesData.total_revenue) * 100 : 0;
+              <div className="space-y-3">
+                {r.expenseByCategory.slice(0, 8).map(([cat, amt]) => {
+                  const pct = r.totalCosts > 0 ? (amt / r.totalCosts) * 100 : 0;
                   return (
-                    <div key={item.category} className="space-y-2">
+                    <div key={cat} className="space-y-1">
                       <div className="flex justify-between text-sm">
-                        <span className="font-medium">{item.category}</span>
-                        <span>{formatNairaCompact(item.amount)} ({percentage.toFixed(1)}%)</span>
+                        <span className="capitalize text-muted-foreground truncate">{cat}</span>
+                        <span className="font-medium shrink-0 ml-2">{formatNairaShort(amt)}</span>
                       </div>
-                      <div className="w-full bg-muted rounded-full h-2">
-                        <div
-                          className="bg-primary h-2 rounded-full transition-all duration-300"
-                          style={{ width: `${percentage}%` }}
-                        />
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        {item.count} unit{item.count !== 1 ? 's' : ''} sold
-                      </div>
+                      <Progress value={pct} className="h-1.5" />
                     </div>
                   );
                 })}
@@ -495,70 +324,48 @@ const Reports = () => {
             )}
           </CardContent>
         </Card>
+      </div>
 
+      {/* Revenue split + cash */}
+      <div className="grid gap-6 md:grid-cols-2">
         <Card>
-          <CardHeader>
-            <CardTitle>Sales vs Inventory Health</CardTitle>
-            <CardDescription>
-              Key business metrics overview
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
-                <div className="flex items-center space-x-3">
-                  <ShoppingCart className="h-5 w-5 text-primary" />
-                  <div>
-                    <p className="font-medium">Sales Growth</p>
-                    <p className="text-sm text-muted-foreground">Current period performance</p>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <p className="font-semibold">{formatNairaCompact(salesData.total_revenue)}</p>
-                  <p className="text-sm text-green-600">Revenue generated</p>
-                </div>
-              </div>
-              
-              <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
-                <div className="flex items-center space-x-3">
-                  <Package className="h-5 w-5 text-primary" />
-                  <div>
-                    <p className="font-medium">Inventory Status</p>
-                    <p className="text-sm text-muted-foreground">Stock levels overview</p>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <p className="font-semibold">{inventoryData.total_quantity.toLocaleString()}</p>
-                  <p className={cn(
-                    "text-sm",
-                    inventoryData.low_stock_items > 0 ? "text-destructive" : "text-green-600"
-                  )}>
-                    {inventoryData.low_stock_items > 0 ? `${inventoryData.low_stock_items} low stock` : 'All stocked'}
-                  </p>
-                </div>
-              </div>
-              
-              <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
-                <div className="flex items-center space-x-3">
-                  <TrendingUp className="h-5 w-5 text-primary" />
-                  <div>
-                    <p className="font-medium">Efficiency Rate</p>
-                    <p className="text-sm text-muted-foreground">Sales completion rate</p>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <p className="font-semibold">
-                    {salesData.total_sales > 0 ? `${((salesData.completed_sales / salesData.total_sales) * 100).toFixed(1)}%` : '0%'}
-                  </p>
-                  <p className="text-sm text-green-600">Orders completed</p>
-                </div>
-              </div>
-            </div>
+          <CardHeader className="pb-3"><CardTitle className="text-sm flex items-center gap-2"><TrendingUp className="h-4 w-4 text-green-600" />Revenue Split</CardTitle></CardHeader>
+          <CardContent className="space-y-2 text-sm">
+            <div className="flex justify-between"><span className="text-muted-foreground flex items-center gap-1.5"><FileText className="h-3.5 w-3.5" />Invoices</span><span className="font-semibold">{formatNairaCompact(r.invoiceRevenue)}</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground flex items-center gap-1.5"><ShoppingCart className="h-3.5 w-3.5" />Legacy Sales</span><span className="font-semibold">{formatNairaCompact(r.salesRevenue)}</span></div>
+            <div className="border-t pt-2 flex justify-between font-bold"><span>Total</span><span className="text-green-700">{formatNairaCompact(r.grossRevenue)}</span></div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-3"><CardTitle className="text-sm flex items-center gap-2"><Banknote className="h-4 w-4 text-blue-600" />Cash Position</CardTitle></CardHeader>
+          <CardContent className="space-y-2 text-sm">
+            <div className="flex justify-between"><span className="text-muted-foreground">Cash Collected ({rangeLabel})</span><span className="font-semibold">{formatNairaCompact(r.cashCollected)}</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">Outstanding Receivables</span><span className="font-semibold text-amber-600">{formatNairaCompact(r.receivables)}</span></div>
           </CardContent>
         </Card>
       </div>
     </div>
   );
 };
+
+// Small statement-line helpers
+const Line = ({ label, value, neg }: { label: string; value: number; neg?: boolean }) => (
+  <div className="flex justify-between">
+    <span className="text-muted-foreground">{label}</span>
+    <span className={neg ? "text-destructive" : ""}>{value < 0 ? "−" : ""}{formatNairaCompact(Math.abs(value))}</span>
+  </div>
+);
+const Sub = ({ label, value }: { label: string; value: number }) => (
+  <div className="flex justify-between text-xs pl-3">
+    <span className="text-muted-foreground">{label}</span>
+    <span className="text-muted-foreground">{formatNairaCompact(value)}</span>
+  </div>
+);
+const Total = ({ label, value }: { label: string; value: number }) => (
+  <div className="border-t pt-2 flex justify-between font-semibold">
+    <span>{label}</span>
+    <span className={value >= 0 ? "text-success" : "text-destructive"}>{value < 0 ? "−" : ""}{formatNairaCompact(Math.abs(value))}</span>
+  </div>
+);
 
 export default Reports;

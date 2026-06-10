@@ -443,7 +443,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 <Can module="reports">
                   <SidebarMenuItem>
                     <SidebarMenuButton asChild isActive={location.pathname === '/reports'}>
-                      <Link to="/reports"><BarChart3 className="h-4 w-4" />Reports</Link>
+                      <Link to="/reports"><BarChart3 className="h-4 w-4" />Finance Report</Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 </Can>

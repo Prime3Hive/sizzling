@@ -9,7 +9,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { Plus, Package, AlertTriangle, TrendingDown, Search, Filter, ClipboardList, Pencil } from "lucide-react";
+import { Plus, Package, AlertTriangle, TrendingDown, Search, Filter, ClipboardList, Pencil, Download } from "lucide-react";
+import { format } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useRoles } from "@/hooks/useRoles";
@@ -288,6 +289,50 @@ const Inventory = () => {
   const categories = [...new Set(products.map(p => p.category))];
   const lowStockItems = inventory.filter(item => item.products && item.quantity <= item.reorder_level);
 
+  // ── Inventory report export ──
+  const exportInventoryReport = () => {
+    const totalUnits = inventory.reduce((s, it) => s + Number(it.quantity), 0);
+    const totalValue = inventory.reduce((s, it) => s + Number(it.quantity) * Number(it.products?.price || 0), 0);
+
+    const lines: string[] = [];
+    lines.push("Inventory Report");
+    lines.push(`Generated,${format(new Date(), "yyyy-MM-dd HH:mm")}`);
+    lines.push("");
+    lines.push("Summary,Value");
+    lines.push(`Distinct Stock Lines,${inventory.length}`);
+    lines.push(`Total Units,${totalUnits}`);
+    lines.push(`Total Stock Value (NGN),${totalValue.toFixed(2)}`);
+    lines.push(`Low Stock Items,${lowStockItems.length}`);
+    lines.push("");
+    lines.push("SKU,Product,Category,Warehouse,Quantity,Reorder Level,Unit Price,Stock Value,Status");
+    inventory.forEach((it) => {
+      const price = Number(it.products?.price || 0);
+      const value = Number(it.quantity) * price;
+      const status = it.quantity <= it.reorder_level ? "LOW STOCK" : "OK";
+      const cells = [
+        it.products?.sku ?? "",
+        it.products?.name ?? "",
+        it.products?.category ?? "",
+        it.warehouses?.name ?? "",
+        String(it.quantity),
+        String(it.reorder_level),
+        price.toFixed(2),
+        value.toFixed(2),
+        status,
+      ].map((c) => `"${String(c).replace(/"/g, '""')}"`);
+      lines.push(cells.join(","));
+    });
+
+    const blob = new Blob([lines.join("\n")], { type: "text/csv" });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `inventory-report-${format(new Date(), "yyyy-MM-dd")}.csv`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+    toast({ title: "Inventory report exported", description: `${inventory.length} stock lines · value ${formatNairaCompact(totalValue)}` });
+  };
+
   if (loading) {
     return <div className="flex items-center justify-center h-64">Loading...</div>;
   }
@@ -302,8 +347,12 @@ const Inventory = () => {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button 
-            variant="outline" 
+          <Button variant="outline" onClick={exportInventoryReport}>
+            <Download className="h-4 w-4 mr-2" />
+            Export Report
+          </Button>
+          <Button
+            variant="outline"
             onClick={() => navigate('/business/inventory-requests')}
           >
             <ClipboardList className="h-4 w-4 mr-2" />
