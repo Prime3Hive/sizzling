@@ -13,7 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { Scale, BookOpen, ListTree, Plus, Trash2, Loader2, CheckCircle2, AlertTriangle } from "lucide-react";
+import { Scale, BookOpen, ListTree, Plus, Trash2, Loader2, CheckCircle2, AlertTriangle, TrendingUp, Landmark } from "lucide-react";
 import { formatNairaCompact } from "@/lib/currency";
 import { safeFormat } from "@/lib/safeDate";
 
@@ -38,7 +38,12 @@ export default function Accounting() {
   const { toast } = useToast();
   const qc = useQueryClient();
 
-  const [asOf, setAsOf] = useState(new Date().toISOString().split("T")[0]);
+  const today = new Date().toISOString().split("T")[0];
+  const yearStart = `${new Date().getFullYear()}-01-01`;
+  const [asOf, setAsOf] = useState(today);
+  const [isFrom, setIsFrom] = useState(yearStart);
+  const [isTo, setIsTo] = useState(today);
+  const [bsAsOf, setBsAsOf] = useState(today);
   const [entryOpen, setEntryOpen] = useState(false);
   const [entryDate, setEntryDate] = useState(new Date().toISOString().split("T")[0]);
   const [entryMemo, setEntryMemo] = useState("");
@@ -56,13 +61,14 @@ export default function Accounting() {
     },
   });
 
-  const { data: tbLines = [], isLoading: tbLoading } = useQuery<LineWithMeta[]>({
-    queryKey: ["tb-lines", asOf],
+  // All posted lines (with account + date) — the three statements derive from this
+  const { data: allLines = [], isLoading: tbLoading } = useQuery<LineWithMeta[]>({
+    queryKey: ["journal-all-lines"],
     queryFn: async () => {
       const { data, error } = await (supabase as any)
         .from("journal_lines")
         .select("id, entry_id, account_id, debit, credit, description, journal_entries!inner(entry_date), chart_of_accounts(code, name, type, normal_balance)")
-        .lte("journal_entries.entry_date", asOf);
+        .limit(10000);
       if (error) throw error;
       return (data ?? []).map((r: any) => ({ ...r, entry_date: r.journal_entries?.entry_date }));
     },
@@ -82,30 +88,90 @@ export default function Accounting() {
     },
   });
 
-  // ── Trial balance computation ──
-  const trialBalance = useMemo(() => {
+  // Aggregate lines into per-account {debit, credit}, with an optional date window
+  const aggregate = (from: string | null, to: string) => {
     const byAccount: Record<string, { account: any; debit: number; credit: number }> = {};
-    for (const l of tbLines) {
+    for (const l of allLines) {
       const acc = l.chart_of_accounts;
-      if (!acc) continue;
+      if (!acc || !l.entry_date) continue;
+      if (l.entry_date > to) continue;
+      if (from && l.entry_date < from) continue;
       const key = l.account_id;
       if (!byAccount[key]) byAccount[key] = { account: acc, debit: 0, credit: 0 };
       byAccount[key].debit += Number(l.debit);
       byAccount[key].credit += Number(l.credit);
     }
+    return byAccount;
+  };
+
+  // ── Trial balance (as of date) ──
+  const trialBalance = useMemo(() => {
+    const byAccount = aggregate(null, asOf);
     const rows = Object.values(byAccount).map((r) => {
-      const net = r.debit - r.credit; // debit-positive
-      return {
-        ...r,
-        balanceDebit: net > 0 ? net : 0,
-        balanceCredit: net < 0 ? -net : 0,
-      };
+      const net = r.debit - r.credit;
+      return { ...r, balanceDebit: net > 0 ? net : 0, balanceCredit: net < 0 ? -net : 0 };
     }).filter((r) => r.balanceDebit > 0.005 || r.balanceCredit > 0.005);
     rows.sort((a, b) => a.account.code.localeCompare(b.account.code));
     const totalDebit = rows.reduce((s, r) => s + r.balanceDebit, 0);
     const totalCredit = rows.reduce((s, r) => s + r.balanceCredit, 0);
     return { rows, totalDebit, totalCredit, balanced: Math.abs(totalDebit - totalCredit) < 0.01 };
-  }, [tbLines]);
+  }, [allLines, asOf]);
+
+  // ── Income statement (period) ──
+  const incomeStatement = useMemo(() => {
+    const byAccount = aggregate(isFrom, isTo);
+    const income: any[] = [], expense: any[] = [];
+    for (const r of Object.values(byAccount)) {
+      if (r.account.type === "income") {
+        const bal = r.credit - r.debit; // credit-normal
+        if (Math.abs(bal) > 0.005) income.push({ ...r, balance: bal });
+      } else if (r.account.type === "expense") {
+        const bal = r.debit - r.credit; // debit-normal
+        if (Math.abs(bal) > 0.005) expense.push({ ...r, balance: bal });
+      }
+    }
+    income.sort((a, b) => a.account.code.localeCompare(b.account.code));
+    expense.sort((a, b) => a.account.code.localeCompare(b.account.code));
+    const totalIncome = income.reduce((s, r) => s + r.balance, 0);
+    const totalExpense = expense.reduce((s, r) => s + r.balance, 0);
+    return { income, expense, totalIncome, totalExpense, netIncome: totalIncome - totalExpense };
+  }, [allLines, isFrom, isTo]);
+
+  // ── Balance sheet (as of date) ──
+  const balanceSheet = useMemo(() => {
+    const byAccount = aggregate(null, bsAsOf);
+    const assets: any[] = [], liabilities: any[] = [], equity: any[] = [];
+    let incomeToDate = 0, expenseToDate = 0;
+    for (const r of Object.values(byAccount)) {
+      const t = r.account.type;
+      if (t === "asset") {
+        const bal = r.debit - r.credit;
+        if (Math.abs(bal) > 0.005) assets.push({ ...r, balance: bal });
+      } else if (t === "liability") {
+        const bal = r.credit - r.debit;
+        if (Math.abs(bal) > 0.005) liabilities.push({ ...r, balance: bal });
+      } else if (t === "equity") {
+        const bal = r.credit - r.debit;
+        if (Math.abs(bal) > 0.005) equity.push({ ...r, balance: bal });
+      } else if (t === "income") {
+        incomeToDate += r.credit - r.debit;
+      } else if (t === "expense") {
+        expenseToDate += r.debit - r.credit;
+      }
+    }
+    [assets, liabilities, equity].forEach((g) => g.sort((a, b) => a.account.code.localeCompare(b.account.code)));
+    const retainedEarnings = incomeToDate - expenseToDate; // cumulative net profit to date
+    const totalAssets = assets.reduce((s, r) => s + r.balance, 0);
+    const totalLiabilities = liabilities.reduce((s, r) => s + r.balance, 0);
+    const totalEquityPosted = equity.reduce((s, r) => s + r.balance, 0);
+    const totalEquity = totalEquityPosted + retainedEarnings;
+    const totalLiabEquity = totalLiabilities + totalEquity;
+    return {
+      assets, liabilities, equity, retainedEarnings,
+      totalAssets, totalLiabilities, totalEquity, totalLiabEquity,
+      balanced: Math.abs(totalAssets - totalLiabEquity) < 0.01,
+    };
+  }, [allLines, bsAsOf]);
 
   // ── New entry helpers ──
   const lineTotals = useMemo(() => {
@@ -165,8 +231,10 @@ export default function Accounting() {
       </div>
 
       <Tabs defaultValue="trial-balance" className="space-y-4">
-        <TabsList>
+        <TabsList className="flex-wrap h-auto">
           <TabsTrigger value="trial-balance" className="gap-2"><Scale className="h-4 w-4" /> Trial Balance</TabsTrigger>
+          <TabsTrigger value="income" className="gap-2"><TrendingUp className="h-4 w-4" /> Income Statement</TabsTrigger>
+          <TabsTrigger value="balance-sheet" className="gap-2"><Landmark className="h-4 w-4" /> Balance Sheet</TabsTrigger>
           <TabsTrigger value="journal" className="gap-2"><BookOpen className="h-4 w-4" /> Journal</TabsTrigger>
           <TabsTrigger value="accounts" className="gap-2"><ListTree className="h-4 w-4" /> Chart of Accounts</TabsTrigger>
         </TabsList>
@@ -227,6 +295,147 @@ export default function Accounting() {
                     </TableRow>
                   </TableBody>
                 </Table>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ── Income Statement ── */}
+        <TabsContent value="income" className="space-y-4">
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                <div>
+                  <CardTitle className="text-base">Income Statement</CardTitle>
+                  <CardDescription>Revenue and expenses over the selected period</CardDescription>
+                </div>
+                <div className="flex items-end gap-2">
+                  <div className="space-y-1"><Label className="text-xs">From</Label><Input type="date" className="h-9 w-36" value={isFrom} onChange={(e) => setIsFrom(e.target.value)} /></div>
+                  <div className="space-y-1"><Label className="text-xs">To</Label><Input type="date" className="h-9 w-36" value={isTo} onChange={(e) => setIsTo(e.target.value)} /></div>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {tbLoading ? (
+                <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+              ) : (
+                <div className="space-y-5 max-w-xl">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Revenue</p>
+                    {incomeStatement.income.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No revenue in this period.</p>
+                    ) : incomeStatement.income.map((r) => (
+                      <div key={r.account.code} className="flex justify-between text-sm py-0.5">
+                        <span className="text-muted-foreground">{r.account.name}</span>
+                        <span>{formatNairaCompact(r.balance)}</span>
+                      </div>
+                    ))}
+                    <div className="flex justify-between border-t pt-1 mt-1 text-sm font-semibold">
+                      <span>Total Revenue</span><span>{formatNairaCompact(incomeStatement.totalIncome)}</span>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Expenses</p>
+                    {incomeStatement.expense.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No expenses in this period.</p>
+                    ) : incomeStatement.expense.map((r) => (
+                      <div key={r.account.code} className="flex justify-between text-sm py-0.5">
+                        <span className="text-muted-foreground">{r.account.name}</span>
+                        <span className="text-destructive">−{formatNairaCompact(r.balance)}</span>
+                      </div>
+                    ))}
+                    <div className="flex justify-between border-t pt-1 mt-1 text-sm font-semibold">
+                      <span>Total Expenses</span><span className="text-destructive">−{formatNairaCompact(incomeStatement.totalExpense)}</span>
+                    </div>
+                  </div>
+                  <div className="rounded-lg bg-muted p-3 flex items-center justify-between font-bold">
+                    <span>Net {incomeStatement.netIncome >= 0 ? "Profit" : "Loss"}</span>
+                    <span className={incomeStatement.netIncome >= 0 ? "text-success" : "text-destructive"}>
+                      {incomeStatement.netIncome < 0 ? "−" : ""}{formatNairaCompact(Math.abs(incomeStatement.netIncome))}
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Net margin: {incomeStatement.totalIncome > 0 ? ((incomeStatement.netIncome / incomeStatement.totalIncome) * 100).toFixed(1) : "0.0"}%
+                  </p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ── Balance Sheet ── */}
+        <TabsContent value="balance-sheet" className="space-y-4">
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                <div>
+                  <CardTitle className="text-base">Balance Sheet</CardTitle>
+                  <CardDescription>Financial position as of the selected date</CardDescription>
+                </div>
+                <div className="flex items-end gap-2">
+                  <div className="space-y-1"><Label className="text-xs">As of</Label><Input type="date" className="h-9 w-40" value={bsAsOf} onChange={(e) => setBsAsOf(e.target.value)} /></div>
+                  <Badge variant="outline" className={balanceSheet.balanced ? "bg-green-50 text-green-700 border-green-200 h-9 px-3" : "bg-red-50 text-red-700 border-red-200 h-9 px-3"}>
+                    {balanceSheet.balanced ? <><CheckCircle2 className="h-3.5 w-3.5 mr-1" /> Balanced</> : <><AlertTriangle className="h-3.5 w-3.5 mr-1" /> Out of balance</>}
+                  </Badge>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {tbLoading ? (
+                <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+              ) : (
+                <div className="grid md:grid-cols-2 gap-6">
+                  {/* Assets */}
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Assets</p>
+                    {balanceSheet.assets.map((r) => (
+                      <div key={r.account.code} className="flex justify-between text-sm py-0.5">
+                        <span className="text-muted-foreground">{r.account.name}</span>
+                        <span>{formatNairaCompact(r.balance)}</span>
+                      </div>
+                    ))}
+                    {balanceSheet.assets.length === 0 && <p className="text-sm text-muted-foreground">—</p>}
+                    <div className="flex justify-between border-t pt-1 mt-1 text-sm font-bold">
+                      <span>Total Assets</span><span>{formatNairaCompact(balanceSheet.totalAssets)}</span>
+                    </div>
+                  </div>
+
+                  {/* Liabilities + Equity */}
+                  <div className="space-y-4">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Liabilities</p>
+                      {balanceSheet.liabilities.map((r) => (
+                        <div key={r.account.code} className="flex justify-between text-sm py-0.5">
+                          <span className="text-muted-foreground">{r.account.name}</span>
+                          <span>{formatNairaCompact(r.balance)}</span>
+                        </div>
+                      ))}
+                      {balanceSheet.liabilities.length === 0 && <p className="text-sm text-muted-foreground">—</p>}
+                      <div className="flex justify-between border-t pt-1 mt-1 text-sm font-semibold">
+                        <span>Total Liabilities</span><span>{formatNairaCompact(balanceSheet.totalLiabilities)}</span>
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Equity</p>
+                      {balanceSheet.equity.map((r) => (
+                        <div key={r.account.code} className="flex justify-between text-sm py-0.5">
+                          <span className="text-muted-foreground">{r.account.name}</span>
+                          <span>{formatNairaCompact(r.balance)}</span>
+                        </div>
+                      ))}
+                      <div className="flex justify-between text-sm py-0.5">
+                        <span className="text-muted-foreground">Retained Earnings</span>
+                        <span>{balanceSheet.retainedEarnings < 0 ? "−" : ""}{formatNairaCompact(Math.abs(balanceSheet.retainedEarnings))}</span>
+                      </div>
+                      <div className="flex justify-between border-t pt-1 mt-1 text-sm font-semibold">
+                        <span>Total Equity</span><span>{formatNairaCompact(balanceSheet.totalEquity)}</span>
+                      </div>
+                    </div>
+                    <div className="rounded-lg bg-muted p-3 flex justify-between font-bold text-sm">
+                      <span>Liabilities + Equity</span><span>{formatNairaCompact(balanceSheet.totalLiabEquity)}</span>
+                    </div>
+                  </div>
+                </div>
               )}
             </CardContent>
           </Card>
