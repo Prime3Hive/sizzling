@@ -31,7 +31,34 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useRoles } from '@/hooks/useRoles';
-import { formatNairaCompact } from '@/lib/currency';
+import { formatNairaCompact, formatNairaShort } from '@/lib/currency';
+import { Banknote, FileText, CreditCard, Briefcase, Activity, PiggyBank } from 'lucide-react';
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip,
+  Legend, ResponsiveContainer,
+} from 'recharts';
+
+function ExecKpi({ to, label, value, sub, icon: Icon, accent, valueClass }: {
+  to: string; label: string; value: string; sub?: string;
+  icon: React.ElementType; accent: string; valueClass?: string;
+}) {
+  return (
+    <Link to={to}>
+      <Card className="h-full hover:shadow-primary transition-all duration-300 bg-gradient-card border-border/50 cursor-pointer hover:scale-[1.02]">
+        <CardContent className="pt-4 pb-3">
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</span>
+            <div className={`h-7 w-7 rounded-lg flex items-center justify-center shrink-0 ${accent}`}>
+              <Icon className="h-3.5 w-3.5" />
+            </div>
+          </div>
+          <div className={`text-lg font-bold tracking-tight ${valueClass ?? ''}`}>{value}</div>
+          {sub && <p className="text-[11px] text-muted-foreground mt-0.5 truncate">{sub}</p>}
+        </CardContent>
+      </Card>
+    </Link>
+  );
+}
 
 const Dashboard = () => {
   const { user } = useAuth();
@@ -43,6 +70,7 @@ const Dashboard = () => {
   const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
   const yearStart = `${now.getFullYear()}-01-01`;
   const yearEnd = `${now.getFullYear()}-12-31`;
+  const sixAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1).toISOString().split('T')[0];
 
   const hour = now.getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
@@ -198,6 +226,133 @@ const Dashboard = () => {
     enabled: !!user && isAdmin,
   });
 
+  // ── Executive financial data (admin) ──────────────────────────────────────────
+
+  // Invoices issued YTD (primary revenue source)
+  const { data: ytdInvoices = [] } = useQuery({
+    queryKey: ['dash-ytd-invoices', yearStart, yearEnd],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('invoices')
+        .select('total_amount, issue_date, invoice_type')
+        .eq('status', 'invoice')
+        .gte('issue_date', yearStart).lte('issue_date', yearEnd);
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: !!user && canViewFinancials,
+  });
+
+  // Outstanding invoices (receivables)
+  const { data: dashOutstanding = [] } = useQuery({
+    queryKey: ['dash-outstanding'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('invoices')
+        .select('total_amount, amount_paid, issue_date')
+        .eq('status', 'invoice').in('payment_status', ['unpaid', 'partial']);
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: !!user && canViewFinancials,
+  });
+
+  // Cash collected this month — sale payments + dated invoice receipts
+  const { data: mtdSalePayments = [] } = useQuery({
+    queryKey: ['dash-mtd-sale-payments', monthStart, monthEnd],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('payments').select('amount, payment_date, status')
+        .eq('status', 'completed')
+        .gte('payment_date', monthStart).lte('payment_date', monthEnd);
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: !!user && canViewFinancials,
+  });
+  const { data: mtdInvoiceReceipts = [] } = useQuery({
+    queryKey: ['dash-mtd-invoice-receipts', monthStart, monthEnd],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from('invoice_payments').select('amount, payment_date')
+        .gte('payment_date', monthStart).lte('payment_date', monthEnd);
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: !!user && canViewFinancials,
+  });
+
+  // 6-month trend: sales, invoices, expenses
+  const { data: sixSales = [] } = useQuery({
+    queryKey: ['dash-6m-sales', sixAgo],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('sales')
+        .select('total_amount, sale_date, status').gte('sale_date', sixAgo).neq('status', 'cancelled');
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: !!user && canViewFinancials,
+  });
+  const { data: sixInvoices = [] } = useQuery({
+    queryKey: ['dash-6m-invoices', sixAgo],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('invoices')
+        .select('total_amount, issue_date, status').eq('status', 'invoice').gte('issue_date', sixAgo);
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: !!user && canViewFinancials,
+  });
+  const { data: sixExpenses = [] } = useQuery({
+    queryKey: ['dash-6m-expenses', sixAgo],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('expenses')
+        .select('amount, date').gte('date', sixAgo);
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: !!user && canViewFinancials,
+  });
+
+  // Headcount + department spread
+  const { data: headcount = [] } = useQuery({
+    queryKey: ['dash-headcount'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('staff_profiles').select('id, departments(name)');
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: !!user && isAdmin,
+  });
+
+  // Recent finance ledger activity
+  const { data: recentLedger = [] } = useQuery({
+    queryKey: ['dash-recent-ledger'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('finance_ledger')
+        .select('id, entry_date, entry_type, description, amount')
+        .order('entry_date', { ascending: false }).limit(6);
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: !!user && canViewFinancials,
+  });
+
+  // Monthly expense categories (this month)
+  const { data: mtdExpenseCats = [] } = useQuery({
+    queryKey: ['dash-mtd-expense-cats', monthStart, monthEnd],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('expenses').select('amount, category')
+        .gte('date', monthStart).lte('date', monthEnd);
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: !!user && canViewFinancials,
+  });
+
   // Staff profile for employees/managers
   const { data: staffProfile } = useQuery({
     queryKey: ['dashboard-staff-profile', user?.id],
@@ -236,7 +391,11 @@ const Dashboard = () => {
   const paidPayroll = payrollRecords.filter(r => r.status === 'paid');
   const totalPaidPay = paidPayroll.reduce((sum, r) => sum + Number(r.net_pay), 0);
 
-  const ytdRevenue = ytdSales.reduce((sum, s) => sum + Number(s.total_amount), 0);
+  // Revenue = legacy sales + issued invoices (single source of truth, matches Finance)
+  const ytdSalesRevenue   = ytdSales.reduce((sum, s) => sum + Number(s.total_amount), 0);
+  const ytdInvoiceRevenue = ytdInvoices.reduce((sum, i) => sum + Number(i.total_amount), 0);
+  const ytdRevenue = ytdSalesRevenue + ytdInvoiceRevenue;
+
   const ytdCOGS = ytdExpenses.filter(e => (e.account_type || 'COGS') === 'COGS').reduce((sum, e) => sum + Number(e.amount), 0);
   const ytdOpEX = ytdExpenses.filter(e => e.account_type === 'OpEX').reduce((sum, e) => sum + Number(e.amount), 0);
   const ytdPayrollOpEX = paidPayroll.reduce((sum, r) => sum + Number(r.net_pay), 0);
@@ -245,9 +404,51 @@ const Dashboard = () => {
   const ytdNetProfit = ytdGrossProfit - ytdTotalOpEX;
   const profitMargin = ytdRevenue > 0 ? (ytdNetProfit / ytdRevenue) * 100 : 0;
 
-  const monthlySales = ytdSales
+  const monthlySalesRev = ytdSales
     .filter(s => s.sale_date >= monthStart && s.sale_date <= monthEnd)
     .reduce((sum, s) => sum + Number(s.total_amount), 0);
+  const monthlyInvoiceRev = ytdInvoices
+    .filter(i => i.issue_date >= monthStart && i.issue_date <= monthEnd)
+    .reduce((sum, i) => sum + Number(i.total_amount), 0);
+  const monthlySales = monthlySalesRev + monthlyInvoiceRev;
+
+  // Cash collected this month (dated)
+  const mtdCash =
+    mtdSalePayments.reduce((s, p) => s + Number(p.amount), 0) +
+    mtdInvoiceReceipts.reduce((s: number, r: any) => s + Number(r.amount), 0);
+
+  // Receivables (outstanding invoices)
+  const receivablesTotal = dashOutstanding.reduce((s, i) => s + (Number(i.total_amount) - Number(i.amount_paid)), 0);
+  const overdueReceivables = dashOutstanding.filter(i => {
+    const days = (now.getTime() - new Date(i.issue_date).getTime()) / 86400000;
+    return days > 30;
+  }).length;
+
+  // 6-month trend chart data
+  const monthsBack = Array.from({ length: 6 }, (_, i) => {
+    const d = new Date(now.getFullYear(), now.getMonth() - (5 - i), 1);
+    return { y: d.getFullYear(), m: d.getMonth(), label: d.toLocaleDateString('en-US', { month: 'short' }) };
+  });
+  const trendData = monthsBack.map(({ y, m, label }) => {
+    const inMonth = (dateStr: string) => {
+      const d = new Date(dateStr);
+      return d.getFullYear() === y && d.getMonth() === m;
+    };
+    const rev =
+      sixSales.filter(s => inMonth(s.sale_date)).reduce((a, s) => a + Number(s.total_amount), 0) +
+      sixInvoices.filter(i => inMonth(i.issue_date)).reduce((a, i) => a + Number(i.total_amount), 0);
+    const exp = sixExpenses.filter(e => inMonth(e.date)).reduce((a, e) => a + Number(e.amount), 0);
+    return { name: label, Revenue: rev, Expenses: exp };
+  });
+
+  // Top expense categories this month
+  const expenseCatMap: Record<string, number> = {};
+  mtdExpenseCats.forEach((e: any) => { expenseCatMap[e.category] = (expenseCatMap[e.category] ?? 0) + Number(e.amount); });
+  const topExpenseCats = Object.entries(expenseCatMap).sort((a, b) => b[1] - a[1]).slice(0, 5);
+
+  // Headcount + departments
+  const totalStaff = headcount.length;
+  const deptCount = new Set(headcount.map((h: any) => h.departments?.name).filter(Boolean)).size;
 
   const displayName = user?.user_metadata?.full_name as string | undefined;
   const firstName = displayName?.split(' ')[0] || 'there';
@@ -447,11 +648,18 @@ const Dashboard = () => {
           </h1>
           <p className="text-muted-foreground sm:text-lg mt-1">Here's your business at a glance.</p>
         </div>
-        <Link to="/expenses">
-          <Button className="bg-gradient-primary hover:shadow-primary transition-all duration-300 shrink-0">
-            <PlusCircle className="h-4 w-4 mr-2" />Add Expense
-          </Button>
-        </Link>
+        <div className="flex gap-2 shrink-0">
+          <Link to="/business/invoices">
+            <Button variant="outline" className="transition-all duration-300">
+              <FileText className="h-4 w-4 mr-2" />New Invoice
+            </Button>
+          </Link>
+          <Link to="/expenses">
+            <Button className="bg-gradient-primary hover:shadow-primary transition-all duration-300">
+              <PlusCircle className="h-4 w-4 mr-2" />Add Expense
+            </Button>
+          </Link>
+        </div>
       </div>
 
       {/* Action Alerts */}
@@ -509,68 +717,97 @@ const Dashboard = () => {
         </div>
       )}
 
-      {/* Financial Pulse */}
+      {/* Executive KPI strip */}
       <div>
-        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-3">Financial Pulse</p>
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          <Link to="/profit-loss">
-            <Card className="hover:shadow-primary transition-all duration-300 bg-gradient-card border-border/50 cursor-pointer hover:scale-[1.02]">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">YTD Revenue</CardTitle>
-                <div className="p-2 rounded-full bg-gradient-primary"><DollarSign className="h-4 w-4 text-white" /></div>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{formatNairaCompact(ytdRevenue)}</div>
-                <p className="text-xs text-muted-foreground mt-1">This month: {formatNairaCompact(monthlySales)}</p>
-              </CardContent>
-            </Card>
-          </Link>
-
-          <Link to="/profit-loss">
-            <Card className="hover:shadow-secondary transition-all duration-300 bg-gradient-card border-border/50 cursor-pointer hover:scale-[1.02]">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">YTD Net Profit</CardTitle>
-                <div className="p-2 rounded-full bg-gradient-primary">
-                  {ytdNetProfit >= 0 ? <TrendingUp className="h-4 w-4 text-white" /> : <TrendingDown className="h-4 w-4 text-white" />}
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className={`text-2xl font-bold ${ytdNetProfit >= 0 ? 'text-success' : 'text-destructive'}`}>
-                  {ytdNetProfit < 0 ? '-' : ''}{formatNairaCompact(Math.abs(ytdNetProfit))}
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">Margin: {profitMargin.toFixed(1)}%</p>
-              </CardContent>
-            </Card>
-          </Link>
-
-          <Link to="/expenses">
-            <Card className="hover:shadow-primary transition-all duration-300 bg-gradient-card border-border/50 cursor-pointer hover:scale-[1.02]">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">Monthly Expenses</CardTitle>
-                <div className="p-2 rounded-full bg-gradient-primary"><Receipt className="h-4 w-4 text-white" /></div>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{formatNairaCompact(monthlySpent)}</div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {totalBudget > 0 ? `${((monthlySpent / totalBudget) * 100).toFixed(1)}% of budget` : 'No budget set'}
-                </p>
-              </CardContent>
-            </Card>
-          </Link>
-
-          <Link to="/payroll">
-            <Card className="hover:shadow-secondary transition-all duration-300 bg-gradient-card border-border/50 cursor-pointer hover:scale-[1.02]">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">Payroll</CardTitle>
-                <div className="p-2 rounded-full bg-gradient-primary"><Wallet className="h-4 w-4 text-white" /></div>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-warning">{formatNairaCompact(totalPendingPay)}</div>
-                <p className="text-xs text-muted-foreground mt-1">{pendingPayroll.length} pending · {paidPayroll.length} paid</p>
-              </CardContent>
-            </Card>
-          </Link>
+        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-3">Financial Pulse — {now.getFullYear()}</p>
+        <div className="grid gap-3 grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+          <ExecKpi
+            to="/business/finance" label="Revenue (YTD)" value={formatNairaCompact(ytdRevenue)}
+            sub={`This month ${formatNairaShort(monthlySales)}`}
+            icon={DollarSign} accent="bg-green-100 text-green-700"
+          />
+          <ExecKpi
+            to="/profit-loss" label="Net Profit (YTD)"
+            value={`${ytdNetProfit < 0 ? '−' : ''}${formatNairaCompact(Math.abs(ytdNetProfit))}`}
+            sub={`${profitMargin.toFixed(1)}% margin`}
+            icon={ytdNetProfit >= 0 ? TrendingUp : TrendingDown}
+            accent={ytdNetProfit >= 0 ? 'bg-primary/10 text-primary' : 'bg-destructive/10 text-destructive'}
+            valueClass={ytdNetProfit >= 0 ? 'text-success' : 'text-destructive'}
+          />
+          <ExecKpi
+            to="/business/finance" label="Cash In (MTD)" value={formatNairaCompact(mtdCash)}
+            sub="Collected this month"
+            icon={Banknote} accent="bg-blue-100 text-blue-700"
+          />
+          <ExecKpi
+            to="/business/finance" label="Receivables" value={formatNairaCompact(receivablesTotal)}
+            sub={`${dashOutstanding.length} open · ${overdueReceivables} overdue`}
+            icon={CreditCard} accent={overdueReceivables > 0 ? 'bg-amber-100 text-amber-700' : 'bg-muted text-muted-foreground'}
+          />
+          <ExecKpi
+            to="/expenses" label="Expenses (MTD)" value={formatNairaCompact(monthlySpent)}
+            sub={totalBudget > 0 ? `${((monthlySpent / totalBudget) * 100).toFixed(0)}% of budget` : 'No budget set'}
+            icon={Receipt} accent="bg-red-100 text-red-700"
+          />
+          <ExecKpi
+            to="/payroll" label="Payroll Due" value={formatNairaCompact(totalPendingPay)}
+            sub={`${pendingPayroll.length} pending · ${paidPayroll.length} paid`}
+            icon={Wallet} accent="bg-orange-100 text-orange-700"
+            valueClass={totalPendingPay > 0 ? 'text-warning' : ''}
+          />
         </div>
+      </div>
+
+      {/* Trend chart + Top expenses */}
+      <div className="grid gap-6 lg:grid-cols-3">
+        <Card className="lg:col-span-2 shadow-elegant border-border/50">
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-base"><BarChart3 className="h-4 w-4 text-primary" />Revenue vs Expenses</CardTitle>
+            <CardDescription>Last 6 months — revenue (invoices + sales) against total expenses</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={260}>
+              <BarChart data={trendData} barGap={4}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.5} />
+                <XAxis dataKey="name" fontSize={12} tickLine={false} axisLine={false} />
+                <YAxis tickFormatter={v => formatNairaShort(v)} fontSize={11} tickLine={false} axisLine={false} width={48} />
+                <RTooltip formatter={(v: number) => formatNairaCompact(v)} contentStyle={{ borderRadius: '0.75rem', border: '1px solid hsl(var(--border))' }} />
+                <Legend />
+                <Bar dataKey="Revenue"  fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="Expenses" fill="hsl(0, 72%, 55%)"    radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+
+        <Card className="shadow-elegant border-border/50">
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-base"><PiggyBank className="h-4 w-4 text-primary" />Top Expenses</CardTitle>
+            <CardDescription>This month · {formatNairaCompact(monthlySpent)}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {topExpenseCats.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-8">No expenses this month.</p>
+            ) : (
+              <div className="space-y-3">
+                {topExpenseCats.map(([cat, amt]) => {
+                  const pct = monthlySpent > 0 ? (amt / monthlySpent) * 100 : 0;
+                  return (
+                    <div key={cat} className="space-y-1">
+                      <div className="flex justify-between text-sm">
+                        <span className="capitalize text-muted-foreground truncate">{cat}</span>
+                        <span className="font-medium shrink-0 ml-2">{formatNairaShort(amt)}</span>
+                      </div>
+                      <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                        <div className="h-full rounded-full bg-primary" style={{ width: `${pct}%` }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </div>
 
       {/* Hub Navigation */}
@@ -639,8 +876,8 @@ const Dashboard = () => {
         </div>
       </div>
 
-      {/* Detail cards: P&L Summary + Recent Expenses */}
-      <div className="grid gap-6 md:grid-cols-2">
+      {/* Detail row 1: P&L Summary · Receivables · Recent Activity */}
+      <div className="grid gap-6 lg:grid-cols-3">
         <Card className="shadow-elegant border-border/50 bg-gradient-card">
           <CardHeader className="pb-3">
             <CardTitle className="flex items-center gap-2 text-base"><LineChart className="h-4 w-4 text-primary" />P&L Summary — {now.getFullYear()}</CardTitle>
@@ -661,6 +898,62 @@ const Dashboard = () => {
           </CardContent>
         </Card>
 
+        <Card className="shadow-elegant border-border/50 bg-gradient-card">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base"><CreditCard className="h-4 w-4 text-primary" />Receivables</CardTitle>
+            <CardDescription>Outstanding customer invoices</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="text-center py-2">
+              <p className="text-3xl font-bold">{formatNairaCompact(receivablesTotal)}</p>
+              <p className="text-xs text-muted-foreground mt-1">{dashOutstanding.length} open invoice{dashOutstanding.length !== 1 ? 's' : ''}</p>
+            </div>
+            <div className="grid grid-cols-2 gap-2 mt-3">
+              <div className="rounded-lg bg-muted/50 px-3 py-2 text-center">
+                <p className="text-lg font-bold text-amber-600">{overdueReceivables}</p>
+                <p className="text-[11px] text-muted-foreground">Overdue (30d+)</p>
+              </div>
+              <div className="rounded-lg bg-muted/50 px-3 py-2 text-center">
+                <p className="text-lg font-bold text-blue-600">{formatNairaShort(mtdCash)}</p>
+                <p className="text-[11px] text-muted-foreground">Collected (MTD)</p>
+              </div>
+            </div>
+            <Link to="/business/finance">
+              <Button variant="outline" size="sm" className="w-full mt-4">Open Finance</Button>
+            </Link>
+          </CardContent>
+        </Card>
+
+        <Card className="shadow-elegant border-border/50 bg-gradient-card">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base"><Activity className="h-4 w-4 text-primary" />Recent Activity</CardTitle>
+            <CardDescription>Latest finance ledger entries</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {recentLedger.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-8">No activity yet.</p>
+            ) : (
+              <div className="space-y-2.5">
+                {recentLedger.map((e: any) => (
+                  <div key={e.id} className="flex items-center justify-between gap-2">
+                    <div className="min-w-0 flex items-center gap-2">
+                      <span className={`h-2 w-2 rounded-full shrink-0 ${e.entry_type === 'payment_received' ? 'bg-blue-500' : 'bg-green-500'}`} />
+                      <div className="min-w-0">
+                        <p className="text-sm truncate">{e.description}</p>
+                        <p className="text-[11px] text-muted-foreground">{new Date(e.entry_date).toLocaleDateString()}</p>
+                      </div>
+                    </div>
+                    <span className="text-sm font-semibold shrink-0">{formatNairaShort(Number(e.amount))}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Detail row 2: Recent Expenses · People */}
+      <div className="grid gap-6 md:grid-cols-2">
         <Card className="shadow-elegant border-border/50 bg-gradient-card">
           <CardHeader className="pb-3">
             <CardTitle className="flex items-center gap-2 text-base"><Receipt className="h-4 w-4 text-primary" />Recent Expenses</CardTitle>
@@ -687,6 +980,33 @@ const Dashboard = () => {
                 <Link to="/expenses"><Button variant="outline" size="sm" className="w-full mt-1">View All Expenses</Button></Link>
               </div>
             )}
+          </CardContent>
+        </Card>
+
+        <Card className="shadow-elegant border-border/50 bg-gradient-card">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base"><Users className="h-4 w-4 text-primary" />People</CardTitle>
+            <CardDescription>Workforce at a glance</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 gap-3">
+              <Link to="/staff-profiles" className="rounded-lg bg-muted/50 px-3 py-3 text-center hover:bg-muted transition-colors">
+                <p className="text-2xl font-bold">{totalStaff}</p>
+                <p className="text-[11px] text-muted-foreground">Total Staff</p>
+              </Link>
+              <div className="rounded-lg bg-muted/50 px-3 py-3 text-center">
+                <p className="text-2xl font-bold">{deptCount}</p>
+                <p className="text-[11px] text-muted-foreground">Departments</p>
+              </div>
+              <Link to="/staff-portal?tab=leave" className="rounded-lg bg-muted/50 px-3 py-3 text-center hover:bg-muted transition-colors">
+                <p className="text-2xl font-bold text-amber-600">{allPendingLeave}</p>
+                <p className="text-[11px] text-muted-foreground">Pending Leave</p>
+              </Link>
+              <Link to="/payroll" className="rounded-lg bg-muted/50 px-3 py-3 text-center hover:bg-muted transition-colors">
+                <p className="text-2xl font-bold">{formatNairaShort(totalPaidPay)}</p>
+                <p className="text-[11px] text-muted-foreground">Payroll Paid</p>
+              </Link>
+            </div>
           </CardContent>
         </Card>
       </div>
