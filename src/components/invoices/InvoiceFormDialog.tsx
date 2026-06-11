@@ -249,17 +249,19 @@ export default function InvoiceFormDialog({ open, onOpenChange, editingInvoice, 
     setItems((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== idx) : prev));
 
   // Totals
+  // Waiters are a pass-through charge: excluded from discount, service charge and VAT.
+  // VAT applies to all charges (main amount + service charge), except waiters.
   const itemsSubtotal = items.reduce((s, it) => s + (it.total_price || 0), 0);
   const waiterTotal = form.waiter_required
     ? (toNum(form.number_of_waiters) * toNum(form.cost_per_waiter))
     : 0;
-  const subtotal = itemsSubtotal + waiterTotal;
-  const discountAmt = (subtotal * toNum(form.discount_percent)) / 100;
-  const afterDiscount = subtotal - discountAmt;
+  const discountAmt = (itemsSubtotal * toNum(form.discount_percent)) / 100;
+  const afterDiscount = itemsSubtotal - discountAmt;
   const serviceAmt = (afterDiscount * toNum(form.service_charge_percent)) / 100;
-  const taxBase = afterDiscount + serviceAmt;
-  const taxAmt = (taxBase * toNum(form.tax_percent)) / 100;
-  const total = taxBase + taxAmt;
+  const vatBase = afterDiscount + serviceAmt;             // main amount + service charge (no waiters)
+  const taxAmt = (vatBase * toNum(form.tax_percent)) / 100;
+  const subtotal = itemsSubtotal + waiterTotal;           // stored subtotal incl. waiters
+  const total = vatBase + taxAmt + waiterTotal;           // VAT excludes waiters; waiters added after
 
   const handleTypeSelect = (type: InvoiceType) => {
     setSelectedType(type);
@@ -859,14 +861,6 @@ export default function InvoiceFormDialog({ open, onOpenChange, editingInvoice, 
                 <span className="text-muted-foreground">Items subtotal</span>
                 <span>{formatNairaCompact(itemsSubtotal)}</span>
               </div>
-              {waiterTotal > 0 && (
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">
-                    Waiters ({form.number_of_waiters} × {formatNairaCompact(toNum(form.cost_per_waiter))})
-                  </span>
-                  <span>{formatNairaCompact(waiterTotal)}</span>
-                </div>
-              )}
               {discountAmt > 0 && (
                 <div className="flex justify-between text-destructive">
                   <span>Discount ({form.discount_percent}%)</span>
@@ -881,8 +875,17 @@ export default function InvoiceFormDialog({ open, onOpenChange, editingInvoice, 
               )}
               {taxAmt > 0 && (
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Tax / VAT ({form.tax_percent}%)</span>
+                  <span className="text-muted-foreground">Tax / VAT ({form.tax_percent}%) — on items &amp; service</span>
                   <span>{formatNairaCompact(taxAmt)}</span>
+                </div>
+              )}
+              {waiterTotal > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">
+                    Waiters ({form.number_of_waiters} × {formatNairaCompact(toNum(form.cost_per_waiter))})
+                    <span className="text-[10px] ml-1 text-muted-foreground/70">VAT-exempt</span>
+                  </span>
+                  <span>{formatNairaCompact(waiterTotal)}</span>
                 </div>
               )}
               <Separator className="my-1" />
