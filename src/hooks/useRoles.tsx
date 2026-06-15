@@ -33,6 +33,8 @@ interface RoleData {
   userRole: UserRole | null;
   department: Department | null;
   permissions: Permission[];
+  /** Per-user overrides that take precedence over department permissions */
+  userPermissions: Permission[];
 }
 
 interface RoleContextType {
@@ -81,26 +83,40 @@ export const RoleProvider = ({ children }: RoleProviderProps) => {
         .maybeSingle();
 
       if (roleError && roleError.code !== 'PGRST116') {
-        return { userRole: null, department: null, permissions: [] };
+        return { userRole: null, department: null, permissions: [], userPermissions: [] };
       }
+
+      // Per-user overrides are fetched regardless of department membership
+      const userPermsPromise = (supabase as any)
+        .from('user_permissions')
+        .select('module_name, can_view, can_create, can_update, can_delete')
+        .eq('user_id', user.id);
 
       if (!roleRow?.department_id) {
-        return { userRole: roleRow as UserRole | null, department: null, permissions: [] };
+        const userPermsRes = await userPermsPromise;
+        return {
+          userRole: roleRow as UserRole | null,
+          department: null,
+          permissions: [],
+          userPermissions: (userPermsRes.data || []) as Permission[],
+        };
       }
 
-      // Fetch department + permissions in parallel
-      const [deptRes, permRes] = await Promise.all([
+      // Fetch department + department permissions + user overrides in parallel
+      const [deptRes, permRes, userPermsRes] = await Promise.all([
         supabase.from('departments').select('*').eq('id', roleRow.department_id).single(),
         supabase
           .from('department_permissions')
           .select('module_name, can_view, can_create, can_update, can_delete')
           .eq('department_id', roleRow.department_id),
+        userPermsPromise,
       ]);
 
       return {
         userRole: roleRow as UserRole,
         department: deptRes.data as Department | null,
         permissions: (permRes.data || []) as Permission[],
+        userPermissions: (userPermsRes.data || []) as Permission[],
       };
     },
     enabled: !!user?.id,
@@ -112,23 +128,32 @@ export const RoleProvider = ({ children }: RoleProviderProps) => {
   const userRole   = roleData?.userRole   ?? null;
   const department = roleData?.department ?? null;
   const permissions = roleData?.permissions ?? [];
+  const userPermissions = roleData?.userPermissions ?? [];
+
+  const readPerm = (p: Permission, action: 'view' | 'create' | 'update' | 'delete') => {
+    switch (action) {
+      case 'view':   return p.can_view;
+      case 'create': return p.can_create;
+      case 'update': return p.can_update;
+      case 'delete': return p.can_delete;
+      default:       return false;
+    }
+  };
 
   const hasPermission = (module: string, action: 'view' | 'create' | 'update' | 'delete'): boolean => {
     const approved = userRole?.role_status === 'approved';
     if (!approved) return false;
-    // Only admin has universal access — all other roles use department permissions
+    // Admin has universal access
     if (userRole?.role === 'admin') return true;
 
+    // 1) Per-user override wins when present (grant OR restrict)
+    const override = userPermissions.find(p => p.module_name === module);
+    if (override) return readPerm(override, action);
+
+    // 2) Otherwise fall back to the department permission
     const permission = permissions.find(p => p.module_name === module);
     if (!permission) return false;
-
-    switch (action) {
-      case 'view':   return permission.can_view;
-      case 'create': return permission.can_create;
-      case 'update': return permission.can_update;
-      case 'delete': return permission.can_delete;
-      default:       return false;
-    }
+    return readPerm(permission, action);
   };
 
   const isApproved = userRole?.role_status === 'approved';

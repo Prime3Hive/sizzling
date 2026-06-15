@@ -12,6 +12,7 @@ import { useRoles } from '@/hooks/useRoles';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from '@/hooks/use-toast';
 import { Shield, User, Building, Link2 } from 'lucide-react';
+import UserModuleAccessDialog from '@/components/admin/UserModuleAccessDialog';
 
 interface UserItem {
   id: string;
@@ -403,6 +404,9 @@ export default function UserManagement() {
                           </div>
                         </DialogContent>
                       </Dialog>
+                      {u.has_role_record && u.role !== 'admin' && (
+                        <UserModuleAccessDialog userId={u.user_id} userName={u.full_name || 'this user'} />
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>
