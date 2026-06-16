@@ -34,6 +34,7 @@ export interface LPOItem {
   lpo_id: string;
   item_name: string;
   sku_id: string | null;
+  product_id?: string | null;
   description: string | null;
   quantity: number;
   unit_of_measure: string;
@@ -81,6 +82,7 @@ interface LineDraft {
   _key: string;
   item_name: string;
   sku_id: string | null;
+  product_id: string | null;
   description: string;
   quantity: number;
   unit_of_measure: string;
@@ -112,7 +114,7 @@ const STATUS_CFG: Record<string, { label: string; cls: string }> = {
 
 const newLine = (): LineDraft => ({
   _key: crypto.randomUUID(),
-  item_name: '', sku_id: null, description: '',
+  item_name: '', sku_id: null, product_id: null, description: '',
   quantity: 1, unit_of_measure: 'unit', unit_price: 0, total_price: 0,
 });
 
@@ -129,16 +131,16 @@ const defaultForm = () => ({
 });
 
 // ─── Quick-create SKU dialog ──────────────────────────────────────────────────
-function QuickCreateSKUDialog({
+function QuickCreateProductDialog({
   open, onOpenChange, onCreated,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
-  onCreated: (sku: { id: string; name: string; unit_of_measure: string; cost_per_unit: number | null }) => void;
+  onCreated: (product: { id: string; name: string; uom: string; price: number }) => void;
 }) {
   const { user } = useAuth();
   const { toast } = useToast();
-  const [form, setForm] = useState({ name: '', unit_of_measure: 'unit', cost_per_unit: '' });
+  const [form, setForm] = useState({ name: '', uom: 'unit', price: '', item_type: 'non_sellable' });
   const [saving, setSaving] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -146,18 +148,20 @@ function QuickCreateSKUDialog({
     if (!form.name.trim()) return;
     setSaving(true);
     try {
-      const { data, error } = await supabase.from('skus').insert({
+      const { data, error } = await (supabase as any).from('products').insert({
         name: form.name.trim(),
-        unit_of_measure: form.unit_of_measure,
-        cost_per_unit: form.cost_per_unit ? parseFloat(form.cost_per_unit) : null,
+        uom: form.uom || 'unit',
+        price: form.price ? parseFloat(form.price) : 0,
+        item_type: form.item_type,
+        category: 'Procurement',
         created_by: user?.id,
         user_id: user?.id!,
-      }).select().single();
+      }).select('id, name, uom, price').single();
       if (error) throw error;
-      toast({ title: 'Item created', description: `"${data.name}" added to catalog` });
+      toast({ title: 'Item created', description: `"${data.name}" added to inventory` });
       onCreated(data);
       onOpenChange(false);
-      setForm({ name: '', unit_of_measure: 'unit', cost_per_unit: '' });
+      setForm({ name: '', uom: 'unit', price: '', item_type: 'non_sellable' });
     } catch (err: any) {
       toast({ title: 'Error', description: err.message, variant: 'destructive' });
     } finally {
@@ -169,7 +173,7 @@ function QuickCreateSKUDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-sm">
         <DialogHeader>
-          <DialogTitle>Create New Catalog Item</DialogTitle>
+          <DialogTitle>Create New Inventory Item</DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4 py-2">
           <div className="space-y-1.5">
@@ -179,12 +183,22 @@ function QuickCreateSKUDialog({
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label>Unit of Measure</Label>
-              <Input value={form.unit_of_measure} onChange={e => setForm(f => ({ ...f, unit_of_measure: e.target.value }))} placeholder="kg, litre, unit…" />
+              <Input value={form.uom} onChange={e => setForm(f => ({ ...f, uom: e.target.value }))} placeholder="kg, litre, unit…" />
             </div>
             <div className="space-y-1.5">
-              <Label>Cost per Unit (₦)</Label>
-              <Input type="number" min="0" step="0.01" value={form.cost_per_unit} onChange={e => setForm(f => ({ ...f, cost_per_unit: e.target.value }))} placeholder="0.00" />
+              <Label>Cost / Price (₦)</Label>
+              <Input type="number" min="0" step="0.01" value={form.price} onChange={e => setForm(f => ({ ...f, price: e.target.value }))} placeholder="0.00" />
             </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Item Type</Label>
+            <Select value={form.item_type} onValueChange={v => setForm(f => ({ ...f, item_type: v }))}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="non_sellable">Non-sellable (supply / raw material)</SelectItem>
+                <SelectItem value="sellable">Sellable (invoiceable)</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
@@ -196,21 +210,21 @@ function QuickCreateSKUDialog({
   );
 }
 
-// ─── SKU Combobox cell ────────────────────────────────────────────────────────
-function SKUCombobox({
-  value, onSelect, skus, onCreateNew,
+// ─── Product Combobox cell (item master) ──────────────────────────────────────
+function ProductCombobox({
+  value, onSelect, products, onCreateNew,
 }: {
   value: string;
-  onSelect: (name: string, skuId: string | null, uom: string, price: number) => void;
-  skus: any[];
+  onSelect: (name: string, productId: string | null, skuId: string | null, uom: string, price: number) => void;
+  products: any[];
   onCreateNew: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
 
   const filtered = useMemo(() =>
-    skus.filter(s => s.name.toLowerCase().includes(query.toLowerCase())).slice(0, 10),
-    [skus, query],
+    products.filter(p => p.name.toLowerCase().includes(query.toLowerCase())).slice(0, 12),
+    [products, query],
   );
 
   return (
@@ -221,14 +235,14 @@ function SKUCombobox({
           role="combobox"
           className="w-full justify-between h-8 text-sm font-normal truncate"
         >
-          <span className="truncate">{value || 'Select or type item…'}</span>
+          <span className="truncate">{value || 'Select an inventory item…'}</span>
           <ChevronsUpDown className="ml-1 h-3.5 w-3.5 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-72 p-0" align="start">
         <Command>
           <CommandInput
-            placeholder="Search catalog…"
+            placeholder="Search items…"
             value={query}
             onValueChange={setQuery}
           />
@@ -236,23 +250,24 @@ function SKUCombobox({
             <CommandEmpty>
               <div className="py-2 px-3 text-sm text-muted-foreground">No items found.</div>
             </CommandEmpty>
-            <CommandGroup heading="Catalog items">
-              {filtered.map(sku => (
+            <CommandGroup heading="Inventory items">
+              {filtered.map(p => (
                 <CommandItem
-                  key={sku.id}
-                  value={sku.name}
+                  key={p.id}
+                  value={p.name}
                   onSelect={() => {
-                    onSelect(sku.name, sku.id, sku.unit_of_measure, sku.cost_per_unit ?? 0);
+                    onSelect(p.name, p.id, p.sku_id ?? null, p.uom ?? 'unit', Number(p.price) || 0);
                     setOpen(false);
                     setQuery('');
                   }}
                 >
-                  <Check className={`mr-2 h-3.5 w-3.5 ${value === sku.name ? 'opacity-100' : 'opacity-0'}`} />
+                  <Check className={`mr-2 h-3.5 w-3.5 ${value === p.name ? 'opacity-100' : 'opacity-0'}`} />
                   <div>
-                    <p className="text-sm">{sku.name}</p>
+                    <p className="text-sm">{p.name}</p>
                     <p className="text-xs text-muted-foreground">
-                      {sku.unit_of_measure}
-                      {sku.cost_per_unit ? ` · ₦${Number(sku.cost_per_unit).toLocaleString()}` : ''}
+                      {p.uom ?? 'unit'}
+                      {p.price ? ` · ₦${Number(p.price).toLocaleString()}` : ''}
+                      {p.item_type === 'non_sellable' ? ' · non-sellable' : ''}
                     </p>
                   </div>
                 </CommandItem>
@@ -336,10 +351,13 @@ export default function LPOSheet({ mode, lpo, templateLPO, sourceRequest, open, 
   const [internalMode, setInternalMode] = useState<'create' | 'edit' | 'view'>(mode);
 
   // ── Queries ──────────────────────────────────────────────────────────────────
-  const { data: skus = [] } = useQuery({
-    queryKey: ['skus-for-lpo'],
+  const { data: products = [] } = useQuery({
+    queryKey: ['products-for-lpo'],
     queryFn: async () => {
-      const { data } = await supabase.from('skus').select('id, name, unit_of_measure, cost_per_unit').order('name');
+      const { data } = await (supabase as any)
+        .from('products')
+        .select('id, name, uom, price, sku_id, item_type')
+        .order('name');
       return data ?? [];
     },
     staleTime: 5 * 60_000,
@@ -391,6 +409,7 @@ export default function LPOSheet({ mode, lpo, templateLPO, sourceRequest, open, 
               _key: i.id,
               item_name: i.item_name,
               sku_id: i.sku_id,
+              product_id: i.product_id ?? null,
               description: i.description ?? '',
               quantity: i.quantity,
               unit_of_measure: i.unit_of_measure,
@@ -422,6 +441,7 @@ export default function LPOSheet({ mode, lpo, templateLPO, sourceRequest, open, 
                 _key: crypto.randomUUID(),
                 item_name: i.item_name,
                 sku_id: i.sku_id,
+                product_id: i.product_id ?? null,
                 description: i.description ?? '',
                 quantity: i.quantity,
                 unit_of_measure: i.unit_of_measure,
@@ -442,6 +462,7 @@ export default function LPOSheet({ mode, lpo, templateLPO, sourceRequest, open, 
           _key: crypto.randomUUID(),
           item_name: sourceRequest.item_name,
           sku_id: sourceRequest.sku_id,
+          product_id: null,
           description: '',
           quantity: sourceRequest.quantity,
           unit_of_measure: sourceRequest.unit_of_measure,
@@ -518,6 +539,7 @@ export default function LPOSheet({ mode, lpo, templateLPO, sourceRequest, open, 
           lpo_id: created.id,
           item_name: l.item_name,
           sku_id: l.sku_id,
+          product_id: l.product_id,
           description: l.description || null,
           quantity: l.quantity,
           unit_of_measure: l.unit_of_measure,
@@ -542,6 +564,7 @@ export default function LPOSheet({ mode, lpo, templateLPO, sourceRequest, open, 
           lpo_id: lpo!.id,
           item_name: l.item_name,
           sku_id: l.sku_id,
+          product_id: l.product_id,
           description: l.description || null,
           quantity: l.quantity,
           unit_of_measure: l.unit_of_measure,
@@ -751,11 +774,11 @@ export default function LPOSheet({ mode, lpo, templateLPO, sourceRequest, open, 
                           <span className="text-xs text-muted-foreground w-5 shrink-0 text-center font-mono">{idx + 1}</span>
                           <div className="flex-1">
                             {isEditable ? (
-                              <SKUCombobox
+                              <ProductCombobox
                                 value={line.item_name}
-                                skus={skus}
-                                onSelect={(name, skuId, uom, price) =>
-                                  updateLine(line._key, { item_name: name, sku_id: skuId, unit_of_measure: uom, unit_price: price, total_price: line.quantity * price })
+                                products={products}
+                                onSelect={(name, productId, skuId, uom, price) =>
+                                  updateLine(line._key, { item_name: name, product_id: productId, sku_id: skuId, unit_of_measure: uom, unit_price: price, total_price: line.quantity * price })
                                 }
                                 onCreateNew={() => setShowCreateSKU(true)}
                               />
@@ -895,12 +918,11 @@ export default function LPOSheet({ mode, lpo, templateLPO, sourceRequest, open, 
         </SheetContent>
       </Sheet>
 
-      <QuickCreateSKUDialog
+      <QuickCreateProductDialog
         open={showCreateSKU}
         onOpenChange={setShowCreateSKU}
-        onCreated={sku => {
-          // update skus cache (invalidate)
-          qc.invalidateQueries({ queryKey: ['skus-for-lpo'] });
+        onCreated={() => {
+          qc.invalidateQueries({ queryKey: ['products-for-lpo'] });
         }}
       />
 
