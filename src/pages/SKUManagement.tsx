@@ -175,6 +175,34 @@ export default function SKUManagement() {
     }
   };
 
+  // Apply a stock change to the single source (products + inventory + movements).
+  // The SKU is a mirror, so we resolve its product and adjust inventory; the
+  // DB trigger then syncs the sku's stock_quantity automatically.
+  const applyStockMovement = async (
+    skuId: string, delta: number, type: 'purchase' | 'usage' | 'stock_take', note: string,
+  ) => {
+    const { data: prod } = await supabase.from('products').select('id').eq('sku_id', skuId).maybeSingle();
+    if (!prod) return;
+    const { data: invRow } = await supabase.from('inventory')
+      .select('id, warehouse_id, quantity').eq('product_id', prod.id)
+      .order('quantity', { ascending: false }).limit(1).maybeSingle();
+    let warehouseId = invRow?.warehouse_id ?? null;
+    if (invRow) {
+      await supabase.from('inventory').update({ quantity: Number(invRow.quantity) + delta }).eq('id', invRow.id);
+    } else {
+      const { data: wh } = await supabase.from('warehouses').select('id').limit(1).maybeSingle();
+      if (wh) {
+        warehouseId = wh.id;
+        await supabase.from('inventory').insert({ product_id: prod.id, warehouse_id: wh.id, quantity: Math.max(delta, 0), reorder_level: 10 });
+      }
+    }
+    await (supabase as any).from('inventory_movements').insert({
+      product_id: prod.id, warehouse_id: warehouseId, movement_type: type,
+      quantity_change: delta, reference_type: 'manual',
+      occurred_on: new Date().toISOString().split('T')[0], note, created_by: user!.id,
+    });
+  };
+
   const handleAddSKU = async () => {
     if (!newSKU.name.trim()) {
       toast.error('Please enter an item name');
@@ -182,51 +210,72 @@ export default function SKUManagement() {
     }
 
     try {
-      const { error } = await supabase
-        .from('skus')
+      // Create the master product (a unique SKU is auto-generated; the mirror
+      // trigger creates the matching catalog entry).
+      const { data: product, error } = await (supabase as any)
+        .from('products')
         .insert({
-          ...newSKU,
-          sku_code: `${newSKU.category.toUpperCase().slice(0, 3)}-${Date.now()}`,
+          name: newSKU.name.trim(),
+          category: newSKU.category,
+          item_type: 'non_sellable',
+          uom: newSKU.unit_of_measure,
+          price: newSKU.cost_per_unit,
           user_id: user!.id,
-          created_by: user!.id
-        });
-
+          created_by: user!.id,
+        })
+        .select('id')
+        .single();
       if (error) throw error;
+
+      // Seed opening stock into inventory if provided
+      if (product && newSKU.stock_quantity > 0) {
+        const { data: wh } = await supabase.from('warehouses').select('id').limit(1).maybeSingle();
+        if (wh) {
+          await supabase.from('inventory').insert({
+            product_id: product.id, warehouse_id: wh.id,
+            quantity: newSKU.stock_quantity, reorder_level: newSKU.reorder_level || 10,
+          });
+        }
+      }
 
       toast.success('Item added successfully');
       setShowAddDialog(false);
       resetForm();
       fetchData();
     } catch (error) {
-      console.error('Error adding SKU:', error);
+      console.error('Error adding item:', error);
       toast.error('Failed to add item');
     }
   };
 
   const handleUpdateSKU = async () => {
     if (!editingSKU) return;
-    
+
     try {
-      const { error } = await supabase
-        .from('skus')
+      // Update the master product (mirrors back to the catalog entry)
+      const { error } = await (supabase as any)
+        .from('products')
         .update({
           name: editingSKU.name,
           category: editingSKU.category,
-          unit_of_measure: editingSKU.unit_of_measure,
-          stock_quantity: editingSKU.stock_quantity,
-          reorder_level: editingSKU.reorder_level,
-          cost_per_unit: editingSKU.cost_per_unit,
-          notes: editingSKU.notes
+          uom: editingSKU.unit_of_measure,
+          price: editingSKU.cost_per_unit,
         })
-        .eq('id', editingSKU.id);
-
+        .eq('sku_id', editingSKU.id);
       if (error) throw error;
+
+      // Reconcile stock to the entered value via an adjustment movement
+      const original = skus.find(s => s.id === editingSKU.id)?.stock_quantity ?? 0;
+      const delta = Number(editingSKU.stock_quantity) - Number(original);
+      if (delta !== 0) {
+        await applyStockMovement(editingSKU.id, delta, 'stock_take', 'Adjustment from item edit');
+      }
 
       toast.success('Item updated successfully');
       setEditingSKU(null);
       fetchData();
     } catch (error) {
-      console.error('Error updating SKU:', error);
+      console.error('Error updating item:', error);
       toast.error('Failed to update item');
     }
   };
@@ -261,17 +310,10 @@ export default function SKUManagement() {
         return;
       }
 
-      const newStockQuantity = selectedSKU.stock_quantity + purchaseForm.quantity;
+      // Apply to the single source (inventory + movement); the sku mirror syncs
+      await applyStockMovement(purchaseForm.sku_id, purchaseForm.quantity, 'purchase', purchaseForm.notes || 'Purchase');
 
-      // Update stock quantity
-      const { error: updateError } = await supabase
-        .from('skus')
-        .update({ stock_quantity: newStockQuantity })
-        .eq('id', purchaseForm.sku_id);
-
-      if (updateError) throw updateError;
-
-      // Record transaction
+      // Record transaction (for the History tab)
       const { error: transactionError } = await supabase
         .from('transactions')
         .insert({
@@ -318,17 +360,10 @@ export default function SKUManagement() {
         return;
       }
 
-      const newStockQuantity = selectedSKU.stock_quantity - usageForm.quantity;
+      // Apply to the single source (inventory + movement); the sku mirror syncs
+      await applyStockMovement(usageForm.sku_id, -usageForm.quantity, 'usage', usageForm.notes || 'Usage/Consumption');
 
-      // Update stock quantity
-      const { error: updateError } = await supabase
-        .from('skus')
-        .update({ stock_quantity: newStockQuantity })
-        .eq('id', usageForm.sku_id);
-
-      if (updateError) throw updateError;
-
-      // Record transaction
+      // Record transaction (for the History tab)
       const { error: transactionError } = await supabase
         .from('transactions')
         .insert({
