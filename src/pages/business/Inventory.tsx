@@ -153,7 +153,7 @@ const Inventory = () => {
       item_type: (formData.get('item_type') as string) || 'sellable',
       uom: (formData.get('uom') as string) || 'pcs',
       price: parseFloat(formData.get('price') as string),
-      sku: formData.get('sku') as string,
+      // sku is auto-generated (unique) by the database
     };
 
     const { data: product, error } = await supabase
@@ -431,10 +431,7 @@ const Inventory = () => {
                       <div className="grid gap-2">
                         <Label htmlFor="name">Product Name</Label>
                         <Input id="name" name="name" required />
-                      </div>
-                      <div className="grid gap-2">
-                        <Label htmlFor="sku">SKU</Label>
-                        <Input id="sku" name="sku" required />
+                        <p className="text-xs text-muted-foreground">A unique SKU is generated automatically.</p>
                       </div>
                       <div className="grid grid-cols-2 gap-4">
                         <div className="grid gap-2">

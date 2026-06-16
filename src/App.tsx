@@ -1,4 +1,4 @@
-import React, { lazy, Suspense } from "react";
+import React, { lazy as reactLazy, Suspense } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -11,6 +11,30 @@ import * as Sentry from "@sentry/react";
 import Layout from "./components/Layout";
 import SessionTimeoutWarning from "./components/SessionTimeoutWarning";
 import PageLoader from "./components/PageLoader";
+
+/**
+ * lazy() wrapper that survives stale deploys. When a code-split chunk fails to
+ * load (its hashed filename was replaced by a newer build), reload the page once
+ * so the browser fetches the fresh index.html + new chunk names. If it still
+ * fails after one reload, surface the real error.
+ */
+function lazy<T extends React.ComponentType<any>>(factory: () => Promise<{ default: T }>) {
+  return reactLazy(async () => {
+    const RELOAD_KEY = "chunk-reload-attempted";
+    try {
+      const mod = await factory();
+      sessionStorage.removeItem(RELOAD_KEY);
+      return mod;
+    } catch (err) {
+      if (!sessionStorage.getItem(RELOAD_KEY)) {
+        sessionStorage.setItem(RELOAD_KEY, "1");
+        window.location.reload();
+        return new Promise<{ default: T }>(() => {}); // hold render until reload
+      }
+      throw err;
+    }
+  });
+}
 
 const Dashboard         = lazy(() => import("./pages/Dashboard"));
 const Auth              = lazy(() => import("./pages/Auth"));
