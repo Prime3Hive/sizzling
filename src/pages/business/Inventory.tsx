@@ -9,7 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { Plus, Package, AlertTriangle, TrendingDown, Search, Filter, ClipboardList, Pencil, Download } from "lucide-react";
+import { Plus, Package, AlertTriangle, TrendingDown, Search, Filter, ClipboardList, Pencil, Download, ShoppingCart } from "lucide-react";
 import { format } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -653,13 +653,36 @@ const Inventory = () => {
                     <TableCell className="text-right">{formatNairaCompact(item.quantity * item.products.price)}</TableCell>
                     {isAdmin && (
                       <TableCell>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => openEditDialog(item)}
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
+                        <div className="flex items-center gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => openEditDialog(item)}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          {item.quantity <= item.reorder_level && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="gap-1 text-xs"
+                              onClick={() => navigate('/procurement', {
+                                state: {
+                                  reorder: {
+                                    id: `reorder-${item.product_id}`,
+                                    item_name: item.products.name,
+                                    sku_id: (item.products as any).sku_id ?? null,
+                                    quantity: Math.max(item.reorder_level * 2 - item.quantity, item.reorder_level, 1),
+                                    unit_of_measure: item.products.uom || 'unit',
+                                    unit_price: 0,
+                                  },
+                                },
+                              })}
+                            >
+                              <ShoppingCart className="h-3.5 w-3.5" /> Reorder
+                            </Button>
+                          )}
+                        </div>
                       </TableCell>
                     )}
                   </TableRow>

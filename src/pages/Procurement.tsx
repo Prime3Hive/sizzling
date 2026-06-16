@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
@@ -21,7 +22,7 @@ import {
   Download, XCircle, ShoppingCart, Clock, CheckCircle2, TrendingUp,
   X, FileText, Copy,
 } from 'lucide-react';
-import LPOSheet, { type LPO } from '@/components/procurement/LPOSheet';
+import LPOSheet, { type LPO, type SourceRequest } from '@/components/procurement/LPOSheet';
 import ReceiveGoodsDialog from '@/components/procurement/ReceiveGoodsDialog';
 import { generateLPOPDF, generateBlankLPOPDF, getStoredCompany, saveCompanyDetails, CompanyDetails } from '@/lib/lpo-pdf';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
@@ -120,6 +121,24 @@ export default function Procurement() {
   const [receiveLPO, setReceiveLPO] = useState<LPO | null>(null);
 
   const [templateLPO, setTemplateLPO] = useState<LPO | undefined>(undefined);
+  const [sourceRequest, setSourceRequest] = useState<SourceRequest | undefined>(undefined);
+
+  // Reorder hand-off: Inventory low-stock "Reorder" navigates here with state
+  const location = useLocation();
+  const navigate = useNavigate();
+  useEffect(() => {
+    const reorder = (location.state as any)?.reorder as SourceRequest | undefined;
+    if (reorder) {
+      setSelectedLPO(null);
+      setTemplateLPO(undefined);
+      setSourceRequest(reorder);
+      setSheetMode('create');
+      setSheetOpen(true);
+      // clear the navigation state so it doesn't re-open on back/refresh
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state]);
 
   const [companyDlgOpen, setCompanyDlgOpen] = useState(false);
   const [exportLPO, setExportLPO] = useState<LPO | null>(null);
@@ -181,6 +200,7 @@ export default function Procurement() {
   const openCreate = () => {
     setSelectedLPO(null);
     setTemplateLPO(undefined);
+    setSourceRequest(undefined);
     setSheetMode('create');
     setSheetOpen(true);
   };
@@ -516,6 +536,7 @@ export default function Procurement() {
         mode={sheetMode}
         lpo={selectedLPO ?? undefined}
         templateLPO={templateLPO}
+        sourceRequest={sourceRequest}
         open={sheetOpen}
         onOpenChange={setSheetOpen}
         onSuccess={() => qc.invalidateQueries({ queryKey: ['lpos'] })}
