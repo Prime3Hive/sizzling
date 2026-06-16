@@ -17,6 +17,7 @@ import { useRoles } from "@/hooks/useRoles";
 import { useToast } from "@/hooks/use-toast";
 import { formatNairaCompact } from "@/lib/currency";
 import InventoryDailyReport from "@/components/inventory/InventoryDailyReport";
+import RecordMovementDialog from "@/components/inventory/RecordMovementDialog";
 
 interface Product {
   id: string;
@@ -361,6 +362,7 @@ const Inventory = () => {
           </p>
         </div>
         <div className="flex gap-2 flex-wrap">
+          {isAdmin && <RecordMovementDialog onDone={fetchData} />}
           <InventoryDailyReport />
           <Button variant="outline" onClick={exportInventoryReport}>
             <Download className="h-4 w-4 mr-2" />

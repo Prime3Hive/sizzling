@@ -8,7 +8,6 @@ import {
   ChevronRight,
   Receipt,
   UserCog,
-  Boxes,
   TrendingUp,
   PieChart,
   LineChart,
@@ -355,11 +354,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                           <SidebarMenuSubItem>
                             <SidebarMenuSubButton asChild isActive={location.pathname === '/business/inventory'}>
                               <Link to="/business/inventory"><span>Stock Management</span></Link>
-                            </SidebarMenuSubButton>
-                          </SidebarMenuSubItem>
-                          <SidebarMenuSubItem>
-                            <SidebarMenuSubButton asChild isActive={location.pathname === '/business/sku-management'}>
-                              <Link to="/business/sku-management"><Boxes className="h-3 w-3" /><span>SKU Catalog</span></Link>
                             </SidebarMenuSubButton>
                           </SidebarMenuSubItem>
                           <SidebarMenuSubItem>

@@ -49,7 +49,6 @@ const Analytics         = lazy(() => import("./pages/business/Analytics"));
 const KPIDashboard      = lazy(() => import("./pages/business/KPIDashboard"));
 const Invoices          = lazy(() => import("./pages/business/Invoices"));
 const Finance           = lazy(() => import("./pages/business/Finance"));
-const SKUManagement     = lazy(() => import("./pages/SKUManagement"));
 const UserManagement    = lazy(() => import("./pages/UserManagement"));
 const StaffProfiles     = lazy(() => import("./pages/StaffProfiles"));
 const NJCSupplies       = lazy(() => import("./pages/NJCSupplies"));
@@ -199,11 +198,8 @@ const App = () => (
                     <Inventory />
                   </Can>
                 } />
-                <Route path="business/sku-management" element={
-                  <Can module="inventory" redirect="/dashboard">
-                    <SKUManagement />
-                  </Can>
-                } />
+                {/* SKU Catalog consolidated into the single Inventory module */}
+                <Route path="business/sku-management" element={<Navigate to="/business/inventory" replace />} />
                 <Route path="business/payments" element={
                   <Can module="sales" redirect="/dashboard">
                     <Payments />
