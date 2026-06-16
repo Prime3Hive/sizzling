@@ -91,16 +91,17 @@ export default function InvoiceFormDialog({ open, onOpenChange, editingInvoice, 
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerRecord>(WALK_IN);
   const [selectedBankId, setSelectedBankId] = useState<string>("");
 
-  // Products for daily sales inventory selection
+  // Products for daily sales inventory selection — sellable items only
   const { data: products = [] } = useQuery({
     queryKey: ["products-for-invoice"],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("products")
-        .select("id, name, price, category, sku")
+        .select("id, name, price, category, sku, item_type")
         .order("name");
       if (error) throw error;
-      return data ?? [];
+      // Only sellable items are invoiceable (treat missing item_type as sellable)
+      return (data ?? []).filter((p: any) => (p.item_type ?? "sellable") === "sellable");
     },
     enabled: open,
   });
