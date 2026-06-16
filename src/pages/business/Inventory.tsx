@@ -16,6 +16,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useRoles } from "@/hooks/useRoles";
 import { useToast } from "@/hooks/use-toast";
 import { formatNairaCompact } from "@/lib/currency";
+import InventoryDailyReport from "@/components/inventory/InventoryDailyReport";
 
 interface Product {
   id: string;
@@ -359,7 +360,8 @@ const Inventory = () => {
             Track stock levels, manage products, and monitor warehouse locations
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
+          <InventoryDailyReport />
           <Button variant="outline" onClick={exportInventoryReport}>
             <Download className="h-4 w-4 mr-2" />
             Export Report
