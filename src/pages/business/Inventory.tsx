@@ -22,6 +22,8 @@ interface Product {
   name: string;
   description: string;
   category: string;
+  item_type?: "sellable" | "non_sellable";
+  uom?: string;
   price: number;
   sku: string;
   created_at: string;
@@ -62,6 +64,7 @@ const Inventory = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [pendingRequests, setPendingRequests] = useState<InventoryRequest[]>([]);
+  const [stockUsed, setStockUsed] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [showAddProduct, setShowAddProduct] = useState(false);
   const [showAddWarehouse, setShowAddWarehouse] = useState(false);
@@ -116,10 +119,18 @@ const Inventory = () => {
 
       if (requestsError) throw requestsError;
 
+      // Stock used (cumulative outflow) per product — from the movements ledger view
+      const { data: usedData } = await (supabase as any)
+        .from('product_stock_used')
+        .select('product_id, stock_used');
+      const usedMap: Record<string, number> = {};
+      (usedData || []).forEach((r: any) => { usedMap[r.product_id] = Number(r.stock_used) || 0; });
+
       setInventory(inventoryData || []);
       setProducts(productsData || []);
       setWarehouses(warehousesData || []);
       setPendingRequests((requestsData as unknown as InventoryRequest[]) || []);
+      setStockUsed(usedMap);
     } catch (error) {
       console.error('Error fetching data:', error);
       toast({
@@ -138,6 +149,8 @@ const Inventory = () => {
       name: formData.get('name') as string,
       description: formData.get('description') as string,
       category: formData.get('category') as string,
+      item_type: (formData.get('item_type') as string) || 'sellable',
+      uom: (formData.get('uom') as string) || 'pcs',
       price: parseFloat(formData.get('price') as string),
       sku: formData.get('sku') as string,
     };
@@ -421,9 +434,25 @@ const Inventory = () => {
                         <Label htmlFor="sku">SKU</Label>
                         <Input id="sku" name="sku" required />
                       </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="grid gap-2">
+                          <Label htmlFor="item_type">Item Type</Label>
+                          <Select name="item_type" defaultValue="sellable">
+                            <SelectTrigger id="item_type"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="sellable">Sellable (invoiceable)</SelectItem>
+                              <SelectItem value="non_sellable">Non-sellable</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="grid gap-2">
+                          <Label htmlFor="uom">Unit of Measure</Label>
+                          <Input id="uom" name="uom" placeholder="e.g. pcs, kg, plate" defaultValue="pcs" />
+                        </div>
+                      </div>
                       <div className="grid gap-2">
                         <Label htmlFor="category">Category</Label>
-                        <Input id="category" name="category" required />
+                        <Input id="category" name="category" placeholder="e.g. Drinks, Spices, Packaging" required />
                       </div>
                       <div className="grid gap-2">
                         <Label htmlFor="price">Price (₦)</Label>
@@ -580,12 +609,14 @@ const Inventory = () => {
               <TableRow>
                 <TableHead>Product</TableHead>
                 <TableHead>SKU</TableHead>
-                <TableHead>Category</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead>UoM</TableHead>
                 <TableHead>Warehouse</TableHead>
-                <TableHead>Quantity</TableHead>
-                <TableHead>Reorder Level</TableHead>
+                <TableHead className="text-right">Stock at Hand</TableHead>
+                <TableHead className="text-right">Stock Used</TableHead>
+                <TableHead className="text-right">Reorder</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead>Value</TableHead>
+                <TableHead className="text-right">Value</TableHead>
                 {isAdmin && <TableHead>Actions</TableHead>}
               </TableRow>
             </TableHeader>
@@ -598,10 +629,18 @@ const Inventory = () => {
                   <TableRow key={item.id}>
                     <TableCell className="font-medium">{item.products.name}</TableCell>
                     <TableCell>{item.products.sku}</TableCell>
-                    <TableCell>{item.products.category}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className={item.products.item_type === 'non_sellable'
+                        ? 'bg-slate-50 text-slate-600 border-slate-200'
+                        : 'bg-green-50 text-green-700 border-green-200'}>
+                        {item.products.item_type === 'non_sellable' ? 'Non-sellable' : 'Sellable'}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{item.products.uom || 'pcs'}</TableCell>
                     <TableCell>{item.warehouses.name}</TableCell>
-                    <TableCell>{item.quantity}</TableCell>
-                    <TableCell>{item.reorder_level}</TableCell>
+                    <TableCell className="text-right font-medium">{item.quantity}</TableCell>
+                    <TableCell className="text-right text-muted-foreground">{stockUsed[item.product_id] ?? 0}</TableCell>
+                    <TableCell className="text-right">{item.reorder_level}</TableCell>
                     <TableCell>
                       {item.quantity <= item.reorder_level ? (
                         <Badge variant="destructive">Low Stock</Badge>
@@ -609,7 +648,7 @@ const Inventory = () => {
                         <Badge variant="secondary">In Stock</Badge>
                       )}
                     </TableCell>
-                    <TableCell>{formatNairaCompact(item.quantity * item.products.price)}</TableCell>
+                    <TableCell className="text-right">{formatNairaCompact(item.quantity * item.products.price)}</TableCell>
                     {isAdmin && (
                       <TableCell>
                         <Button
