@@ -23,6 +23,7 @@ import {
   Search, ClipboardList, FileText, PackageCheck, Pencil,
 } from "lucide-react";
 import LPOSheet, { type SourceRequest } from "@/components/procurement/LPOSheet";
+import { formatNairaCompact } from "@/lib/currency";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -42,6 +43,9 @@ interface RequestItem {
   requested_quantity: number;
   fulfilled_quantity: number;
   note: string | null;
+  kind: string | null;          // 'sku' | 'misc'
+  item_name: string | null;     // description for misc lines
+  amount: number | null;        // cost (₦) for misc lines
   skus: { name: string; unit_of_measure: string; category: string } | null;
 }
 
@@ -75,9 +79,15 @@ function itemsOf(r: InventoryRequest): RequestItem[] {
     requested_quantity: r.requested_quantity,
     fulfilled_quantity: r.fulfilled_quantity,
     note: null,
+    kind: 'sku',
+    item_name: null,
+    amount: null,
     skus: r.skus,
   }];
 }
+
+// A request line is a stock (SKU) line unless it is explicitly marked 'misc'.
+const isMisc = (it: RequestItem) => it.kind === 'misc';
 
 interface LinkedLPO {
   id: string;
@@ -117,12 +127,18 @@ export default function InventoryRequests() {
   const [showNew, setShowNew] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [lineItems, setLineItems] = useState<{ sku_id: string; quantity: string }[]>([{ sku_id: "", quantity: "" }]);
+  const [miscItems, setMiscItems] = useState<{ description: string; quantity: string; amount: string }[]>([{ description: "", quantity: "", amount: "" }]);
   const [reqNotes, setReqNotes] = useState("");
 
   const setLine = (i: number, patch: Partial<{ sku_id: string; quantity: string }>) =>
     setLineItems(prev => prev.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
   const addLine = () => setLineItems(prev => [...prev, { sku_id: "", quantity: "" }]);
   const removeLine = (i: number) => setLineItems(prev => (prev.length > 1 ? prev.filter((_, idx) => idx !== i) : prev));
+
+  const setMisc = (i: number, patch: Partial<{ description: string; quantity: string; amount: string }>) =>
+    setMiscItems(prev => prev.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
+  const addMisc = () => setMiscItems(prev => [...prev, { description: "", quantity: "", amount: "" }]);
+  const removeMisc = (i: number) => setMiscItems(prev => (prev.length > 1 ? prev.filter((_, idx) => idx !== i) : prev));
 
   // Reject dialog
   const [rejectTarget, setRejectTarget] = useState<string | null>(null);
@@ -161,7 +177,7 @@ export default function InventoryRequests() {
           status, request_date, fulfilled_date, notes,
           approved_by, approved_at, rejected_reason, purchase_cost, created_at,
           skus(name, unit_of_measure, category),
-          inventory_request_items(id, sku_id, requested_quantity, fulfilled_quantity, note, skus(name, unit_of_measure, category))
+          inventory_request_items(id, sku_id, requested_quantity, fulfilled_quantity, note, kind, item_name, amount, skus(name, unit_of_measure, category))
         `)
         .order("created_at", { ascending: false });
 
@@ -197,44 +213,51 @@ export default function InventoryRequests() {
 
   const submitRequest = useMutation({
     mutationFn: async () => {
-      const valid = lineItems
+      const validSku = lineItems
         .map(l => ({ sku_id: l.sku_id, quantity: parseInt(l.quantity) }))
         .filter(l => l.sku_id && l.quantity > 0);
-      if (valid.length === 0) throw new Error("Add at least one item with a quantity");
+      const validMisc = miscItems
+        .map(m => ({ description: m.description.trim(), quantity: parseInt(m.quantity) || 1, amount: parseFloat(m.amount) || 0 }))
+        .filter(m => m.description && m.amount > 0);
+      if (validSku.length === 0 && validMisc.length === 0)
+        throw new Error("Add at least one stock item or a miscellaneous item");
 
-      // The header mirrors the first line for back-compat with legacy views/LPO
-      const head = valid[0];
+      // The header mirrors the first stock line for back-compat with legacy views/LPO.
+      // A misc-only request keeps a null SKU header.
+      const head = validSku[0] ?? null;
+      const headQty = head?.quantity ?? validMisc.reduce((s, m) => s + m.quantity, 0);
+
+      const itemRows = (requestId: string) => [
+        ...validSku.map(l => ({ request_id: requestId, sku_id: l.sku_id, requested_quantity: l.quantity, kind: "sku" })),
+        ...validMisc.map(m => ({ request_id: requestId, sku_id: null, requested_quantity: m.quantity, kind: "misc", item_name: m.description, amount: m.amount })),
+      ];
 
       if (editId) {
         // Editing is only allowed while the request is still pending
         const { error: upErr } = await supabase.from("inventory_requests").update({
-          sku_id:             head.sku_id,
-          requested_quantity: head.quantity,
+          sku_id:             head?.sku_id ?? null,
+          requested_quantity: headQty,
           notes:              reqNotes || null,
         }).eq("id", editId).eq("status", "pending");
         if (upErr) throw upErr;
         // Replace the line items
         await supabase.from("inventory_request_items").delete().eq("request_id", editId);
-        const { error: itErr } = await supabase.from("inventory_request_items").insert(
-          valid.map(l => ({ request_id: editId, sku_id: l.sku_id, requested_quantity: l.quantity }))
-        );
+        const { error: itErr } = await supabase.from("inventory_request_items").insert(itemRows(editId));
         if (itErr) throw itErr;
         return;
       }
 
       const { data: created, error } = await supabase.from("inventory_requests").insert({
         user_id:            user!.id,
-        sku_id:             head.sku_id,
-        requested_quantity: head.quantity,
+        sku_id:             head?.sku_id ?? null,
+        requested_quantity: headQty,
         current_quantity:   0,
         notes:              reqNotes || null,
         status:             "pending",
         request_date:       new Date().toISOString().slice(0, 10),
       }).select("id").single();
       if (error) throw error;
-      const { error: itErr } = await supabase.from("inventory_request_items").insert(
-        valid.map(l => ({ request_id: created!.id, sku_id: l.sku_id, requested_quantity: l.quantity }))
-      );
+      const { error: itErr } = await supabase.from("inventory_request_items").insert(itemRows(created!.id));
       if (itErr) throw itErr;
     },
     onSuccess: () => {
@@ -242,6 +265,7 @@ export default function InventoryRequests() {
       setShowNew(false);
       setEditId(null);
       setLineItems([{ sku_id: "", quantity: "" }]);
+      setMiscItems([{ description: "", quantity: "", amount: "" }]);
       setReqNotes("");
       qc.invalidateQueries({ queryKey: ["inventory-requests"] });
     },
@@ -251,6 +275,7 @@ export default function InventoryRequests() {
   const openNew = () => {
     setEditId(null);
     setLineItems([{ sku_id: "", quantity: "" }]);
+    setMiscItems([{ description: "", quantity: "", amount: "" }]);
     setReqNotes("");
     setShowNew(true);
   };
@@ -258,7 +283,10 @@ export default function InventoryRequests() {
     if (row.status !== "pending") return; // locked after approval
     setEditId(row.id);
     const items = itemsOf(row);
-    setLineItems(items.map(it => ({ sku_id: it.sku_id ?? "", quantity: String(it.requested_quantity) })));
+    const sku = items.filter(it => !isMisc(it) && it.sku_id);
+    const misc = items.filter(isMisc);
+    setLineItems(sku.length ? sku.map(it => ({ sku_id: it.sku_id ?? "", quantity: String(it.requested_quantity) })) : [{ sku_id: "", quantity: "" }]);
+    setMiscItems(misc.length ? misc.map(it => ({ description: it.item_name ?? "", quantity: String(it.requested_quantity), amount: it.amount != null ? String(it.amount) : "" })) : [{ description: "", quantity: "", amount: "" }]);
     setReqNotes(row.notes ?? "");
     setShowNew(true);
   };
@@ -303,13 +331,17 @@ export default function InventoryRequests() {
   const recordPurchase = useMutation({
     mutationFn: async () => {
       if (!purchaseTarget) return;
-      const cost  = parseFloat(purchaseForm.purchase_cost) || null;
-      const items = itemsOf(purchaseTarget).filter(it => it.sku_id);
-      if (items.length === 0) throw new Error("This request has no stock items to fulfill");
-      const totalQty = items.reduce((s, it) => s + it.requested_quantity, 0);
+      const cost     = parseFloat(purchaseForm.purchase_cost) || null;
+      const allLines = itemsOf(purchaseTarget);
+      const skuItems = allLines.filter(it => !isMisc(it) && it.sku_id);
+      const miscLines = allLines.filter(isMisc);
+      if (skuItems.length === 0 && miscLines.length === 0)
+        throw new Error("This request has nothing to fulfill");
+      const today = new Date().toISOString().slice(0, 10);
+      const skuQty = skuItems.reduce((s, it) => s + it.requested_quantity, 0);
 
-      // Restock every line and record a purchase transaction per item.
-      for (const it of items) {
+      // Stock lines: restock and record a purchase transaction per item.
+      for (const it of skuItems) {
         const sku = skus.find(s => s.id === it.sku_id);
         if (sku) {
           const { error: skuErr } = await supabase.from("skus").update({
@@ -317,7 +349,7 @@ export default function InventoryRequests() {
           }).eq("id", it.sku_id!);
           if (skuErr) throw skuErr;
         }
-        const lineCost = cost != null && totalQty > 0 ? (cost * it.requested_quantity) / totalQty : 0;
+        const lineCost = cost != null && skuQty > 0 ? (cost * it.requested_quantity) / skuQty : 0;
         await supabase.from("transactions").insert({
           sku_id:           it.sku_id,
           transaction_type: "PURCHASE",
@@ -329,9 +361,24 @@ export default function InventoryRequests() {
         });
       }
 
+      // Miscellaneous lines: capture as expenses (no restock).
+      for (const it of miscLines) {
+        const { error: expErr } = await supabase.from("expenses").insert({
+          amount:       Number(it.amount ?? 0),
+          description:  it.item_name || `Misc item from request #${purchaseTarget.id.slice(0, 8)}`,
+          category:     "Inventory (misc)",
+          date:         today,
+          budget_id:    null,
+          account_type: "COGS",
+          cost_center:  "Daily Orders",
+          created_by:   user!.id,
+        });
+        if (expErr) throw expErr;
+      }
+
       // Mark each child line fulfilled (only when child rows exist)
       if (purchaseTarget.inventory_request_items?.length) {
-        for (const it of items) {
+        for (const it of [...skuItems, ...miscLines]) {
           await supabase.from("inventory_request_items").update({
             fulfilled_quantity: it.requested_quantity,
           }).eq("id", it.id);
@@ -340,14 +387,14 @@ export default function InventoryRequests() {
 
       const { error: reqErr } = await supabase.from("inventory_requests").update({
         status:             "fulfilled",
-        fulfilled_quantity: totalQty,
-        fulfilled_date:     new Date().toISOString().slice(0, 10),
+        fulfilled_quantity: skuQty,
+        fulfilled_date:     today,
         purchase_cost:      cost,
       }).eq("id", purchaseTarget.id);
       if (reqErr) throw reqErr;
     },
     onSuccess: () => {
-      toast({ title: "Purchase recorded", description: "Stock has been updated." });
+      toast({ title: "Purchase recorded", description: "Stock updated and any miscellaneous items recorded as expenses." });
       setPurchaseTarget(null);
       setPurchaseForm({ fulfilled_quantity: "", purchase_cost: "", notes: "" });
       qc.invalidateQueries({ queryKey: ["inventory-requests"] });
@@ -359,7 +406,7 @@ export default function InventoryRequests() {
   // ── Helpers ───────────────────────────────────────────────────────────────
 
   const openRaiseLPO = (row: InventoryRequest) => {
-    const items = itemsOf(row).map(it => {
+    const items = itemsOf(row).filter(it => !isMisc(it) && it.sku_id).map(it => {
       const sku = skus.find(s => s.id === it.sku_id);
       return {
         item_name:       it.skus?.name ?? sku?.name ?? "",
@@ -407,6 +454,7 @@ export default function InventoryRequests() {
   const ApprovedActions = ({ row }: { row: InventoryRequest }) => {
     const linked = lpoByRequest[row.id];
     if (!canRecordPurchase) return null;
+    const hasSku = itemsOf(row).some(it => !isMisc(it) && it.sku_id);
 
     if (linked) {
       // LPO already raised — show its reference; block direct purchase
@@ -435,15 +483,17 @@ export default function InventoryRequests() {
 
     return (
       <div className="flex items-center gap-2 justify-end">
-        {/* Primary: formal procurement via LPO */}
-        <Button
-          size="sm"
-          className="gap-1.5"
-          onClick={() => openRaiseLPO(row)}
-        >
-          <FileText className="h-3.5 w-3.5" />
-          Raise LPO
-        </Button>
+        {/* Primary: formal procurement via LPO — only when there are stock items */}
+        {hasSku && (
+          <Button
+            size="sm"
+            className="gap-1.5"
+            onClick={() => openRaiseLPO(row)}
+          >
+            <FileText className="h-3.5 w-3.5" />
+            Raise LPO
+          </Button>
+        )}
 
         {/* Secondary: direct informal purchase */}
         <Tooltip>
@@ -611,9 +661,13 @@ export default function InventoryRequests() {
         <DialogContent>
           <DialogHeader><DialogTitle>{editId ? "Edit Inventory Request" : "New Inventory Request"}</DialogTitle></DialogHeader>
           <div className="space-y-4 py-2">
-            <div className="space-y-2">
-              <Label>Items</Label>
-              <div className="space-y-2">
+            <Tabs defaultValue="stock">
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="stock">Stock items</TabsTrigger>
+                <TabsTrigger value="misc">Miscellaneous</TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="stock" className="mt-3 space-y-2">
                 {lineItems.map((line, i) => (
                   <div key={i} className="flex gap-2 items-start">
                     <div className="flex-1">
@@ -636,11 +690,33 @@ export default function InventoryRequests() {
                     </Button>
                   </div>
                 ))}
-              </div>
-              <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={addLine}>
-                <Plus className="h-3.5 w-3.5" /> Add item
-              </Button>
-            </div>
+                <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={addLine}>
+                  <Plus className="h-3.5 w-3.5" /> Add stock item
+                </Button>
+              </TabsContent>
+
+              <TabsContent value="misc" className="mt-3 space-y-2">
+                <p className="text-xs text-muted-foreground">Items not in the stock list. These don't restock inventory — they're recorded as expenses when the request is purchased.</p>
+                {miscItems.map((line, i) => (
+                  <div key={i} className="flex gap-2 items-start">
+                    <Input className="flex-1" placeholder="Item description" value={line.description}
+                      onChange={e => setMisc(i, { description: e.target.value })} />
+                    <Input className="w-20" type="number" min="1" placeholder="Qty" value={line.quantity}
+                      onChange={e => setMisc(i, { quantity: e.target.value })} />
+                    <Input className="w-28" type="number" min="0" step="0.01" placeholder="Amount ₦" value={line.amount}
+                      onChange={e => setMisc(i, { amount: e.target.value })} />
+                    <Button type="button" variant="ghost" size="icon" className="text-destructive shrink-0"
+                      onClick={() => removeMisc(i)} disabled={miscItems.length <= 1}>
+                      <XCircle className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+                <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={addMisc}>
+                  <Plus className="h-3.5 w-3.5" /> Add miscellaneous item
+                </Button>
+              </TabsContent>
+            </Tabs>
+
             <div className="space-y-2">
               <Label>Notes (optional)</Label>
               <Textarea rows={2} value={reqNotes}
@@ -687,12 +763,22 @@ export default function InventoryRequests() {
                 <p className="font-medium text-amber-800">
                   Direct purchase — no LPO will be created
                 </p>
-                <p className="text-muted-foreground">All items below will be received in full and restocked.</p>
+                <p className="text-muted-foreground">Stock items are received in full and restocked; miscellaneous items are recorded as expenses.</p>
                 <ul className="space-y-1">
                   {itemsOf(purchaseTarget).map(it => (
                     <li key={it.id} className="text-foreground">
-                      • <span className="font-medium">{it.skus?.name ?? "—"}</span>
-                      {" — "}{it.requested_quantity} {it.skus?.unit_of_measure}
+                      • {isMisc(it) ? (
+                        <>
+                          <span className="font-medium">{it.item_name ?? "—"}</span>
+                          {" — "}{formatNairaCompact(Number(it.amount ?? 0))}
+                          <span className="text-xs text-muted-foreground"> (expense)</span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="font-medium">{it.skus?.name ?? "—"}</span>
+                          {" — "}{it.requested_quantity} {it.skus?.unit_of_measure}
+                        </>
+                      )}
                     </li>
                   ))}
                 </ul>
@@ -789,8 +875,17 @@ function RequestsTable({
                         <div className="space-y-1">
                           {items.map(it => (
                             <div key={it.id}>
-                              <span className="font-medium">{it.skus?.name ?? "—"}</span>
-                              <span className="text-xs text-muted-foreground capitalize"> · {it.skus?.category}</span>
+                              {isMisc(it) ? (
+                                <>
+                                  <span className="font-medium">{it.item_name ?? "—"}</span>
+                                  <span className="text-xs text-muted-foreground"> · misc{it.amount != null ? ` · ${formatNairaCompact(it.amount)}` : ""}</span>
+                                </>
+                              ) : (
+                                <>
+                                  <span className="font-medium">{it.skus?.name ?? "—"}</span>
+                                  <span className="text-xs text-muted-foreground capitalize"> · {it.skus?.category}</span>
+                                </>
+                              )}
                             </div>
                           ))}
                         </div>
