@@ -68,6 +68,14 @@ export interface LPO {
 }
 
 /** Pre-fill a new LPO from an approved inventory request */
+export interface SourceRequestItem {
+  item_name: string;
+  sku_id: string | null;
+  quantity: number;
+  unit_of_measure: string;
+  unit_price: number;
+}
+
 export interface SourceRequest {
   id: string;
   item_name: string;
@@ -76,6 +84,8 @@ export interface SourceRequest {
   unit_of_measure: string;
   unit_price: number;
   requester_name?: string;
+  /** When a request has multiple items, all of them are pre-filled as LPO lines. */
+  items?: SourceRequestItem[];
 }
 
 interface LineDraft {
@@ -451,24 +461,33 @@ export default function LPOSheet({ mode, lpo, templateLPO, sourceRequest, open, 
             : [newLine()],
         );
       } else if (sourceRequest) {
-        // From approved inventory request — pre-fill the single line item
+        // From approved inventory request — pre-fill all of its line items
         setForm({
           ...defaultForm(),
           notes: sourceRequest.requester_name
             ? `Generated from inventory request by ${sourceRequest.requester_name}`
             : '',
         });
-        setLines([{
+        const srcItems = sourceRequest.items?.length
+          ? sourceRequest.items
+          : [{
+              item_name: sourceRequest.item_name,
+              sku_id: sourceRequest.sku_id,
+              quantity: sourceRequest.quantity,
+              unit_of_measure: sourceRequest.unit_of_measure,
+              unit_price: sourceRequest.unit_price,
+            }];
+        setLines(srcItems.map(it => ({
           _key: crypto.randomUUID(),
-          item_name: sourceRequest.item_name,
-          sku_id: sourceRequest.sku_id,
+          item_name: it.item_name,
+          sku_id: it.sku_id,
           product_id: null,
           description: '',
-          quantity: sourceRequest.quantity,
-          unit_of_measure: sourceRequest.unit_of_measure,
-          unit_price: sourceRequest.unit_price,
-          total_price: sourceRequest.quantity * sourceRequest.unit_price,
-        }]);
+          quantity: it.quantity,
+          unit_of_measure: it.unit_of_measure,
+          unit_price: it.unit_price,
+          total_price: it.quantity * it.unit_price,
+        })));
       } else {
         setForm(defaultForm());
         setLines([newLine()]);

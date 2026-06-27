@@ -36,6 +36,15 @@ interface SKU {
   is_archived: boolean;
 }
 
+interface RequestItem {
+  id: string;
+  sku_id: string | null;
+  requested_quantity: number;
+  fulfilled_quantity: number;
+  note: string | null;
+  skus: { name: string; unit_of_measure: string; category: string } | null;
+}
+
 interface InventoryRequest {
   id: string;
   user_id: string;
@@ -53,6 +62,21 @@ interface InventoryRequest {
   created_at: string;
   skus: { name: string; unit_of_measure: string; category: string } | null;
   profiles: { full_name: string } | null;
+  inventory_request_items: RequestItem[] | null;
+}
+
+// A request always renders as a list of line items. For legacy rows with no
+// child items yet, fall back to the single header item.
+function itemsOf(r: InventoryRequest): RequestItem[] {
+  if (r.inventory_request_items && r.inventory_request_items.length > 0) return r.inventory_request_items;
+  return [{
+    id: `${r.id}-legacy`,
+    sku_id: r.sku_id,
+    requested_quantity: r.requested_quantity,
+    fulfilled_quantity: r.fulfilled_quantity,
+    note: null,
+    skus: r.skus,
+  }];
 }
 
 interface LinkedLPO {
@@ -89,10 +113,16 @@ export default function InventoryRequests() {
 
   const [search, setSearch] = useState("");
 
-  // New / edit request
+  // New / edit request — one request can hold many item lines
   const [showNew, setShowNew] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
-  const [newForm, setNewForm] = useState({ sku_id: "", quantity: "", notes: "" });
+  const [lineItems, setLineItems] = useState<{ sku_id: string; quantity: string }[]>([{ sku_id: "", quantity: "" }]);
+  const [reqNotes, setReqNotes] = useState("");
+
+  const setLine = (i: number, patch: Partial<{ sku_id: string; quantity: string }>) =>
+    setLineItems(prev => prev.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
+  const addLine = () => setLineItems(prev => [...prev, { sku_id: "", quantity: "" }]);
+  const removeLine = (i: number) => setLineItems(prev => (prev.length > 1 ? prev.filter((_, idx) => idx !== i) : prev));
 
   // Reject dialog
   const [rejectTarget, setRejectTarget] = useState<string | null>(null);
@@ -130,7 +160,8 @@ export default function InventoryRequests() {
           id, user_id, sku_id, requested_quantity, fulfilled_quantity,
           status, request_date, fulfilled_date, notes,
           approved_by, approved_at, rejected_reason, purchase_cost, created_at,
-          skus(name, unit_of_measure, category)
+          skus(name, unit_of_measure, category),
+          inventory_request_items(id, sku_id, requested_quantity, fulfilled_quantity, note, skus(name, unit_of_measure, category))
         `)
         .order("created_at", { ascending: false });
 
@@ -166,45 +197,69 @@ export default function InventoryRequests() {
 
   const submitRequest = useMutation({
     mutationFn: async () => {
-      if (!newForm.sku_id || !newForm.quantity) throw new Error("Select an item and quantity");
+      const valid = lineItems
+        .map(l => ({ sku_id: l.sku_id, quantity: parseInt(l.quantity) }))
+        .filter(l => l.sku_id && l.quantity > 0);
+      if (valid.length === 0) throw new Error("Add at least one item with a quantity");
+
+      // The header mirrors the first line for back-compat with legacy views/LPO
+      const head = valid[0];
 
       if (editId) {
         // Editing is only allowed while the request is still pending
-        const { error } = await supabase.from("inventory_requests").update({
-          sku_id:             newForm.sku_id,
-          requested_quantity: parseInt(newForm.quantity),
-          notes:              newForm.notes || null,
+        const { error: upErr } = await supabase.from("inventory_requests").update({
+          sku_id:             head.sku_id,
+          requested_quantity: head.quantity,
+          notes:              reqNotes || null,
         }).eq("id", editId).eq("status", "pending");
-        if (error) throw error;
+        if (upErr) throw upErr;
+        // Replace the line items
+        await supabase.from("inventory_request_items").delete().eq("request_id", editId);
+        const { error: itErr } = await supabase.from("inventory_request_items").insert(
+          valid.map(l => ({ request_id: editId, sku_id: l.sku_id, requested_quantity: l.quantity }))
+        );
+        if (itErr) throw itErr;
         return;
       }
 
-      const { error } = await supabase.from("inventory_requests").insert({
+      const { data: created, error } = await supabase.from("inventory_requests").insert({
         user_id:            user!.id,
-        sku_id:             newForm.sku_id,
-        requested_quantity: parseInt(newForm.quantity),
+        sku_id:             head.sku_id,
+        requested_quantity: head.quantity,
         current_quantity:   0,
-        notes:              newForm.notes || null,
+        notes:              reqNotes || null,
         status:             "pending",
         request_date:       new Date().toISOString().slice(0, 10),
-      });
+      }).select("id").single();
       if (error) throw error;
+      const { error: itErr } = await supabase.from("inventory_request_items").insert(
+        valid.map(l => ({ request_id: created!.id, sku_id: l.sku_id, requested_quantity: l.quantity }))
+      );
+      if (itErr) throw itErr;
     },
     onSuccess: () => {
       toast({ title: editId ? "Request updated" : "Request submitted", description: editId ? "Your changes have been saved." : "Your request has been sent to admin for approval." });
       setShowNew(false);
       setEditId(null);
-      setNewForm({ sku_id: "", quantity: "", notes: "" });
+      setLineItems([{ sku_id: "", quantity: "" }]);
+      setReqNotes("");
       qc.invalidateQueries({ queryKey: ["inventory-requests"] });
     },
     onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
   });
 
-  const openNew = () => { setEditId(null); setNewForm({ sku_id: "", quantity: "", notes: "" }); setShowNew(true); };
+  const openNew = () => {
+    setEditId(null);
+    setLineItems([{ sku_id: "", quantity: "" }]);
+    setReqNotes("");
+    setShowNew(true);
+  };
   const openEdit = (row: InventoryRequest) => {
     if (row.status !== "pending") return; // locked after approval
     setEditId(row.id);
-    setNewForm({ sku_id: row.sku_id ?? "", quantity: String(row.requested_quantity), notes: row.notes ?? "" });
+    const items = itemsOf(row);
+    setLineItems(items.map(it => ({ sku_id: it.sku_id ?? "", quantity: String(it.requested_quantity) })));
+    setReqNotes(row.notes ?? "");
     setShowNew(true);
   };
 
@@ -248,36 +303,48 @@ export default function InventoryRequests() {
   const recordPurchase = useMutation({
     mutationFn: async () => {
       if (!purchaseTarget) return;
-      const qty  = parseInt(purchaseForm.fulfilled_quantity);
-      const cost = parseFloat(purchaseForm.purchase_cost) || null;
-      if (!qty || qty <= 0) throw new Error("Enter a valid quantity");
+      const cost  = parseFloat(purchaseForm.purchase_cost) || null;
+      const items = itemsOf(purchaseTarget).filter(it => it.sku_id);
+      if (items.length === 0) throw new Error("This request has no stock items to fulfill");
+      const totalQty = items.reduce((s, it) => s + it.requested_quantity, 0);
 
-      const { error: reqErr } = await supabase.from("inventory_requests").update({
-        status:             "fulfilled",
-        fulfilled_quantity: qty,
-        fulfilled_date:     new Date().toISOString().slice(0, 10),
-        purchase_cost:      cost,
-      }).eq("id", purchaseTarget.id);
-      if (reqErr) throw reqErr;
-
-      if (purchaseTarget.sku_id) {
-        const sku = skus.find(s => s.id === purchaseTarget.sku_id);
+      // Restock every line and record a purchase transaction per item.
+      for (const it of items) {
+        const sku = skus.find(s => s.id === it.sku_id);
         if (sku) {
           const { error: skuErr } = await supabase.from("skus").update({
-            stock_quantity: sku.stock_quantity + qty,
-          }).eq("id", purchaseTarget.sku_id);
+            stock_quantity: sku.stock_quantity + it.requested_quantity,
+          }).eq("id", it.sku_id!);
           if (skuErr) throw skuErr;
         }
+        const lineCost = cost != null && totalQty > 0 ? (cost * it.requested_quantity) / totalQty : 0;
         await supabase.from("transactions").insert({
-          sku_id:           purchaseTarget.sku_id,
+          sku_id:           it.sku_id,
           transaction_type: "PURCHASE",
-          quantity:         qty,
-          unit_price:       cost ? cost / qty : 0,
-          total_amount:     cost ?? 0,
+          quantity:         it.requested_quantity,
+          unit_price:       it.requested_quantity > 0 ? lineCost / it.requested_quantity : 0,
+          total_amount:     lineCost,
           notes:            purchaseForm.notes || `Direct purchase from request #${purchaseTarget.id.slice(0, 8)}`,
           user_id:          user!.id,
         });
       }
+
+      // Mark each child line fulfilled (only when child rows exist)
+      if (purchaseTarget.inventory_request_items?.length) {
+        for (const it of items) {
+          await supabase.from("inventory_request_items").update({
+            fulfilled_quantity: it.requested_quantity,
+          }).eq("id", it.id);
+        }
+      }
+
+      const { error: reqErr } = await supabase.from("inventory_requests").update({
+        status:             "fulfilled",
+        fulfilled_quantity: totalQty,
+        fulfilled_date:     new Date().toISOString().slice(0, 10),
+        purchase_cost:      cost,
+      }).eq("id", purchaseTarget.id);
+      if (reqErr) throw reqErr;
     },
     onSuccess: () => {
       toast({ title: "Purchase recorded", description: "Stock has been updated." });
@@ -292,14 +359,25 @@ export default function InventoryRequests() {
   // ── Helpers ───────────────────────────────────────────────────────────────
 
   const openRaiseLPO = (row: InventoryRequest) => {
-    const sku = skus.find(s => s.id === row.sku_id);
+    const items = itemsOf(row).map(it => {
+      const sku = skus.find(s => s.id === it.sku_id);
+      return {
+        item_name:       it.skus?.name ?? sku?.name ?? "",
+        sku_id:          it.sku_id,
+        quantity:        it.requested_quantity,
+        unit_of_measure: it.skus?.unit_of_measure ?? sku?.unit_of_measure ?? "unit",
+        unit_price:      sku?.cost_per_unit ?? 0,
+      };
+    });
+    const head = items[0];
     setLpoSource({
-      id:             row.id,
-      item_name:      row.skus?.name ?? "",
-      sku_id:         row.sku_id,
-      quantity:       row.requested_quantity,
-      unit_of_measure: row.skus?.unit_of_measure ?? "unit",
-      unit_price:     sku?.cost_per_unit ?? 0,
+      id:              row.id,
+      item_name:       head?.item_name ?? "",
+      sku_id:          head?.sku_id ?? null,
+      quantity:        head?.quantity ?? 0,
+      unit_of_measure: head?.unit_of_measure ?? "unit",
+      unit_price:      head?.unit_price ?? 0,
+      items,
     });
     setLpoSheetOpen(true);
   };
@@ -311,7 +389,10 @@ export default function InventoryRequests() {
 
   // ── Derived ───────────────────────────────────────────────────────────────
 
-  const filtered  = requests.filter(r => (r.skus?.name ?? "").toLowerCase().includes(search.toLowerCase()));
+  const filtered  = requests.filter(r => {
+    const q = search.toLowerCase();
+    return itemsOf(r).some(it => (it.skus?.name ?? "").toLowerCase().includes(q));
+  });
   const pending   = requests.filter(r => r.status === "pending").length;
   const approved  = requests.filter(r => r.status === "approved").length;
   const fulfilled = requests.filter(r => r.status === "fulfilled").length;
@@ -531,27 +612,39 @@ export default function InventoryRequests() {
           <DialogHeader><DialogTitle>{editId ? "Edit Inventory Request" : "New Inventory Request"}</DialogTitle></DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-2">
-              <Label>Item</Label>
-              <Select value={newForm.sku_id} onValueChange={v => setNewForm(f => ({ ...f, sku_id: v }))}>
-                <SelectTrigger><SelectValue placeholder="Select an item" /></SelectTrigger>
-                <SelectContent>
-                  {skus.map(s => (
-                    <SelectItem key={s.id} value={s.id}>
-                      {s.name} — {s.stock_quantity} {s.unit_of_measure} in stock
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>Quantity Requested</Label>
-              <Input type="number" min="1" value={newForm.quantity}
-                onChange={e => setNewForm(f => ({ ...f, quantity: e.target.value }))} />
+              <Label>Items</Label>
+              <div className="space-y-2">
+                {lineItems.map((line, i) => (
+                  <div key={i} className="flex gap-2 items-start">
+                    <div className="flex-1">
+                      <Select value={line.sku_id || undefined} onValueChange={v => setLine(i, { sku_id: v })}>
+                        <SelectTrigger><SelectValue placeholder="Select an item" /></SelectTrigger>
+                        <SelectContent>
+                          {skus.map(s => (
+                            <SelectItem key={s.id} value={s.id}>
+                              {s.name} — {s.stock_quantity} {s.unit_of_measure} in stock
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <Input className="w-24" type="number" min="1" placeholder="Qty" value={line.quantity}
+                      onChange={e => setLine(i, { quantity: e.target.value })} />
+                    <Button type="button" variant="ghost" size="icon" className="text-destructive shrink-0"
+                      onClick={() => removeLine(i)} disabled={lineItems.length <= 1}>
+                      <XCircle className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+              <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={addLine}>
+                <Plus className="h-3.5 w-3.5" /> Add item
+              </Button>
             </div>
             <div className="space-y-2">
               <Label>Notes (optional)</Label>
-              <Textarea rows={2} value={newForm.notes}
-                onChange={e => setNewForm(f => ({ ...f, notes: e.target.value }))}
+              <Textarea rows={2} value={reqNotes}
+                onChange={e => setReqNotes(e.target.value)}
                 placeholder="Reason for request or additional details" />
             </div>
           </div>
@@ -590,19 +683,19 @@ export default function InventoryRequests() {
           </DialogHeader>
           {purchaseTarget && (
             <div className="space-y-4 py-2">
-              <div className="rounded-lg bg-amber-50 border border-amber-100 px-4 py-3 text-sm space-y-1">
+              <div className="rounded-lg bg-amber-50 border border-amber-100 px-4 py-3 text-sm space-y-2">
                 <p className="font-medium text-amber-800">
                   Direct purchase — no LPO will be created
                 </p>
-                <p className="text-muted-foreground">
-                  Item: <span className="font-medium text-foreground">{purchaseTarget.skus?.name}</span>
-                  {" · "}Requested: {purchaseTarget.requested_quantity} {purchaseTarget.skus?.unit_of_measure}
-                </p>
-              </div>
-              <div className="space-y-2">
-                <Label>Quantity Purchased</Label>
-                <Input type="number" min="1" value={purchaseForm.fulfilled_quantity}
-                  onChange={e => setPurchaseForm(f => ({ ...f, fulfilled_quantity: e.target.value }))} />
+                <p className="text-muted-foreground">All items below will be received in full and restocked.</p>
+                <ul className="space-y-1">
+                  {itemsOf(purchaseTarget).map(it => (
+                    <li key={it.id} className="text-foreground">
+                      • <span className="font-medium">{it.skus?.name ?? "—"}</span>
+                      {" — "}{it.requested_quantity} {it.skus?.unit_of_measure}
+                    </li>
+                  ))}
+                </ul>
               </div>
               <div className="space-y-2">
                 <Label>Total Purchase Cost (₦)</Label>
@@ -689,23 +782,35 @@ function RequestsTable({
               <TableBody>
                 {rows.map(row => {
                   const linked = lpoByRequest[row.id];
+                  const items = itemsOf(row);
                   return (
                     <TableRow key={row.id}>
                       <TableCell>
-                        <div className="font-medium">{row.skus?.name ?? "—"}</div>
-                        <div className="text-xs text-muted-foreground capitalize">{row.skus?.category}</div>
+                        <div className="space-y-1">
+                          {items.map(it => (
+                            <div key={it.id}>
+                              <span className="font-medium">{it.skus?.name ?? "—"}</span>
+                              <span className="text-xs text-muted-foreground capitalize"> · {it.skus?.category}</span>
+                            </div>
+                          ))}
+                        </div>
                       </TableCell>
                       {showRequester && (
                         <TableCell className="text-sm text-muted-foreground">
-                          {row.user_id.slice(0, 8)}…
+                          {row.profiles?.full_name ?? `${row.user_id.slice(0, 8)}…`}
                         </TableCell>
                       )}
                       <TableCell>
-                        {row.fulfilled_quantity > 0
-                          ? <><span className="font-semibold">{row.fulfilled_quantity}</span><span className="text-muted-foreground">/{row.requested_quantity}</span></>
-                          : row.requested_quantity
-                        }{" "}
-                        <span className="text-xs text-muted-foreground">{row.skus?.unit_of_measure}</span>
+                        <div className="space-y-1">
+                          {items.map(it => (
+                            <div key={it.id} className="whitespace-nowrap">
+                              {it.fulfilled_quantity > 0
+                                ? <><span className="font-semibold">{it.fulfilled_quantity}</span><span className="text-muted-foreground">/{it.requested_quantity}</span></>
+                                : it.requested_quantity}{" "}
+                              <span className="text-xs text-muted-foreground">{it.skus?.unit_of_measure}</span>
+                            </div>
+                          ))}
+                        </div>
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
                         {format(parseISO(row.created_at), "dd MMM yyyy")}
