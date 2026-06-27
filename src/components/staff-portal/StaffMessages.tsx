@@ -86,14 +86,13 @@ export default function StaffMessages() {
         if (error) throw error;
         return data || [];
       }
-      // Staff: only admin users as recipients
+      // Staff: only admin users as recipients (any admin, regardless of role_status)
       const { data: adminRoles, error } = await supabase
         .from('user_roles')
         .select('user_id')
-        .eq('role', 'admin')
-        .eq('role_status', 'approved');
+        .eq('role', 'admin');
       if (error) throw error;
-      const adminIds = (adminRoles || []).map((a: any) => a.user_id);
+      const adminIds = [...new Set((adminRoles || []).map((a: any) => a.user_id))].filter(Boolean);
       if (adminIds.length === 0) return [];
       const { data: profiles } = await supabase
         .from('profiles')
@@ -129,27 +128,38 @@ export default function StaffMessages() {
         return;
       }
 
-      // Staff (non-admin, non-HR): auto-send to all approved admins
+      // Staff (non-admin, non-HR): auto-send to ALL admins (any role_status)
       if (!isAdmin && !isHR) {
-        const { data: adminRoles } = await supabase
+        const { data: adminRoles, error: adminErr } = await supabase
           .from('user_roles')
           .select('user_id')
-          .eq('role', 'admin')
-          .eq('role_status', 'approved');
-        for (const admin of (adminRoles || [])) {
-          await supabase.from('staff_messages').insert({
+          .eq('role', 'admin');
+        if (adminErr) throw adminErr;
+        const adminIds = [...new Set((adminRoles || []).map((a: any) => a.user_id))].filter(Boolean);
+        if (adminIds.length === 0) {
+          throw new Error('No admin is available to receive your message. Please contact an administrator.');
+        }
+
+        // Single bulk insert so failures surface instead of being swallowed
+        const { error: insErr } = await supabase.from('staff_messages').insert(
+          adminIds.map((adminId: string) => ({
             sender_id: user!.id,
-            recipient_id: admin.user_id,
+            recipient_id: adminId,
             subject: `[${catLabel}] ${form.subject}`,
             message: form.message,
-          });
-          await supabase.from('notifications').insert({
-            user_id: admin.user_id,
+          }))
+        );
+        if (insErr) throw insErr;
+
+        // Notifications are best-effort
+        await supabase.from('notifications').insert(
+          adminIds.map((adminId: string) => ({
+            user_id: adminId,
             title: 'New Staff Message',
             message: `${senderName}: ${form.subject}`,
             type: 'message',
-          });
-        }
+          }))
+        );
         return;
       }
 
