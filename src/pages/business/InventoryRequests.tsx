@@ -20,7 +20,7 @@ import {
 } from "@/components/ui/tooltip";
 import {
   Plus, Clock, CheckCircle2, XCircle, ShoppingCart,
-  Search, ClipboardList, FileText, PackageCheck,
+  Search, ClipboardList, FileText, PackageCheck, Pencil,
 } from "lucide-react";
 import LPOSheet, { type SourceRequest } from "@/components/procurement/LPOSheet";
 
@@ -89,8 +89,9 @@ export default function InventoryRequests() {
 
   const [search, setSearch] = useState("");
 
-  // New request
+  // New / edit request
   const [showNew, setShowNew] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
   const [newForm, setNewForm] = useState({ sku_id: "", quantity: "", notes: "" });
 
   // Reject dialog
@@ -166,6 +167,18 @@ export default function InventoryRequests() {
   const submitRequest = useMutation({
     mutationFn: async () => {
       if (!newForm.sku_id || !newForm.quantity) throw new Error("Select an item and quantity");
+
+      if (editId) {
+        // Editing is only allowed while the request is still pending
+        const { error } = await supabase.from("inventory_requests").update({
+          sku_id:             newForm.sku_id,
+          requested_quantity: parseInt(newForm.quantity),
+          notes:              newForm.notes || null,
+        }).eq("id", editId).eq("status", "pending");
+        if (error) throw error;
+        return;
+      }
+
       const { error } = await supabase.from("inventory_requests").insert({
         user_id:            user!.id,
         sku_id:             newForm.sku_id,
@@ -178,13 +191,22 @@ export default function InventoryRequests() {
       if (error) throw error;
     },
     onSuccess: () => {
-      toast({ title: "Request submitted", description: "Your request has been sent to admin for approval." });
+      toast({ title: editId ? "Request updated" : "Request submitted", description: editId ? "Your changes have been saved." : "Your request has been sent to admin for approval." });
       setShowNew(false);
+      setEditId(null);
       setNewForm({ sku_id: "", quantity: "", notes: "" });
       qc.invalidateQueries({ queryKey: ["inventory-requests"] });
     },
     onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
   });
+
+  const openNew = () => { setEditId(null); setNewForm({ sku_id: "", quantity: "", notes: "" }); setShowNew(true); };
+  const openEdit = (row: InventoryRequest) => {
+    if (row.status !== "pending") return; // locked after approval
+    setEditId(row.id);
+    setNewForm({ sku_id: row.sku_id ?? "", quantity: String(row.requested_quantity), notes: row.notes ?? "" });
+    setShowNew(true);
+  };
 
   const approveRequest = useMutation({
     mutationFn: async (id: string) => {
@@ -378,7 +400,7 @@ export default function InventoryRequests() {
               : "Submit requests for inventory items. Admin will review and approve."}
           </p>
         </div>
-        <Button onClick={() => setShowNew(true)}>
+        <Button onClick={openNew}>
           <Plus className="h-4 w-4 mr-2" />New Request
         </Button>
       </div>
@@ -437,6 +459,9 @@ export default function InventoryRequests() {
               emptyMsg="No pending requests."
               actions={(row) => (
                 <div className="flex gap-2 justify-end">
+                  <Button size="sm" variant="outline" onClick={() => openEdit(row)}>
+                    <Pencil className="h-3.5 w-3.5 mr-1" />Edit
+                  </Button>
                   <Button size="sm" variant="outline"
                     className="text-green-700 border-green-300 hover:bg-green-50"
                     onClick={() => approveRequest.mutate(row.id)}
@@ -482,19 +507,28 @@ export default function InventoryRequests() {
             emptyMsg={canManage ? "No requests found." : "You have not submitted any requests yet."}
             showRequester={canManage}
             lpoByRequest={lpoByRequest}
-            actions={(row) =>
-              row.status === "approved" && canRecordPurchase && canManage
-                ? <ApprovedActions row={row} />
-                : null
-            }
+            actions={(row) => {
+              if (row.status === "approved" && canRecordPurchase && canManage)
+                return <ApprovedActions row={row} />;
+              // Editable only while pending — locked once approved/rejected/fulfilled
+              if (row.status === "pending" && (row.user_id === user!.id || canManage))
+                return (
+                  <div className="flex justify-end">
+                    <Button size="sm" variant="outline" onClick={() => openEdit(row)}>
+                      <Pencil className="h-3.5 w-3.5 mr-1" />Edit
+                    </Button>
+                  </div>
+                );
+              return null;
+            }}
           />
         </TabsContent>
       </Tabs>
 
-      {/* ── New Request Dialog ── */}
-      <Dialog open={showNew} onOpenChange={setShowNew}>
+      {/* ── New / Edit Request Dialog ── */}
+      <Dialog open={showNew} onOpenChange={(open) => { setShowNew(open); if (!open) setEditId(null); }}>
         <DialogContent>
-          <DialogHeader><DialogTitle>New Inventory Request</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{editId ? "Edit Inventory Request" : "New Inventory Request"}</DialogTitle></DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-2">
               <Label>Item</Label>
@@ -522,9 +556,9 @@ export default function InventoryRequests() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowNew(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => { setShowNew(false); setEditId(null); }}>Cancel</Button>
             <Button onClick={() => submitRequest.mutate()} disabled={submitRequest.isPending}>
-              {submitRequest.isPending ? "Submitting…" : "Submit Request"}
+              {submitRequest.isPending ? "Saving…" : editId ? "Save Changes" : "Submit Request"}
             </Button>
           </DialogFooter>
         </DialogContent>
