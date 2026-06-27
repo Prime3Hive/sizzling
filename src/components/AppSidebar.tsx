@@ -421,6 +421,14 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                   </SidebarMenuItem>
                 </Can>
 
+                <Can roles={['admin']}>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild isActive={location.pathname === '/staff-reports'}>
+                      <Link to="/staff-reports"><ClipboardList className="h-4 w-4" />Staff Reports</Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                </Can>
+
                 <Can module="budgets">
                   <SidebarMenuItem>
                     <SidebarMenuButton asChild isActive={location.pathname === '/expenses'}>

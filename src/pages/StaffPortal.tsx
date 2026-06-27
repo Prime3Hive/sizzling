@@ -1,10 +1,11 @@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { CalendarDays, AlertTriangle, Mail, TrendingUp, FileText } from 'lucide-react';
+import { CalendarDays, AlertTriangle, Mail, TrendingUp, FileText, ClipboardList } from 'lucide-react';
 import StaffLeaveRequests from '@/components/staff-portal/StaffLeaveRequests';
 import StaffComplaints from '@/components/staff-portal/StaffComplaints';
 import StaffMessages from '@/components/staff-portal/StaffMessages';
 import StaffKPITasks from '@/components/staff-portal/StaffKPITasks';
 import StaffMyDocuments from '@/components/staff-portal/StaffMyDocuments';
+import MyReports from '@/components/reports/MyReports';
 import { useSearchParams } from 'react-router-dom';
 
 const VALID_TABS = ['leave', 'complaints', 'messages', 'performance', 'documents'];
@@ -32,6 +33,9 @@ const StaffPortal = () => {
           <TabsTrigger value="messages" className="data-[state=active]:bg-background data-[state=active]:shadow-card">
             <Mail className="h-4 w-4 mr-2" />Messages
           </TabsTrigger>
+          <TabsTrigger value="reports" className="data-[state=active]:bg-background data-[state=active]:shadow-card">
+            <ClipboardList className="h-4 w-4 mr-2" />My Reports
+          </TabsTrigger>
           <TabsTrigger value="performance" className="data-[state=active]:bg-background data-[state=active]:shadow-card">
             <TrendingUp className="h-4 w-4 mr-2" />My Performance
           </TabsTrigger>
@@ -43,6 +47,7 @@ const StaffPortal = () => {
         <TabsContent value="leave"><StaffLeaveRequests /></TabsContent>
         <TabsContent value="complaints"><StaffComplaints /></TabsContent>
         <TabsContent value="messages"><StaffMessages /></TabsContent>
+        <TabsContent value="reports"><MyReports /></TabsContent>
         <TabsContent value="performance"><StaffKPITasks /></TabsContent>
         <TabsContent value="documents"><StaffMyDocuments /></TabsContent>
       </Tabs>

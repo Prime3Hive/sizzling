@@ -63,6 +63,7 @@ const CompanyFiles      = lazy(() => import("./pages/admin/CompanyFiles"));
 const BankAccounts      = lazy(() => import("./pages/admin/BankAccounts"));
 const Messages          = lazy(() => import("./pages/admin/Messages"));
 const Accounting        = lazy(() => import("./pages/admin/Accounting"));
+const StaffReportsAdmin = lazy(() => import("./pages/admin/StaffReportsAdmin"));
 const Contact           = lazy(() => import("./pages/Contact"));
 const PendingApproval   = lazy(() => import("./pages/PendingApproval"));
 const Procurement       = lazy(() => import("./pages/Procurement"));
@@ -249,6 +250,11 @@ const App = () => (
                 <Route path="accounting" element={
                   <Can roles={['admin']} redirect="/dashboard">
                     <Accounting />
+                  </Can>
+                } />
+                <Route path="staff-reports" element={
+                  <Can roles={['admin']} redirect="/dashboard">
+                    <StaffReportsAdmin />
                   </Can>
                 } />
                 <Route path="staff-profiles" element={
