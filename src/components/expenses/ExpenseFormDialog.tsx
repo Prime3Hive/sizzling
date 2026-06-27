@@ -17,7 +17,7 @@ const expenseSchema = z.object({
   description: z.string().min(1, 'Description required').max(500, 'Description too long'),
   category: z.string().min(1, 'Category required').max(100),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format'),
-  budgetId: z.string().uuid('Invalid budget'),
+  budgetId: z.string().optional(),
   accountType: z.string().max(50).optional(),
   costCenter: z.string().max(100).optional(),
   bankAccount: z.string().max(100).optional(),
@@ -139,10 +139,6 @@ const ExpenseFormDialog = ({ budgets, onExpenseAdded, editingExpense, isEditOpen
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.budgetId) {
-      toast({ title: 'Budget required', description: 'Please select a budget.', variant: 'destructive' });
-      return;
-    }
 
     // Validate with Zod
     const validation = expenseSchema.safeParse({
@@ -177,7 +173,7 @@ const ExpenseFormDialog = ({ budgets, onExpenseAdded, editingExpense, isEditOpen
           description: validation.data.description,
           category: validation.data.category,
           date: validation.data.date,
-          budget_id: validation.data.budgetId,
+          budget_id: validation.data.budgetId || null,
           account_type: validation.data.accountType || 'COGS',
           cost_center: validation.data.costCenter || 'Daily Orders',
           bank_account: validation.data.bankAccount || null,
@@ -199,7 +195,7 @@ const ExpenseFormDialog = ({ budgets, onExpenseAdded, editingExpense, isEditOpen
           description: validation.data.description,
           category: validation.data.category,
           date: validation.data.date,
-          budget_id: validation.data.budgetId,
+          budget_id: validation.data.budgetId || null,
           receipt_path: receiptPath,
           account_type: validation.data.accountType || 'COGS',
           cost_center: validation.data.costCenter || 'Daily Orders',
@@ -255,10 +251,13 @@ const ExpenseFormDialog = ({ budgets, onExpenseAdded, editingExpense, isEditOpen
               </Select>
             </div>
             <div className="space-y-2">
-              <Label>Budget</Label>
-              <Select value={formData.budgetId} onValueChange={(v) => handleInputChange('budgetId', v)} required>
-                <SelectTrigger><SelectValue placeholder="Select budget" /></SelectTrigger>
-                <SelectContent>{budgets.map(b => <SelectItem key={b.id} value={b.id}>{b.title}</SelectItem>)}</SelectContent>
+              <Label>Budget (optional)</Label>
+              <Select value={formData.budgetId || 'none'} onValueChange={(v) => handleInputChange('budgetId', v === 'none' ? '' : v)}>
+                <SelectTrigger><SelectValue placeholder="No budget" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">No budget</SelectItem>
+                  {budgets.map(b => <SelectItem key={b.id} value={b.id}>{b.title}</SelectItem>)}
+                </SelectContent>
               </Select>
             </div>
           </div>
@@ -311,14 +310,9 @@ const ExpenseFormDialog = ({ budgets, onExpenseAdded, editingExpense, isEditOpen
               </div>
             )}
           </div>
-          {budgets.length === 0 && (
-            <div className="p-4 bg-muted rounded-lg">
-              <p className="text-sm text-muted-foreground">Create a budget first before adding expenses.</p>
-            </div>
-          )}
           <div className="flex gap-4">
             <Button type="button" variant="outline" onClick={() => isEditMode ? onEditOpenChange?.(false) : setIsOpen(false)} className="flex-1">Cancel</Button>
-            <Button type="submit" disabled={isSubmitting || (!isEditMode && (isUploading || budgets.length === 0))} className="flex-1">
+            <Button type="submit" disabled={isSubmitting || (!isEditMode && isUploading)} className="flex-1">
               {isEditMode ? (isSubmitting ? 'Saving...' : 'Save Changes') : (isSubmitting ? 'Adding...' : isUploading ? 'Uploading...' : 'Add Expense')}
             </Button>
           </div>

@@ -7,6 +7,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import ExpenseFormDialog from '@/components/expenses/ExpenseFormDialog';
+import BulkExpenseDialog from '@/components/expenses/BulkExpenseDialog';
 import ExpenseFilters from '@/components/expenses/ExpenseFilters';
 import ExpenseTable from '@/components/expenses/ExpenseTable';
 import ExpenseSummary from '@/components/expenses/ExpenseSummary';
@@ -117,7 +118,10 @@ const Expenses = () => {
           <h1 className="text-2xl sm:text-3xl font-bold text-foreground">Expenses</h1>
           <p className="text-muted-foreground">View and manage all registered expenses</p>
         </div>
-        <ExpenseFormDialog budgets={budgets} onExpenseAdded={handleExpenseAdded} />
+        <div className="flex gap-2 flex-wrap">
+          <BulkExpenseDialog budgets={budgets} onDone={handleExpenseAdded} />
+          <ExpenseFormDialog budgets={budgets} onExpenseAdded={handleExpenseAdded} />
+        </div>
       </div>
 
       <ExpenseFilters
