@@ -41,7 +41,7 @@ export default function MyReports() {
 
   const [open, setOpen] = useState(false);
   const [type, setType] = useState<ReportType>('sales');
-  const [form, setForm] = useState({ report_date: today(), title: '', summary: '', amount: '', payment_method: 'cash', source: '', is_supplier: false, due_date: '', misc_description: '', misc_amount: '', petty_description: '', petty_amount: '' });
+  const [form, setForm] = useState({ report_date: today(), title: '', summary: '', amount: '', payment_method: 'cash', sale_type: 'daily', source: '', is_supplier: false, due_date: '', misc_description: '', misc_amount: '', petty_description: '', petty_amount: '' });
   const [expLines, setExpLines] = useState<{ category: string; amount: string; description: string }[]>([{ category: '', amount: '', description: '' }]);
   const [invLines, setInvLines] = useState<{ item: string; counted: string; used: string }[]>([{ item: '', counted: '', used: '' }]);
   const [creditLines, setCreditLines] = useState<CreditLineForm[]>([emptyCreditLine()]);
@@ -86,7 +86,7 @@ export default function MyReports() {
   const summary = useMemo(() => summarizePerformance(reports), [reports]);
 
   const resetForm = () => {
-    setForm({ report_date: today(), title: '', summary: '', amount: '', payment_method: 'cash', source: '', is_supplier: false, due_date: '', misc_description: '', misc_amount: '', petty_description: '', petty_amount: '' });
+    setForm({ report_date: today(), title: '', summary: '', amount: '', payment_method: 'cash', sale_type: 'daily', source: '', is_supplier: false, due_date: '', misc_description: '', misc_amount: '', petty_description: '', petty_amount: '' });
     setExpLines([{ category: '', amount: '', description: '' }]);
     setInvLines([{ item: '', counted: '', used: '' }]);
     setCreditLines([emptyCreditLine()]);
@@ -104,6 +104,7 @@ export default function MyReports() {
         amount = parseFloat(form.amount) || 0;
         if (amount <= 0) throw new Error('Enter the sales amount');
         details.payment_method = form.payment_method;
+        details.sale_type = form.sale_type;
       } else if (type === 'expense') {
         const lines = expLines
           .map(l => ({ category: l.category.trim(), amount: parseFloat(l.amount) || 0, description: l.description.trim() }))
@@ -316,6 +317,16 @@ export default function MyReports() {
                     <SelectContent>
                       <SelectItem value="cash">Cash</SelectItem>
                       <SelectItem value="transfer">Transfer</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Sales channel</Label>
+                  <Select value={form.sale_type} onValueChange={v => setForm(f => ({ ...f, sale_type: v }))}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="daily">Shop sales</SelectItem>
+                      <SelectItem value="event">Event sales</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

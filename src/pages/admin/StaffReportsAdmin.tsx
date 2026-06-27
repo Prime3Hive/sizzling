@@ -124,12 +124,16 @@ export default function StaffReportsAdmin() {
         convertedRef = data?.[0]?.id ?? null;
         status = 'converted';
       } else if (r.report_type === 'sales') {
-        const { data, error } = await supabase.from('finance_ledger').insert({
-          user_id: user!.id, entry_date: r.report_date, entry_type: 'revenue',
-          source_type: 'sale', source_id: r.id,
-          description: `${r.title ?? 'Sales report'}${r.payment_method ? ` (${r.payment_method})` : ''}`,
-          amount: r.amount ?? 0, cost_center: 'Daily Orders',
-          reference_number: r.title ?? null, recorded_by: user!.id,
+        // Record under Weekly Sales (the `sales` table drives revenue & the weekly view).
+        const saleType = r.details?.sale_type === 'event' ? 'event' : 'daily';
+        const ref = `WS-${r.report_date.replace(/-/g, '')}-${r.id.slice(0, 8).toUpperCase()}`;
+        const { data, error } = await supabase.from('sales').insert({
+          user_id: user!.id, created_by: user!.id,
+          sale_number: ref, sale_date: r.report_date, sale_type: saleType,
+          total_amount: r.amount ?? 0,
+          customer_name: r.title ?? `Sales report — ${nameOf(r.user_id)}`,
+          notes: [`Staff sales report by ${nameOf(r.user_id)}`, r.payment_method, r.summary].filter(Boolean).join(' · '),
+          status: 'completed',
         }).select('id');
         if (error) throw error;
         convertedRef = data?.[0]?.id ?? null;
