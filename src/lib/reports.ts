@@ -8,8 +8,31 @@ export const REPORT_TYPES: Record<ReportType, { label: string; blurb: string; co
   sales:     { label: 'Sales Report',     blurb: 'Cash or transfer takings for the period.', convertsTo: 'Finance ledger (revenue)' },
   inventory: { label: 'Inventory Report', blurb: 'Stock counts, usage and availability.',     convertsTo: null },
   expense:   { label: 'Expense Report',   blurb: 'Money spent — recorded only once approved.', convertsTo: 'Expense record' },
-  credit:    { label: 'Credit Report',    blurb: 'Purchases made on credit (unpaid).',         convertsTo: 'Payables register' },
+  credit:    { label: 'Credit Report',    blurb: 'Items bought on credit (unpaid) — from a supplier or otherwise.', convertsTo: 'Payables register' },
 };
+
+// ── Credit report line items ─────────────────────────────────────────────────
+// A credit report is a list of items bought on credit. Each item is either
+// picked from the product list, typed in manually, or logged as miscellaneous.
+// Credit may or may not come from a registered supplier.
+
+export type CreditLineKind = 'product' | 'manual' | 'misc';
+
+export interface CreditLine {
+  kind?: CreditLineKind;
+  product_id?: string | null;
+  item: string;            // item description (product name, manual text, or "Miscellaneous")
+  qty?: number | null;
+  amount: number;
+}
+
+/** Human-readable summary of the items on a credit report — used in lists and on conversion. */
+export function describeCreditItems(lines: CreditLine[] = []): string {
+  return lines
+    .map(l => `${(l.item || 'Miscellaneous').trim()}${l.qty ? ` ×${l.qty}` : ''}`)
+    .filter(Boolean)
+    .join(', ');
+}
 
 export const CADENCES: { value: Cadence; label: string }[] = [
   { value: 'daily',   label: 'Daily' },
@@ -64,6 +87,45 @@ export function gradeColor(grade: string): string {
     case 'F': return 'bg-red-100 text-red-700 border-red-200';
     default:  return 'bg-muted text-muted-foreground border-border';
   }
+}
+
+// ── Performance summary ──────────────────────────────────────────────────────
+// A compact roll-up of a staff member's (or the whole team's) report history.
+
+export interface PerfReport {
+  status: string;
+  timeliness_score: number | null;
+  performance_score: number | null;
+}
+
+export interface PerfSummary {
+  total: number;
+  pending: number;      // awaiting review
+  approved: number;     // approved or converted
+  rejected: number;
+  onTime: number;       // submissions that met their due time
+  onTimeRate: number | null;  // 0–100 over reports that carry a timeliness score
+  avgScore: number | null;    // mean performance score
+  grade: string;        // letter grade derived from avgScore
+}
+
+/** Roll a list of reports into the headline performance numbers. */
+export function summarizePerformance(reports: PerfReport[]): PerfSummary {
+  const total = reports.length;
+  const pending = reports.filter(r => r.status === 'submitted').length;
+  const approved = reports.filter(r => r.status === 'approved' || r.status === 'converted').length;
+  const rejected = reports.filter(r => r.status === 'rejected').length;
+
+  const timed = reports.filter(r => r.timeliness_score != null);
+  const onTime = timed.filter(r => (r.timeliness_score as number) >= 100).length;
+  const onTimeRate = timed.length ? Math.round((onTime / timed.length) * 100) : null;
+
+  const scored = reports.filter(r => r.performance_score != null);
+  const avgScore = scored.length
+    ? Math.round(scored.reduce((s, r) => s + (r.performance_score as number), 0) / scored.length)
+    : null;
+
+  return { total, pending, approved, rejected, onTime, onTimeRate, avgScore, grade: gradeFromScore(avgScore) };
 }
 
 export const REPORT_STATUS_COLOR: Record<ReportStatus, string> = {

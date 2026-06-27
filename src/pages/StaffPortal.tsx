@@ -8,7 +8,7 @@ import StaffMyDocuments from '@/components/staff-portal/StaffMyDocuments';
 import MyReports from '@/components/reports/MyReports';
 import { useSearchParams } from 'react-router-dom';
 
-const VALID_TABS = ['leave', 'complaints', 'messages', 'performance', 'documents'];
+const VALID_TABS = ['leave', 'complaints', 'messages', 'reports', 'performance', 'documents'];
 
 const StaffPortal = () => {
   const [searchParams] = useSearchParams();

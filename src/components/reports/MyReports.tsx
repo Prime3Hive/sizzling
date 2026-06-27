@@ -13,14 +13,18 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import { Plus, Trash2, ClipboardList, FileText, Loader2 } from 'lucide-react';
 import {
   REPORT_TYPES, REPORT_STATUS_COLOR, gradeColor, computeTimeliness,
-  gradeFromScore, type ReportType,
+  gradeFromScore, summarizePerformance, type ReportType, type CreditLineKind,
 } from '@/lib/reports';
 import { formatNairaCompact } from '@/lib/currency';
 
 interface Assignment { id: string; report_type: ReportType; cadence: string; due_time: string | null; active: boolean; }
+interface Product { id: string; name: string; uom: string | null; price: number | null; }
+interface CreditLineForm { kind: CreditLineKind; product_id: string; item: string; qty: string; amount: string; }
+const emptyCreditLine = (): CreditLineForm => ({ kind: 'product', product_id: '', item: '', qty: '', amount: '' });
 interface Report {
   id: string; report_type: ReportType; report_date: string; submitted_at: string;
   status: string; title: string | null; amount: number | null; payment_method: string | null;
@@ -37,9 +41,10 @@ export default function MyReports() {
 
   const [open, setOpen] = useState(false);
   const [type, setType] = useState<ReportType>('sales');
-  const [form, setForm] = useState({ report_date: today(), title: '', summary: '', amount: '', payment_method: 'cash', supplier: '', due_date: '' });
+  const [form, setForm] = useState({ report_date: today(), title: '', summary: '', amount: '', payment_method: 'cash', source: '', is_supplier: false, due_date: '', misc_description: '', misc_amount: '', petty_description: '', petty_amount: '' });
   const [expLines, setExpLines] = useState<{ category: string; amount: string; description: string }[]>([{ category: '', amount: '', description: '' }]);
   const [invLines, setInvLines] = useState<{ item: string; counted: string; used: string }[]>([{ item: '', counted: '', used: '' }]);
+  const [creditLines, setCreditLines] = useState<CreditLineForm[]>([emptyCreditLine()]);
 
   const { data: assignments = [] } = useQuery<Assignment[]>({
     queryKey: ['my-report-assignments', user?.id],
@@ -65,13 +70,26 @@ export default function MyReports() {
     enabled: !!user,
   });
 
+  const { data: products = [] } = useQuery<Product[]>({
+    queryKey: ['report-products'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('products').select('id, name, uom, price').order('name');
+      if (error) throw error;
+      return (data ?? []) as Product[];
+    },
+    enabled: !!user,
+  });
+
   const assignedTypes = useMemo(() => assignments.map(a => a.report_type), [assignments]);
   const typeOptions = (assignedTypes.length ? assignedTypes : (Object.keys(REPORT_TYPES) as ReportType[]));
 
+  const summary = useMemo(() => summarizePerformance(reports), [reports]);
+
   const resetForm = () => {
-    setForm({ report_date: today(), title: '', summary: '', amount: '', payment_method: 'cash', supplier: '', due_date: '' });
+    setForm({ report_date: today(), title: '', summary: '', amount: '', payment_method: 'cash', source: '', is_supplier: false, due_date: '', misc_description: '', misc_amount: '', petty_description: '', petty_amount: '' });
     setExpLines([{ category: '', amount: '', description: '' }]);
     setInvLines([{ item: '', counted: '', used: '' }]);
+    setCreditLines([emptyCreditLine()]);
   };
 
   const openNew = () => { setType(typeOptions[0] ?? 'sales'); resetForm(); setOpen(true); };
@@ -90,14 +108,33 @@ export default function MyReports() {
         const lines = expLines
           .map(l => ({ category: l.category.trim(), amount: parseFloat(l.amount) || 0, description: l.description.trim() }))
           .filter(l => l.category && l.amount > 0);
-        if (lines.length === 0) throw new Error('Add at least one expense line');
+        const miscAmt = parseFloat(form.misc_amount) || 0;
+        if (miscAmt > 0) lines.push({ category: 'Miscellaneous', amount: miscAmt, description: form.misc_description.trim() });
+        const pettyAmt = parseFloat(form.petty_amount) || 0;
+        if (pettyAmt > 0) lines.push({ category: 'Petty Cash', amount: pettyAmt, description: form.petty_description.trim() });
+        if (lines.length === 0) throw new Error('Add at least one expense line (or a miscellaneous / petty cash amount)');
         amount = lines.reduce((s, l) => s + l.amount, 0);
         details.lines = lines;
       } else if (type === 'credit') {
-        amount = parseFloat(form.amount) || 0;
-        if (!form.supplier.trim()) throw new Error('Enter the supplier');
-        if (amount <= 0) throw new Error('Enter the credit amount');
-        details.supplier = form.supplier.trim();
+        const lines = creditLines
+          .map(l => {
+            const item = l.kind === 'misc'
+              ? (l.item.trim() || 'Miscellaneous')
+              : l.item.trim();
+            return {
+              kind: l.kind,
+              product_id: l.kind === 'product' && l.product_id ? l.product_id : null,
+              item,
+              qty: parseFloat(l.qty) || null,
+              amount: parseFloat(l.amount) || 0,
+            };
+          })
+          .filter(l => l.item && l.amount > 0);
+        if (lines.length === 0) throw new Error('Add at least one item bought on credit');
+        amount = lines.reduce((s, l) => s + l.amount, 0);
+        details.lines = lines;
+        details.source = form.source.trim() || null;
+        details.is_supplier = form.is_supplier;
         if (form.due_date) details.due_date = form.due_date;
       } else if (type === 'inventory') {
         const lines = invLines
@@ -143,6 +180,42 @@ export default function MyReports() {
         </div>
         <Button onClick={openNew}><Plus className="h-4 w-4 mr-2" />Submit Report</Button>
       </div>
+
+      {/* Quick performance summary */}
+      {reports.length > 0 && (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <Card>
+            <CardContent className="p-4">
+              <p className="text-xs text-muted-foreground">Reports submitted</p>
+              <p className="text-2xl font-bold mt-1">{summary.total}</p>
+              <p className="text-xs text-muted-foreground mt-1">{summary.pending} awaiting review</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-4">
+              <p className="text-xs text-muted-foreground">On-time rate</p>
+              <p className="text-2xl font-bold mt-1">{summary.onTimeRate != null ? `${summary.onTimeRate}%` : '—'}</p>
+              <p className="text-xs text-muted-foreground mt-1">{summary.onTime} of {summary.total} on time</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-4">
+              <p className="text-xs text-muted-foreground">Average score</p>
+              <p className="text-2xl font-bold mt-1">{summary.avgScore ?? '—'}</p>
+              <p className="text-xs text-muted-foreground mt-1">across graded reports</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-4">
+              <p className="text-xs text-muted-foreground">Overall grade</p>
+              <div className="mt-1">
+                <Badge className={`text-lg px-2.5 py-0.5 border ${gradeColor(summary.grade)}`}>{summary.grade}</Badge>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">{summary.approved} approved · {summary.rejected} rejected</p>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       {/* Assigned reports */}
       {assignments.length > 0 && (
@@ -250,26 +323,107 @@ export default function MyReports() {
             )}
 
             {type === 'expense' && (
-              <div className="space-y-2">
-                <Label>Expense lines</Label>
-                {expLines.map((l, i) => (
-                  <div key={i} className="flex gap-2">
-                    <Input className="flex-1" placeholder="Category" value={l.category} onChange={e => setExpLines(p => p.map((x, idx) => idx === i ? { ...x, category: e.target.value } : x))} />
-                    <Input className="w-28" type="number" min="0" placeholder="Amount" value={l.amount} onChange={e => setExpLines(p => p.map((x, idx) => idx === i ? { ...x, amount: e.target.value } : x))} />
-                    <Button type="button" variant="ghost" size="icon" className="text-destructive shrink-0" onClick={() => setExpLines(p => p.length > 1 ? p.filter((_, idx) => idx !== i) : p)}><Trash2 className="h-4 w-4" /></Button>
-                  </div>
-                ))}
-                <Button type="button" variant="outline" size="sm" onClick={() => setExpLines(p => [...p, { category: '', amount: '', description: '' }])}><Plus className="h-3.5 w-3.5 mr-1" />Add line</Button>
-              </div>
+              <>
+                <div className="space-y-2">
+                  <Label>Expense lines</Label>
+                  {expLines.map((l, i) => (
+                    <div key={i} className="flex gap-2">
+                      <Input className="flex-1" placeholder="Category" value={l.category} onChange={e => setExpLines(p => p.map((x, idx) => idx === i ? { ...x, category: e.target.value } : x))} />
+                      <Input className="w-28" type="number" min="0" placeholder="Amount" value={l.amount} onChange={e => setExpLines(p => p.map((x, idx) => idx === i ? { ...x, amount: e.target.value } : x))} />
+                      <Button type="button" variant="ghost" size="icon" className="text-destructive shrink-0" onClick={() => setExpLines(p => p.length > 1 ? p.filter((_, idx) => idx !== i) : p)}><Trash2 className="h-4 w-4" /></Button>
+                    </div>
+                  ))}
+                  <Button type="button" variant="outline" size="sm" onClick={() => setExpLines(p => [...p, { category: '', amount: '', description: '' }])}><Plus className="h-3.5 w-3.5 mr-1" />Add line</Button>
+                </div>
+
+                <div className="space-y-2 rounded-lg border p-2">
+                  <Label>Miscellaneous</Label>
+                  <p className="text-xs text-muted-foreground">List small uncategorised expenses here; their total is added to the report.</p>
+                  <Textarea rows={2} placeholder="e.g. fuel ₦2,000; bottled water ₦500; parking ₦300" value={form.misc_description} onChange={e => setForm(f => ({ ...f, misc_description: e.target.value }))} />
+                  <Input type="number" min="0" step="0.01" placeholder="Total amount (₦)" value={form.misc_amount} onChange={e => setForm(f => ({ ...f, misc_amount: e.target.value }))} />
+                </div>
+
+                <div className="space-y-2 rounded-lg border p-2">
+                  <Label>Petty cash</Label>
+                  <p className="text-xs text-muted-foreground">Cash spent from the petty cash float.</p>
+                  <Textarea rows={2} placeholder="What the petty cash was spent on" value={form.petty_description} onChange={e => setForm(f => ({ ...f, petty_description: e.target.value }))} />
+                  <Input type="number" min="0" step="0.01" placeholder="Amount (₦)" value={form.petty_amount} onChange={e => setForm(f => ({ ...f, petty_amount: e.target.value }))} />
+                </div>
+              </>
             )}
 
             {type === 'credit' && (
               <div className="space-y-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-2"><Label>Supplier</Label><Input value={form.supplier} onChange={e => setForm(f => ({ ...f, supplier: e.target.value }))} /></div>
-                  <div className="space-y-2"><Label>Amount (₦)</Label><Input type="number" min="0" step="0.01" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} /></div>
+                <div className="space-y-2">
+                  <Label>Items bought on credit</Label>
+                  {creditLines.map((l, i) => {
+                    const update = (patch: Partial<CreditLineForm>) =>
+                      setCreditLines(p => p.map((x, idx) => idx === i ? { ...x, ...patch } : x));
+                    return (
+                      <div key={i} className="rounded-lg border p-2 space-y-2">
+                        <div className="flex gap-2">
+                          <Select
+                            value={l.kind}
+                            onValueChange={v => update({ kind: v as CreditLineKind, product_id: '', item: v === 'misc' ? '' : l.item })}
+                          >
+                            <SelectTrigger className="w-36 shrink-0"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="product">From product list</SelectItem>
+                              <SelectItem value="manual">Type manually</SelectItem>
+                              <SelectItem value="misc">Miscellaneous</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          {l.kind === 'product' ? (
+                            <Select
+                              value={l.product_id}
+                              onValueChange={v => {
+                                const p = products.find(pr => pr.id === v);
+                                update({ product_id: v, item: p?.name ?? '', amount: l.amount || (p?.price ? String(p.price) : '') });
+                              }}
+                            >
+                              <SelectTrigger className="flex-1"><SelectValue placeholder="Select product" /></SelectTrigger>
+                              <SelectContent>
+                                {products.length === 0
+                                  ? <SelectItem value="none" disabled>No products found</SelectItem>
+                                  : products.map(p => <SelectItem key={p.id} value={p.id}>{p.name}{p.uom ? ` (${p.uom})` : ''}</SelectItem>)}
+                              </SelectContent>
+                            </Select>
+                          ) : (
+                            <Input
+                              className="flex-1"
+                              placeholder={l.kind === 'misc' ? 'Description (optional)' : 'Item description'}
+                              value={l.item}
+                              onChange={e => update({ item: e.target.value })}
+                            />
+                          )}
+                          <Button type="button" variant="ghost" size="icon" className="text-destructive shrink-0"
+                            onClick={() => setCreditLines(p => p.length > 1 ? p.filter((_, idx) => idx !== i) : p)}>
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                        <div className="flex gap-2">
+                          <Input className="w-24" type="number" min="0" placeholder="Qty" value={l.qty} onChange={e => update({ qty: e.target.value })} />
+                          <Input className="flex-1" type="number" min="0" step="0.01" placeholder="Amount (₦)" value={l.amount} onChange={e => update({ amount: e.target.value })} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <Button type="button" variant="outline" size="sm" onClick={() => setCreditLines(p => [...p, emptyCreditLine()])}>
+                    <Plus className="h-3.5 w-3.5 mr-1" />Add item
+                  </Button>
                 </div>
-                <div className="space-y-2"><Label>Due date (optional)</Label><Input type="date" value={form.due_date} onChange={e => setForm(f => ({ ...f, due_date: e.target.value }))} /></div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2"><Label>Bought from (optional)</Label><Input placeholder="Supplier / person / shop" value={form.source} onChange={e => setForm(f => ({ ...f, source: e.target.value }))} /></div>
+                  <div className="space-y-2"><Label>Due date (optional)</Label><Input type="date" value={form.due_date} onChange={e => setForm(f => ({ ...f, due_date: e.target.value }))} /></div>
+                </div>
+                <div className="flex items-center justify-between rounded-lg border p-2">
+                  <div>
+                    <Label className="text-sm">From a registered supplier</Label>
+                    <p className="text-xs text-muted-foreground">Not all credit is from suppliers.</p>
+                  </div>
+                  <Switch checked={form.is_supplier} onCheckedChange={v => setForm(f => ({ ...f, is_supplier: v }))} />
+                </div>
               </div>
             )}
 

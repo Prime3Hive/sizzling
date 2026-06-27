@@ -280,6 +280,11 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                         </SidebarMenuSubButton>
                       </SidebarMenuSubItem>
                       <SidebarMenuSubItem>
+                        <SidebarMenuSubButton asChild isActive={location.search.includes('tab=reports')}>
+                          <Link to="/staff-portal?tab=reports"><ClipboardList className="h-3 w-3" /><span>My Reports</span></Link>
+                        </SidebarMenuSubButton>
+                      </SidebarMenuSubItem>
+                      <SidebarMenuSubItem>
                         <SidebarMenuSubButton asChild>
                           <Link to="/business/kpi"><TrendingUp className="h-3 w-3" /><span>My Performance</span></Link>
                         </SidebarMenuSubButton>
@@ -571,6 +576,12 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             <SidebarMenuItem>
               <SidebarMenuButton asChild isActive={location.pathname === '/business/kpi'}>
                 <Link to="/business/kpi"><TrendingUp className="h-4 w-4" />My Performance</Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+
+            <SidebarMenuItem>
+              <SidebarMenuButton asChild isActive={location.search.includes('tab=reports')}>
+                <Link to="/staff-portal?tab=reports"><ClipboardList className="h-4 w-4" />My Reports</Link>
               </SidebarMenuButton>
             </SidebarMenuItem>
 

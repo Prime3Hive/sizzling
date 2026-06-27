@@ -15,10 +15,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Plus, CheckCircle2, XCircle, Loader2, ClipboardList, Wallet, ClipboardCheck } from 'lucide-react';
+import { Plus, CheckCircle2, XCircle, Loader2, ClipboardList, Wallet, ClipboardCheck, TrendingUp } from 'lucide-react';
 import {
   REPORT_TYPES, REPORT_STATUS_COLOR, CADENCES, gradeColor, gradeFromScore,
-  combinePerformance, type ReportType,
+  combinePerformance, summarizePerformance, describeCreditItems, type ReportType,
 } from '@/lib/reports';
 import { formatNairaCompact } from '@/lib/currency';
 
@@ -89,6 +89,19 @@ export default function StaffReportsAdmin() {
 
   const pending = reports.filter(r => r.status === 'submitted');
 
+  // Per-staff performance roll-up for the Performance tab.
+  const staffSummaries = useMemo(() => {
+    const byUser = new Map<string, Report[]>();
+    for (const r of reports) {
+      const list = byUser.get(r.user_id) ?? [];
+      list.push(r);
+      byUser.set(r.user_id, list);
+    }
+    return Array.from(byUser.entries())
+      .map(([user_id, rows]) => ({ user_id, name: nameOf(user_id), summary: summarizePerformance(rows) }))
+      .sort((a, b) => (b.summary.avgScore ?? -1) - (a.summary.avgScore ?? -1));
+  }, [reports, nameOf]);
+
   // ── Approve + grade + convert to financial records ──────────────────────────
   const approve = useMutation({
     mutationFn: async (r: Report) => {
@@ -122,9 +135,14 @@ export default function StaffReportsAdmin() {
         convertedRef = data?.[0]?.id ?? null;
         status = 'converted';
       } else if (r.report_type === 'credit') {
+        // Legacy reports stored a flat `supplier`; new ones carry item lines + an optional source.
+        const items = describeCreditItems(r.details?.lines ?? []);
+        const supplier = r.details?.is_supplier && r.details?.source
+          ? r.details.source
+          : (r.details?.source ?? r.details?.supplier ?? 'Miscellaneous');
         const { data, error } = await supabase.from('payables').insert({
-          supplier: r.details?.supplier ?? 'Unknown supplier',
-          description: r.title ?? null, category: 'Credit Purchase',
+          supplier,
+          description: items || r.title || null, category: 'Credit Purchase',
           amount: r.amount ?? 0, incurred_date: r.report_date,
           due_date: r.details?.due_date ?? null, status: 'unpaid',
           source_report_id: r.id, created_by: user!.id,
@@ -228,6 +246,7 @@ export default function StaffReportsAdmin() {
         <TabsList>
           <TabsTrigger value="review">Review{pending.length > 0 && <Badge className="ml-2 text-xs">{pending.length}</Badge>}</TabsTrigger>
           <TabsTrigger value="all">All Reports</TabsTrigger>
+          <TabsTrigger value="performance">Performance</TabsTrigger>
           <TabsTrigger value="assignments">Assignments</TabsTrigger>
           <TabsTrigger value="payables">Payables{outstanding > 0 && <Badge className="ml-2 text-xs">{formatNairaCompact(outstanding)}</Badge>}</TabsTrigger>
         </TabsList>
@@ -239,6 +258,38 @@ export default function StaffReportsAdmin() {
 
         <TabsContent value="all" className="mt-4">
           <ReportTable rows={reports} nameOf={nameOf} emptyMsg="No reports yet." onRow={(r) => { setReview(r); setQuality(r.quality_score?.toString() ?? ''); setReviewNote(r.review_note ?? ''); }} actionLabel="View" />
+        </TabsContent>
+
+        {/* Performance summary — per staff member */}
+        <TabsContent value="performance" className="mt-4">
+          <Card>
+            <CardContent className="p-0">
+              {staffSummaries.length === 0 ? (
+                <Empty icon={TrendingUp} msg="No reports to summarise yet." />
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Staff</TableHead><TableHead>Reports</TableHead><TableHead>On-time</TableHead>
+                      <TableHead>Avg score</TableHead><TableHead>Grade</TableHead><TableHead>Pending</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {staffSummaries.map(s => (
+                      <TableRow key={s.user_id}>
+                        <TableCell className="font-medium">{s.name}</TableCell>
+                        <TableCell>{s.summary.total}</TableCell>
+                        <TableCell>{s.summary.onTimeRate != null ? `${s.summary.onTimeRate}%` : '—'}<span className="text-xs text-muted-foreground"> ({s.summary.onTime}/{s.summary.total})</span></TableCell>
+                        <TableCell>{s.summary.avgScore ?? '—'}</TableCell>
+                        <TableCell><Badge className={`text-xs border ${gradeColor(s.summary.grade)}`}>{s.summary.grade}</Badge></TableCell>
+                        <TableCell>{s.summary.pending > 0 ? <Badge variant="outline">{s.summary.pending}</Badge> : '—'}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
         </TabsContent>
 
         {/* Assignments */}
@@ -323,13 +374,15 @@ export default function StaffReportsAdmin() {
                   <div className="rounded-lg border p-2 space-y-1">
                     {review.details.lines.map((l: any, i: number) => (
                       <div key={i} className="flex justify-between text-xs">
-                        <span>{l.category ?? l.item}</span>
+                        <span>{l.category ?? l.item}{l.qty ? ` ×${l.qty}` : ''}</span>
                         <span className="text-muted-foreground">{l.amount != null ? formatNairaCompact(l.amount) : `counted ${l.counted ?? 0} · used ${l.used ?? 0}`}</span>
                       </div>
                     ))}
                   </div>
                 )}
-                {review.details?.supplier && <p>Supplier: <span className="font-medium">{review.details.supplier}</span></p>}
+                {review.report_type === 'credit' && (review.details?.source || review.details?.supplier) && (
+                  <p>Bought from: <span className="font-medium">{review.details?.source ?? review.details?.supplier}</span>{review.details?.is_supplier ? ' · registered supplier' : ' · not a supplier'}</p>
+                )}
                 {review.summary && <p className="text-muted-foreground">{review.summary}</p>}
                 {review.converted_ref && <p className="text-violet-600 text-xs">Already converted to a financial record.</p>}
 
