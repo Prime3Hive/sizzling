@@ -9,9 +9,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from "@/components/ui/table";
+import { ResponsiveTable, type ResponsiveColumn } from "@/components/ui/responsive-table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Plus, Search, X, FileText, ShoppingCart, CalendarDays,
@@ -156,6 +154,58 @@ export default function Invoices() {
     setViewingInvoice(inv);
     setViewOpen(true);
   };
+
+  const invoiceColumns: ResponsiveColumn<Invoice>[] = [
+    {
+      key: "number", header: "Number", primary: true,
+      cell: (inv) => (
+        <div>
+          <div className="font-mono text-xs font-semibold">{inv.invoice_number ?? inv.quotation_number}</div>
+          {inv.invoice_number && (
+            <div className="font-mono text-[10px] text-muted-foreground mt-0.5">{inv.quotation_number}</div>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: "type", header: "Type",
+      cell: (inv) => (
+        <div>
+          <div className="flex items-center gap-1.5">
+            {inv.invoice_type === "event"
+              ? <CalendarDays className="h-3.5 w-3.5 text-purple-500 shrink-0" />
+              : <ShoppingCart className="h-3.5 w-3.5 text-blue-500 shrink-0" />}
+            <span className="text-xs">{TYPE_LABELS[inv.invoice_type]}</span>
+          </div>
+          {inv.event_name && <div className="text-[10px] text-muted-foreground truncate max-w-28 mt-0.5">{inv.event_name}</div>}
+        </div>
+      ),
+    },
+    { key: "customer", header: "Customer", cell: (inv) => <span className="font-medium">{inv.customer_name}</span> },
+    { key: "date", header: "Date", cell: (inv) => <span className="text-sm text-muted-foreground">{format(new Date(inv.issue_date), "dd MMM yyyy")}</span> },
+    { key: "valid", header: "Valid Until", hideOnMobile: true, cell: (inv) => <span className="text-sm text-muted-foreground">{inv.valid_until ? format(new Date(inv.valid_until), "dd MMM yyyy") : "—"}</span> },
+    {
+      key: "status", header: "Status",
+      cell: (inv) => (
+        <div>
+          <Badge variant="outline" className={`text-xs ${STATUS_BADGE[inv.status]}`}>{STATUS_LABELS[inv.status]}</Badge>
+          {inv.recorded_in_finance && (
+            <div className="mt-0.5"><Badge variant="outline" className="text-[9px] bg-blue-50 text-blue-600 border-blue-200">Finance</Badge></div>
+          )}
+          {inv.archived && (
+            <div className="mt-0.5"><Badge variant="outline" className="text-[9px] bg-muted text-muted-foreground border-muted-foreground/30">Archived</Badge></div>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: "payment", header: "Payment",
+      cell: (inv) => inv.status === "invoice"
+        ? <Badge variant="outline" className={`text-xs ${PAYMENT_BADGE[inv.payment_status]}`}>{PAYMENT_STATUS_LABELS[inv.payment_status]}</Badge>
+        : <span className="text-muted-foreground text-xs">—</span>,
+    },
+    { key: "total", header: "Total", align: "right", cell: (inv) => <span className="font-semibold">{formatNairaCompact(inv.total_amount)}</span> },
+  ];
 
   return (
     <div className="space-y-6">
@@ -303,118 +353,27 @@ export default function Invoices() {
       </div>
 
       {/* Table */}
-      <div className="rounded-lg border overflow-hidden">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Number</TableHead>
-              <TableHead>Type</TableHead>
-              <TableHead>Customer</TableHead>
-              <TableHead className="hidden md:table-cell">Date</TableHead>
-              <TableHead className="hidden lg:table-cell">Valid Until</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="hidden sm:table-cell">Payment</TableHead>
-              <TableHead className="text-right">Total</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
-              <TableRow>
-                <TableCell colSpan={8} className="text-center py-10 text-muted-foreground">
-                  Loading…
-                </TableCell>
-              </TableRow>
-            ) : filtered.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={8} className="text-center py-10">
-                  <div className="flex flex-col items-center gap-2 text-muted-foreground">
-                    <FileText className="h-8 w-8 opacity-40" />
-                    <p>No invoices found</p>
-                    <Button size="sm" variant="outline" onClick={() => openCreate()}>
-                      <Plus className="h-3.5 w-3.5 mr-1" /> Create your first quotation
-                    </Button>
-                  </div>
-                </TableCell>
-              </TableRow>
-            ) : (
-              filtered.map((inv) => (
-                <TableRow
-                  key={inv.id}
-                  className="cursor-pointer hover:bg-muted/40 transition-colors"
-                  onClick={() => openView(inv)}
-                >
-                  <TableCell>
-                    <div className="font-mono text-xs font-semibold">
-                      {inv.invoice_number ?? inv.quotation_number}
-                    </div>
-                    {inv.invoice_number && (
-                      <div className="font-mono text-[10px] text-muted-foreground mt-0.5">
-                        {inv.quotation_number}
-                      </div>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-1.5">
-                      {inv.invoice_type === "event" ? (
-                        <CalendarDays className="h-3.5 w-3.5 text-purple-500 shrink-0" />
-                      ) : (
-                        <ShoppingCart className="h-3.5 w-3.5 text-blue-500 shrink-0" />
-                      )}
-                      <span className="text-xs">{TYPE_LABELS[inv.invoice_type]}</span>
-                    </div>
-                    {inv.event_name && (
-                      <div className="text-[10px] text-muted-foreground truncate max-w-28 mt-0.5">
-                        {inv.event_name}
-                      </div>
-                    )}
-                  </TableCell>
-                  <TableCell className="font-medium max-w-36 truncate">
-                    {inv.customer_name}
-                  </TableCell>
-                  <TableCell className="hidden md:table-cell text-sm text-muted-foreground">
-                    {format(new Date(inv.issue_date), "dd MMM yyyy")}
-                  </TableCell>
-                  <TableCell className="hidden lg:table-cell text-sm text-muted-foreground">
-                    {inv.valid_until
-                      ? format(new Date(inv.valid_until), "dd MMM yyyy")
-                      : "—"}
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="outline" className={`text-xs ${STATUS_BADGE[inv.status]}`}>
-                      {STATUS_LABELS[inv.status]}
-                    </Badge>
-                    {inv.recorded_in_finance && (
-                      <div className="mt-0.5">
-                        <Badge variant="outline" className="text-[9px] bg-blue-50 text-blue-600 border-blue-200">
-                          Finance
-                        </Badge>
-                      </div>
-                    )}
-                    {inv.archived && (
-                      <div className="mt-0.5">
-                        <Badge variant="outline" className="text-[9px] bg-muted text-muted-foreground border-muted-foreground/30">
-                          Archived
-                        </Badge>
-                      </div>
-                    )}
-                  </TableCell>
-                  <TableCell className="hidden sm:table-cell">
-                    {inv.status === "invoice" ? (
-                      <Badge variant="outline" className={`text-xs ${PAYMENT_BADGE[inv.payment_status]}`}>
-                        {PAYMENT_STATUS_LABELS[inv.payment_status]}
-                      </Badge>
-                    ) : (
-                      <span className="text-muted-foreground text-xs">—</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right font-semibold">
-                    {formatNairaCompact(inv.total_amount)}
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
+      <div className="rounded-lg border overflow-hidden px-3 md:px-0">
+        {isLoading ? (
+          <p className="text-center py-10 text-muted-foreground">Loading…</p>
+        ) : (
+          <ResponsiveTable
+            columns={invoiceColumns}
+            data={filtered}
+            rowKey={(inv) => inv.id}
+            onRowClick={openView}
+            mobileSubtitle={(inv) => inv.customer_name}
+            emptyState={
+              <div className="flex flex-col items-center gap-2 text-muted-foreground py-10">
+                <FileText className="h-8 w-8 opacity-40" />
+                <p>No invoices found</p>
+                <Button size="sm" variant="outline" onClick={() => openCreate()}>
+                  <Plus className="h-3.5 w-3.5 mr-1" /> Create your first quotation
+                </Button>
+              </div>
+            }
+          />
+        )}
       </div>
 
       <p className="text-xs text-muted-foreground text-center">

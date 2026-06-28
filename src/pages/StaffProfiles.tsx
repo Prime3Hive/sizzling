@@ -1123,7 +1123,7 @@ const StaffProfiles = () => {
                       <Input id="email_address" type="email" value={formData.email_address} onChange={e => f("email_address", e.target.value)} />
                     </FormField>
                   </div>
-                  <div className="grid grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <FormField id="phone_number" label="Phone Number">
                       <Input id="phone_number" type="tel" value={formData.phone_number} onChange={e => f("phone_number", e.target.value)} />
                     </FormField>
@@ -1137,7 +1137,7 @@ const StaffProfiles = () => {
                       </Select>
                     </FormField>
                   </div>
-                  <div className="grid grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <FormField label="Marital Status">
                       <Select value={formData.marital_status} onValueChange={v => f("marital_status", v)}>
                         <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
@@ -1169,7 +1169,7 @@ const StaffProfiles = () => {
 
                 {/* ── Employment ── */}
                 <TabsContent value="employment" className="space-y-4 pb-6">
-                  <div className="grid grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <FormField label="Position" required>
                       <Select value={formData.position} onValueChange={v => f("position", v)}>
                         <SelectTrigger><SelectValue /></SelectTrigger>
@@ -1189,7 +1189,7 @@ const StaffProfiles = () => {
                       </Select>
                     </FormField>
                   </div>
-                  <div className="grid grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <FormField id="employment_date" label="Employment Date">
                       <Input id="employment_date" type="date" value={formData.employment_date} onChange={e => f("employment_date", e.target.value)} />
                     </FormField>
@@ -1232,7 +1232,7 @@ const StaffProfiles = () => {
 
                 {/* ── Emergency ── */}
                 <TabsContent value="emergency" className="space-y-4 pb-6">
-                  <div className="grid grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <FormField id="ec_name" label="Contact Name">
                       <Input id="ec_name" value={formData.emergency_contact_name} onChange={e => f("emergency_contact_name", e.target.value)} />
                     </FormField>

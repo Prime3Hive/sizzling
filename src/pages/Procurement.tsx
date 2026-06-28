@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { ResponsiveTable, type ResponsiveColumn } from '@/components/ui/responsive-table';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuSeparator, DropdownMenuTrigger,
@@ -250,8 +250,121 @@ export default function Procurement() {
     qc.invalidateQueries({ queryKey: ['lpos'] });
   };
 
+  // ── Table column definitions ──────────────────────────────────────────────────
+  const lpoColumns: ResponsiveColumn<LPO>[] = [
+    {
+      key: 'lpo_number', header: 'LPO Number', primary: true,
+      cell: (lpo) => <span className="font-mono font-medium text-sm">{lpo.lpo_number}</span>,
+    },
+    {
+      key: 'supplier', header: 'Supplier',
+      cell: (lpo) => (
+        <div className="max-w-[180px]">
+          <p className="truncate text-sm font-medium">{lpo.supplier_name}</p>
+          {lpo.supplier_phone && <p className="text-xs text-muted-foreground truncate">{lpo.supplier_phone}</p>}
+        </div>
+      ),
+    },
+    {
+      key: 'order_date', header: 'Order Date',
+      cell: (lpo) => <span className="text-sm text-muted-foreground">{format(new Date(lpo.order_date), 'dd MMM yyyy')}</span>,
+    },
+    {
+      key: 'expected', header: 'Expected Delivery',
+      cell: (lpo) => (
+        <span className="text-sm text-muted-foreground">
+          {lpo.expected_delivery ? format(new Date(lpo.expected_delivery), 'dd MMM yyyy') : <span className="text-muted-foreground/40">—</span>}
+        </span>
+      ),
+    },
+    {
+      key: 'cost_center', header: 'Cost Centre',
+      cell: (lpo) => <span className="text-sm text-muted-foreground">{lpo.cost_center ?? '—'}</span>,
+    },
+    {
+      key: 'status', header: 'Status',
+      cell: (lpo) => {
+        const sc = STATUS_CFG[lpo.status] ?? STATUS_CFG.draft;
+        return <Badge variant="outline" className={`border text-xs ${sc.cls}`}>{sc.label}</Badge>;
+      },
+    },
+    {
+      key: 'total', header: 'Total (₦)', align: 'right',
+      cell: (lpo) => (
+        <span className="font-semibold tabular-nums">
+          {Number(lpo.total_amount).toLocaleString('en-NG', { minimumFractionDigits: 2 })}
+        </span>
+      ),
+    },
+    {
+      key: 'actions', header: '', align: 'right', mobileFooter: true,
+      cell: (lpo) => (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon" className="h-8 w-8 max-md:w-full max-md:border max-md:rounded-md">
+              <MoreHorizontal className="h-4 w-4" />
+              <span className="md:hidden ml-2">Actions</span>
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-44">
+            <DropdownMenuItem onClick={() => openView(lpo)}>
+              <Eye className="h-3.5 w-3.5 mr-2" />View
+            </DropdownMenuItem>
+            {lpo.status === 'draft' && (
+              <>
+                <DropdownMenuItem onClick={() => openEdit(lpo)}>
+                  <Pencil className="h-3.5 w-3.5 mr-2" />Edit
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => markSent(lpo)}>
+                  <Send className="h-3.5 w-3.5 mr-2" />Mark Sent
+                </DropdownMenuItem>
+              </>
+            )}
+            {(lpo.status === 'sent' || lpo.status === 'partially_received') && (
+              <DropdownMenuItem onClick={() => openReceive(lpo)} className="text-emerald-700 focus:text-emerald-700">
+                <PackageCheck className="h-3.5 w-3.5 mr-2" />Receive Goods
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => openRepeat(lpo)}>
+              <Copy className="h-3.5 w-3.5 mr-2" />Repeat Order
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => triggerExport(lpo)}>
+              <Download className="h-3.5 w-3.5 mr-2" />Export PDF
+            </DropdownMenuItem>
+            {lpo.status !== 'cancelled' && lpo.status !== 'received' && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => cancelLPO(lpo)} className="text-destructive focus:text-destructive">
+                  <XCircle className="h-3.5 w-3.5 mr-2" />Cancel LPO
+                </DropdownMenuItem>
+              </>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ),
+    },
+  ];
+
+  const grnColumns: ResponsiveColumn<any>[] = [
+    { key: 'grn', header: 'GRN Number', primary: true, cell: (g) => <span className="font-mono font-medium text-sm">{g.receipt_number}</span> },
+    { key: 'lpo', header: 'LPO', cell: (g) => <span className="font-mono text-sm text-muted-foreground">{g.lpos?.lpo_number ?? '—'}</span> },
+    { key: 'supplier', header: 'Supplier', cell: (g) => <span className="text-sm">{g.lpos?.supplier_name ?? '—'}</span> },
+    { key: 'date', header: 'Received Date', cell: (g) => <span className="text-sm text-muted-foreground">{format(new Date(g.received_date), 'dd MMM yyyy')}</span> },
+    {
+      key: 'amount', header: 'Amount (₦)', align: 'right',
+      cell: (g) => <span className="font-semibold tabular-nums">{Number(g.total_received_amount).toLocaleString('en-NG', { minimumFractionDigits: 2 })}</span>,
+    },
+    {
+      key: 'expense', header: 'Expense',
+      cell: (g) => g.expense_id
+        ? <Badge variant="outline" className="text-xs text-emerald-700 border-emerald-200 bg-emerald-50"><CheckCircle2 className="h-3 w-3 mr-1" />Linked</Badge>
+        : <Badge variant="outline" className="text-xs text-muted-foreground">None</Badge>,
+    },
+  ];
+
   return (
-    <div className="flex flex-col gap-6 p-6 max-w-7xl mx-auto">
+    <div className="flex flex-col gap-6 p-1 sm:p-4 md:p-6 max-w-7xl mx-auto">
 
       {/* ── Page header ── */}
       <div className="flex flex-wrap items-center justify-between gap-4">
@@ -306,14 +419,14 @@ export default function Procurement() {
             </TabsTrigger>
           </TabsList>
 
-          <div className="flex items-center gap-2">
-            <div className="relative">
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            <div className="relative flex-1 sm:flex-none">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
               <Input
                 placeholder="Search LPOs…"
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                className="pl-8 h-9 w-52 text-sm"
+                className="pl-8 h-9 w-full sm:w-52 text-sm"
               />
               {search && (
                 <button
@@ -325,7 +438,7 @@ export default function Procurement() {
               )}
             </div>
             <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="h-9 w-44">
+              <SelectTrigger className="h-9 w-36 sm:w-44 shrink-0">
                 <SelectValue placeholder="All statuses" />
               </SelectTrigger>
               <SelectContent>
@@ -359,103 +472,14 @@ export default function Procurement() {
                   )}
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>LPO Number</TableHead>
-                        <TableHead>Supplier</TableHead>
-                        <TableHead>Order Date</TableHead>
-                        <TableHead>Expected Delivery</TableHead>
-                        <TableHead>Cost Centre</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead className="text-right">Total (₦)</TableHead>
-                        <TableHead className="w-10" />
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {filteredLPOs.map(lpo => {
-                        const sc = STATUS_CFG[lpo.status] ?? STATUS_CFG.draft;
-                        return (
-                          <TableRow
-                            key={lpo.id}
-                            className="cursor-pointer hover:bg-muted/30"
-                            onClick={() => openView(lpo)}
-                          >
-                            <TableCell className="font-mono font-medium text-sm">{lpo.lpo_number}</TableCell>
-                            <TableCell className="max-w-[160px]">
-                              <p className="truncate text-sm font-medium">{lpo.supplier_name}</p>
-                              {lpo.supplier_phone && (
-                                <p className="text-xs text-muted-foreground truncate">{lpo.supplier_phone}</p>
-                              )}
-                            </TableCell>
-                            <TableCell className="text-sm text-muted-foreground">
-                              {format(new Date(lpo.order_date), 'dd MMM yyyy')}
-                            </TableCell>
-                            <TableCell className="text-sm text-muted-foreground">
-                              {lpo.expected_delivery
-                                ? format(new Date(lpo.expected_delivery), 'dd MMM yyyy')
-                                : <span className="text-muted-foreground/40">—</span>}
-                            </TableCell>
-                            <TableCell className="text-sm text-muted-foreground">{lpo.cost_center ?? '—'}</TableCell>
-                            <TableCell>
-                              <Badge variant="outline" className={`border text-xs ${sc.cls}`}>{sc.label}</Badge>
-                            </TableCell>
-                            <TableCell className="text-right font-semibold tabular-nums">
-                              {Number(lpo.total_amount).toLocaleString('en-NG', { minimumFractionDigits: 2 })}
-                            </TableCell>
-                            <TableCell onClick={e => e.stopPropagation()}>
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <Button variant="ghost" size="icon" className="h-8 w-8">
-                                    <MoreHorizontal className="h-4 w-4" />
-                                  </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end" className="w-44">
-                                  <DropdownMenuItem onClick={() => openView(lpo)}>
-                                    <Eye className="h-3.5 w-3.5 mr-2" />View
-                                  </DropdownMenuItem>
-                                  {lpo.status === 'draft' && (
-                                    <>
-                                      <DropdownMenuItem onClick={() => openEdit(lpo)}>
-                                        <Pencil className="h-3.5 w-3.5 mr-2" />Edit
-                                      </DropdownMenuItem>
-                                      <DropdownMenuItem onClick={() => markSent(lpo)}>
-                                        <Send className="h-3.5 w-3.5 mr-2" />Mark Sent
-                                      </DropdownMenuItem>
-                                    </>
-                                  )}
-                                  {(lpo.status === 'sent' || lpo.status === 'partially_received') && (
-                                    <DropdownMenuItem onClick={() => openReceive(lpo)} className="text-emerald-700 focus:text-emerald-700">
-                                      <PackageCheck className="h-3.5 w-3.5 mr-2" />Receive Goods
-                                    </DropdownMenuItem>
-                                  )}
-                                  <DropdownMenuSeparator />
-                                  <DropdownMenuItem onClick={() => openRepeat(lpo)}>
-                                    <Copy className="h-3.5 w-3.5 mr-2" />Repeat Order
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem onClick={() => triggerExport(lpo)}>
-                                    <Download className="h-3.5 w-3.5 mr-2" />Export PDF
-                                  </DropdownMenuItem>
-                                  {lpo.status !== 'cancelled' && lpo.status !== 'received' && (
-                                    <>
-                                      <DropdownMenuSeparator />
-                                      <DropdownMenuItem
-                                        onClick={() => cancelLPO(lpo)}
-                                        className="text-destructive focus:text-destructive"
-                                      >
-                                        <XCircle className="h-3.5 w-3.5 mr-2" />Cancel LPO
-                                      </DropdownMenuItem>
-                                    </>
-                                  )}
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })}
-                    </TableBody>
-                  </Table>
+                <div className="px-2 md:px-0">
+                  <ResponsiveTable
+                    columns={lpoColumns}
+                    data={filteredLPOs}
+                    rowKey={(lpo) => lpo.id}
+                    onRowClick={openView}
+                    mobileSubtitle={(lpo) => lpo.supplier_name}
+                  />
                 </div>
               )}
             </CardContent>
@@ -485,45 +509,13 @@ export default function Procurement() {
                   <p className="text-muted-foreground font-medium">No goods received yet</p>
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>GRN Number</TableHead>
-                        <TableHead>LPO</TableHead>
-                        <TableHead>Supplier</TableHead>
-                        <TableHead>Received Date</TableHead>
-                        <TableHead className="text-right">Amount (₦)</TableHead>
-                        <TableHead>Expense</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {grns.map((grn: any) => (
-                        <TableRow key={grn.id} className="hover:bg-muted/30">
-                          <TableCell className="font-mono font-medium text-sm">{grn.receipt_number}</TableCell>
-                          <TableCell className="font-mono text-sm text-muted-foreground">
-                            {grn.lpos?.lpo_number ?? '—'}
-                          </TableCell>
-                          <TableCell className="text-sm">{grn.lpos?.supplier_name ?? '—'}</TableCell>
-                          <TableCell className="text-sm text-muted-foreground">
-                            {format(new Date(grn.received_date), 'dd MMM yyyy')}
-                          </TableCell>
-                          <TableCell className="text-right font-semibold tabular-nums">
-                            {Number(grn.total_received_amount).toLocaleString('en-NG', { minimumFractionDigits: 2 })}
-                          </TableCell>
-                          <TableCell>
-                            {grn.expense_id ? (
-                              <Badge variant="outline" className="text-xs text-emerald-700 border-emerald-200 bg-emerald-50">
-                                <CheckCircle2 className="h-3 w-3 mr-1" />Linked
-                              </Badge>
-                            ) : (
-                              <Badge variant="outline" className="text-xs text-muted-foreground">None</Badge>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                <div className="px-2 md:px-0">
+                  <ResponsiveTable
+                    columns={grnColumns}
+                    data={grns}
+                    rowKey={(g) => g.id}
+                    mobileSubtitle={(g) => g.lpos?.supplier_name ?? undefined}
+                  />
                 </div>
               )}
             </CardContent>

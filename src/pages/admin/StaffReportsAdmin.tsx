@@ -136,8 +136,25 @@ export default function StaffReportsAdmin() {
           status: 'completed',
         }).select('id');
         if (error) throw error;
-        convertedRef = data?.[0]?.id ?? null;
+        const saleId = data?.[0]?.id ?? null;
+        convertedRef = saleId;
         status = 'converted';
+
+        // Mirror the recognised revenue into the finance ledger (the Finance Feed
+        // audit trail). source_id points at the sale so the feed row is clickable.
+        // P&L and the Finance KPIs read the sales table directly, so this is a
+        // display-only audit entry and does not double-count.
+        if (saleId) {
+          const { error: ledgerErr } = await supabase.from('finance_ledger').insert({
+            user_id: user!.id, entry_date: r.report_date, entry_type: 'revenue',
+            source_type: 'sale', source_id: saleId,
+            description: `Sales report — ${r.report_date}${r.payment_method ? ` (${r.payment_method})` : ''}`,
+            amount: r.amount ?? 0,
+            cost_center: saleType === 'event' ? 'Event Account' : 'Daily Orders',
+            reference_number: ref, recorded_by: user!.id,
+          });
+          if (ledgerErr) throw ledgerErr;
+        }
       } else if (r.report_type === 'credit') {
         // Legacy reports stored a flat `supplier`; new ones carry item lines + an optional source.
         const items = describeCreditItems(r.details?.lines ?? []);

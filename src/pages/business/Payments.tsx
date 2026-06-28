@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { ResponsiveTable, type ResponsiveColumn } from "@/components/ui/responsive-table";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
@@ -180,6 +180,38 @@ const Payments = () => {
   if (loading) {
     return <div className="flex items-center justify-center h-64">Loading...</div>;
   }
+
+  const paymentColumns: ResponsiveColumn<Payment>[] = [
+    { key: "sale", header: "Sale Number", primary: true, cell: (p) => <span className="font-medium">{p.sale.sale_number}</span> },
+    { key: "customer", header: "Customer", cell: (p) => p.sale.customer_name || 'N/A' },
+    { key: "method", header: "Payment Method", cell: (p) => <span className="capitalize">{p.payment_method.replace('_', ' ')}</span> },
+    { key: "total", header: "Sale Total", align: "right", cell: (p) => formatNairaCompact(p.sale.total_amount) },
+    { key: "paid", header: "Amount Paid", align: "right", cell: (p) => formatNairaCompact(p.amount) },
+    { key: "date", header: "Date", cell: (p) => p.payment_date ? format(new Date(p.payment_date), 'MMM dd, yyyy') : 'N/A' },
+    { key: "txn", header: "Transaction ID", hideOnMobile: true, cell: (p) => p.transaction_id || 'N/A' },
+    {
+      key: "status", header: "Status",
+      cell: (p) => (
+        <div className="flex items-center gap-2">
+          {getStatusIcon(p.status)}
+          <Badge variant={p.status === 'settled' ? 'default' : p.status === 'pending' ? 'secondary' : 'destructive'}>{p.status}</Badge>
+        </div>
+      ),
+    },
+    {
+      key: "actions", header: "Actions", align: "right", mobileFooter: true,
+      cell: (p) => (
+        <div className="flex gap-2 md:justify-end">
+          {p.status === 'pending' && (
+            <>
+              <Button size="sm" variant="outline" onClick={() => updatePaymentStatus(p.id, 'settled')}>Mark Settled</Button>
+              <Button size="sm" variant="outline" onClick={() => updatePaymentStatus(p.id, 'failed')}>Mark Failed</Button>
+            </>
+          )}
+        </div>
+      ),
+    },
+  ];
 
   return (
     <div className="space-y-6">
@@ -366,69 +398,13 @@ const Payments = () => {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Sale Number</TableHead>
-                <TableHead>Customer</TableHead>
-                <TableHead>Payment Method</TableHead>
-                <TableHead>Sale Total</TableHead>
-                <TableHead>Amount Paid</TableHead>
-                <TableHead>Date</TableHead>
-                <TableHead>Transaction ID</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filteredPayments.map((payment) => (
-                <TableRow key={payment.id}>
-                  <TableCell className="font-medium">{payment.sale.sale_number}</TableCell>
-                  <TableCell>{payment.sale.customer_name || 'N/A'}</TableCell>
-                  <TableCell className="capitalize">{payment.payment_method.replace('_', ' ')}</TableCell>
-                  <TableCell>{formatNairaCompact(payment.sale.total_amount)}</TableCell>
-                  <TableCell>{formatNairaCompact(payment.amount)}</TableCell>
-                  <TableCell>
-                    {payment.payment_date ? format(new Date(payment.payment_date), 'MMM dd, yyyy') : 'N/A'}
-                  </TableCell>
-                  <TableCell>{payment.transaction_id || 'N/A'}</TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-2">
-                      {getStatusIcon(payment.status)}
-                      <Badge variant={
-                        payment.status === 'settled' ? 'default' :
-                        payment.status === 'pending' ? 'secondary' : 'destructive'
-                      }>
-                        {payment.status}
-                      </Badge>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex gap-2">
-                      {payment.status === 'pending' && (
-                        <>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => updatePaymentStatus(payment.id, 'settled')}
-                          >
-                            Mark Settled
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => updatePaymentStatus(payment.id, 'failed')}
-                          >
-                            Mark Failed
-                          </Button>
-                        </>
-                      )}
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          <ResponsiveTable
+            columns={paymentColumns}
+            data={filteredPayments}
+            rowKey={(p) => p.id}
+            mobileSubtitle={(p) => p.sale.customer_name || 'N/A'}
+            emptyState={<p className="text-center text-muted-foreground py-8 text-sm">No payments found.</p>}
+          />
         </CardContent>
       </Card>
     </div>

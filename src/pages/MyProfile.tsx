@@ -279,7 +279,7 @@ const MyProfile = () => {
       <Card>
         <CardHeader><CardTitle>Emergency Contact</CardTitle></CardHeader>
         <CardContent>
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="space-y-2">
               <Label>Contact Name</Label>
               <Input value={form.emergency_contact_name} onChange={e => setForm({ ...form, emergency_contact_name: e.target.value })} />

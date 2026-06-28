@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { ResponsiveTable, type ResponsiveColumn } from '@/components/ui/responsive-table';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
@@ -221,6 +221,133 @@ export default function UserManagement() {
 
   const unlinkedProfiles = staffProfiles.filter(sp => !sp.linked_user_id);
 
+  const userColumns: ResponsiveColumn<UserItem>[] = [
+    {
+      key: 'user', header: 'User', primary: true,
+      cell: (u) => (
+        <div className="flex items-center gap-2">
+          <User className="h-4 w-4" />
+          <span>{u.full_name || 'No name'}</span>
+        </div>
+      ),
+    },
+    {
+      key: 'role', header: 'Role',
+      cell: (u) => (
+        <Badge variant={u.role === 'admin' ? 'default' : u.role === 'manager' || u.role === 'hr' ? 'secondary' : 'outline'}>
+          {u.role === 'hr' ? 'HR' : u.role.charAt(0).toUpperCase() + u.role.slice(1)}
+        </Badge>
+      ),
+    },
+    {
+      key: 'status', header: 'Status',
+      cell: (u) => (
+        <Badge variant={u.role_status === 'pending' ? 'destructive' : 'outline'}>
+          {u.role_status === 'pending' ? 'Pending' : 'Approved'}
+        </Badge>
+      ),
+    },
+    {
+      key: 'department', header: 'Department',
+      cell: (u) => u.department_name
+        ? <Badge variant="outline">{u.department_name}</Badge>
+        : <span className="text-muted-foreground">—</span>,
+    },
+    {
+      key: 'profile', header: 'Staff Profile',
+      cell: (u) => u.linked_staff_profile
+        ? <Badge variant="outline" className="text-primary border-primary/30">{u.linked_staff_profile}</Badge>
+        : <span className="text-muted-foreground text-xs">Not linked</span>,
+    },
+    {
+      key: 'actions', header: 'Actions', align: 'right', mobileFooter: true,
+      cell: (u) => (
+        <div className="flex gap-1 flex-wrap md:justify-end">
+          {u.role_status === 'pending' && (
+            <Button variant="default" size="sm" onClick={() => handleApproveRole(u.user_id)}>Approve</Button>
+          )}
+          {!u.linked_staff_profile && (
+            <Dialog open={linkDialogOpen && selectedUserId === u.user_id} onOpenChange={setLinkDialogOpen}>
+              <DialogTrigger asChild>
+                <Button variant="outline" size="sm" onClick={() => { setSelectedUserId(u.user_id); setSelectedStaffProfileId('none'); setLinkDialogOpen(true); }}>
+                  <Link2 className="h-3 w-3 mr-1" />Link Profile
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Link Staff Profile</DialogTitle>
+                  <DialogDescription>Assign an existing staff profile to {u.full_name}</DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                  <Label>Staff Profile</Label>
+                  <Select value={selectedStaffProfileId} onValueChange={setSelectedStaffProfileId}>
+                    <SelectTrigger><SelectValue placeholder="Select staff profile" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Select a profile...</SelectItem>
+                      {unlinkedProfiles.map(sp => (
+                        <SelectItem key={sp.id} value={sp.id}>{sp.full_name} ({sp.position.replace(/_/g, ' ')})</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex justify-end gap-2">
+                  <Button variant="outline" onClick={() => setLinkDialogOpen(false)}>Cancel</Button>
+                  <Button onClick={handleLinkProfile} disabled={selectedStaffProfileId === 'none'}>Link Profile</Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+          )}
+          <Dialog open={assignDialogOpen && selectedUserId === u.user_id} onOpenChange={setAssignDialogOpen}>
+            <DialogTrigger asChild>
+              <Button variant="outline" size="sm" onClick={() => { setSelectedUserId(u.user_id); setSelectedRole(u.role); setSelectedDepartmentId(u.department_id || 'none'); setAssignDialogOpen(true); }}>
+                Edit Role
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Assign Role & Department</DialogTitle>
+                <DialogDescription>Update role for {u.full_name}</DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 py-4">
+                <div className="space-y-2">
+                  <Label>Role</Label>
+                  <Select value={selectedRole} onValueChange={(v: any) => setSelectedRole(v)}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="employee">Staff / Employee</SelectItem>
+                      <SelectItem value="hr">HR</SelectItem>
+                      <SelectItem value="manager">Manager</SelectItem>
+                      <SelectItem value="admin">Admin</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Department</Label>
+                  <Select value={selectedDepartmentId} onValueChange={setSelectedDepartmentId}>
+                    <SelectTrigger><SelectValue placeholder="Select department" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">No department</SelectItem>
+                      {departments.map(dept => (
+                        <SelectItem key={dept.id} value={dept.id}>{dept.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setAssignDialogOpen(false)}>Cancel</Button>
+                <Button onClick={handleAssignRole}>Assign Role</Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+          {u.has_role_record && u.role !== 'admin' && (
+            <UserModuleAccessDialog userId={u.user_id} userName={u.full_name || 'this user'} />
+          )}
+        </div>
+      ),
+    },
+  ];
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -285,134 +412,13 @@ export default function UserManagement() {
           <CardDescription>Manage user roles, departments, and staff profile links</CardDescription>
         </CardHeader>
         <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>User</TableHead>
-                <TableHead>Role</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Department</TableHead>
-                <TableHead>Staff Profile</TableHead>
-                <TableHead>Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {users.map(u => (
-                <TableRow key={u.id}>
-                  <TableCell>
-                    <div className="flex items-center gap-2">
-                      <User className="h-4 w-4" />
-                      <span>{u.full_name || 'No name'}</span>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant={u.role === 'admin' ? 'default' : u.role === 'manager' || u.role === 'hr' ? 'secondary' : 'outline'}>
-                      {u.role === 'hr' ? 'HR' : u.role.charAt(0).toUpperCase() + u.role.slice(1)}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant={u.role_status === 'pending' ? 'destructive' : 'outline'}>
-                      {u.role_status === 'pending' ? 'Pending' : 'Approved'}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    {u.department_name ? <Badge variant="outline">{u.department_name}</Badge> : <span className="text-muted-foreground">—</span>}
-                  </TableCell>
-                  <TableCell>
-                    {u.linked_staff_profile ? (
-                      <Badge variant="outline" className="text-primary border-primary/30">{u.linked_staff_profile}</Badge>
-                    ) : (
-                      <span className="text-muted-foreground text-xs">Not linked</span>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex gap-1 flex-wrap">
-                      {u.role_status === 'pending' && (
-                        <Button variant="default" size="sm" onClick={() => handleApproveRole(u.user_id)}>Approve</Button>
-                      )}
-                      {!u.linked_staff_profile && (
-                        <Dialog open={linkDialogOpen && selectedUserId === u.user_id} onOpenChange={setLinkDialogOpen}>
-                          <DialogTrigger asChild>
-                            <Button variant="outline" size="sm" onClick={() => { setSelectedUserId(u.user_id); setSelectedStaffProfileId('none'); setLinkDialogOpen(true); }}>
-                              <Link2 className="h-3 w-3 mr-1" />Link Profile
-                            </Button>
-                          </DialogTrigger>
-                          <DialogContent>
-                            <DialogHeader>
-                              <DialogTitle>Link Staff Profile</DialogTitle>
-                              <DialogDescription>Assign an existing staff profile to {u.full_name}</DialogDescription>
-                            </DialogHeader>
-                            <div className="space-y-4 py-4">
-                              <Label>Staff Profile</Label>
-                              <Select value={selectedStaffProfileId} onValueChange={setSelectedStaffProfileId}>
-                                <SelectTrigger><SelectValue placeholder="Select staff profile" /></SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="none">Select a profile...</SelectItem>
-                                  {unlinkedProfiles.map(sp => (
-                                    <SelectItem key={sp.id} value={sp.id}>{sp.full_name} ({sp.position.replace(/_/g, ' ')})</SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </div>
-                            <div className="flex justify-end gap-2">
-                              <Button variant="outline" onClick={() => setLinkDialogOpen(false)}>Cancel</Button>
-                              <Button onClick={handleLinkProfile} disabled={selectedStaffProfileId === 'none'}>Link Profile</Button>
-                            </div>
-                          </DialogContent>
-                        </Dialog>
-                      )}
-                      <Dialog open={assignDialogOpen && selectedUserId === u.user_id} onOpenChange={setAssignDialogOpen}>
-                        <DialogTrigger asChild>
-                          <Button variant="outline" size="sm" onClick={() => { setSelectedUserId(u.user_id); setSelectedRole(u.role); setSelectedDepartmentId(u.department_id || 'none'); setAssignDialogOpen(true); }}>
-                            Edit Role
-                          </Button>
-                        </DialogTrigger>
-                        <DialogContent>
-                          <DialogHeader>
-                            <DialogTitle>Assign Role & Department</DialogTitle>
-                            <DialogDescription>Update role for {u.full_name}</DialogDescription>
-                          </DialogHeader>
-                          <div className="space-y-4 py-4">
-                            <div className="space-y-2">
-                              <Label>Role</Label>
-                              <Select value={selectedRole} onValueChange={(v: any) => setSelectedRole(v)}>
-                                <SelectTrigger><SelectValue /></SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="employee">Staff / Employee</SelectItem>
-                                  <SelectItem value="hr">HR</SelectItem>
-                                  <SelectItem value="manager">Manager</SelectItem>
-                                  <SelectItem value="admin">Admin</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            </div>
-                            <div className="space-y-2">
-                              <Label>Department</Label>
-                              <Select value={selectedDepartmentId} onValueChange={setSelectedDepartmentId}>
-                                <SelectTrigger><SelectValue placeholder="Select department" /></SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="none">No department</SelectItem>
-                                  {departments.map(dept => (
-                                    <SelectItem key={dept.id} value={dept.id}>{dept.name}</SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </div>
-                          </div>
-                          <div className="flex justify-end gap-2">
-                            <Button variant="outline" onClick={() => setAssignDialogOpen(false)}>Cancel</Button>
-                            <Button onClick={handleAssignRole}>Assign Role</Button>
-                          </div>
-                        </DialogContent>
-                      </Dialog>
-                      {u.has_role_record && u.role !== 'admin' && (
-                        <UserModuleAccessDialog userId={u.user_id} userName={u.full_name || 'this user'} />
-                      )}
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          <ResponsiveTable
+            columns={userColumns}
+            data={users}
+            rowKey={(u) => u.id}
+            mobileSubtitle={(u) => (u.role === 'hr' ? 'HR' : u.role.charAt(0).toUpperCase() + u.role.slice(1))}
+            emptyState={<p className="text-center text-muted-foreground py-8 text-sm">No users found.</p>}
+          />
         </CardContent>
       </Card>
     </div>

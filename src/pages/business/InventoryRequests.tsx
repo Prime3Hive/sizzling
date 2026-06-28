@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { ResponsiveTable, type ResponsiveColumn } from "@/components/ui/responsive-table";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
@@ -843,97 +843,97 @@ function RequestsTable({
   lpoByRequest?: Record<string, LinkedLPO>;
   actions?: (row: InventoryRequest) => React.ReactNode;
 }) {
+  const columns: ResponsiveColumn<InventoryRequest>[] = [
+    {
+      key: "item", header: "Item", primary: true,
+      cell: (row) => (
+        <div className="space-y-1">
+          {itemsOf(row).map(it => (
+            <div key={it.id}>
+              {isMisc(it) ? (
+                <>
+                  <span className="font-medium">{it.item_name ?? "—"}</span>
+                  <span className="text-xs text-muted-foreground"> · misc{it.amount != null ? ` · ${formatNairaCompact(it.amount)}` : ""}</span>
+                </>
+              ) : (
+                <>
+                  <span className="font-medium">{it.skus?.name ?? "—"}</span>
+                  <span className="text-xs text-muted-foreground capitalize"> · {it.skus?.category}</span>
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      ),
+    },
+    ...(showRequester ? [{
+      key: "requester", header: "Requester",
+      cell: (row: InventoryRequest) => (
+        <span className="text-sm text-muted-foreground">{row.profiles?.full_name ?? `${row.user_id.slice(0, 8)}…`}</span>
+      ),
+    } as ResponsiveColumn<InventoryRequest>] : []),
+    {
+      key: "qty", header: "Qty",
+      cell: (row) => (
+        <div className="space-y-1">
+          {itemsOf(row).map(it => (
+            <div key={it.id} className="whitespace-nowrap">
+              {it.fulfilled_quantity > 0
+                ? <><span className="font-semibold">{it.fulfilled_quantity}</span><span className="text-muted-foreground">/{it.requested_quantity}</span></>
+                : it.requested_quantity}{" "}
+              <span className="text-xs text-muted-foreground">{it.skus?.unit_of_measure}</span>
+            </div>
+          ))}
+        </div>
+      ),
+    },
+    {
+      key: "date", header: "Date",
+      cell: (row) => <span className="text-sm text-muted-foreground whitespace-nowrap">{format(parseISO(row.created_at), "dd MMM yyyy")}</span>,
+    },
+    {
+      key: "status", header: "Status",
+      cell: (row) => {
+        const linked = lpoByRequest[row.id];
+        return (
+          <div className="flex flex-col gap-1">
+            <StatusBadge status={row.status} />
+            {linked && row.status !== "fulfilled" && (
+              <Badge variant="outline" className="text-[10px] font-mono gap-1 text-indigo-700 border-indigo-200 bg-indigo-50 w-fit">
+                <FileText className="h-2.5 w-2.5" />{linked.lpo_number}
+              </Badge>
+            )}
+          </div>
+        );
+      },
+    },
+    {
+      key: "notes", header: "Notes", hideOnMobile: true,
+      cell: (row) => (
+        <span className="max-w-xs truncate text-sm text-muted-foreground block">
+          {row.rejected_reason
+            ? <span className="text-red-600 text-xs">Rejected: {row.rejected_reason}</span>
+            : (row.notes || "—")}
+        </span>
+      ),
+    },
+    ...(actions ? [{
+      key: "action", header: "Action", align: "right" as const, mobileFooter: true,
+      cell: (row: InventoryRequest) => actions(row),
+    } as ResponsiveColumn<InventoryRequest>] : []),
+  ];
+
   return (
     <Card>
-      <CardContent className="p-0">
+      <CardContent className="p-0 md:p-0">
         {rows.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-14 text-muted-foreground gap-2">
             <ClipboardList className="h-8 w-8 opacity-30" />
             <p className="text-sm">{emptyMsg}</p>
           </div>
         ) : (
-          <div className="rounded-lg overflow-hidden">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Item</TableHead>
-                  {showRequester && <TableHead>Requester</TableHead>}
-                  <TableHead>Qty</TableHead>
-                  <TableHead>Date</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Notes</TableHead>
-                  {actions && <TableHead className="text-right">Action</TableHead>}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map(row => {
-                  const linked = lpoByRequest[row.id];
-                  const items = itemsOf(row);
-                  return (
-                    <TableRow key={row.id}>
-                      <TableCell>
-                        <div className="space-y-1">
-                          {items.map(it => (
-                            <div key={it.id}>
-                              {isMisc(it) ? (
-                                <>
-                                  <span className="font-medium">{it.item_name ?? "—"}</span>
-                                  <span className="text-xs text-muted-foreground"> · misc{it.amount != null ? ` · ${formatNairaCompact(it.amount)}` : ""}</span>
-                                </>
-                              ) : (
-                                <>
-                                  <span className="font-medium">{it.skus?.name ?? "—"}</span>
-                                  <span className="text-xs text-muted-foreground capitalize"> · {it.skus?.category}</span>
-                                </>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      </TableCell>
-                      {showRequester && (
-                        <TableCell className="text-sm text-muted-foreground">
-                          {row.profiles?.full_name ?? `${row.user_id.slice(0, 8)}…`}
-                        </TableCell>
-                      )}
-                      <TableCell>
-                        <div className="space-y-1">
-                          {items.map(it => (
-                            <div key={it.id} className="whitespace-nowrap">
-                              {it.fulfilled_quantity > 0
-                                ? <><span className="font-semibold">{it.fulfilled_quantity}</span><span className="text-muted-foreground">/{it.requested_quantity}</span></>
-                                : it.requested_quantity}{" "}
-                              <span className="text-xs text-muted-foreground">{it.skus?.unit_of_measure}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
-                        {format(parseISO(row.created_at), "dd MMM yyyy")}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex flex-col gap-1">
-                          <StatusBadge status={row.status} />
-                          {/* Show LPO badge in All Requests view */}
-                          {linked && row.status !== "fulfilled" && (
-                            <Badge variant="outline" className="text-[10px] font-mono gap-1 text-indigo-700 border-indigo-200 bg-indigo-50 w-fit">
-                              <FileText className="h-2.5 w-2.5" />{linked.lpo_number}
-                            </Badge>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell className="max-w-xs truncate text-sm text-muted-foreground">
-                        {row.rejected_reason
-                          ? <span className="text-red-600 text-xs">Rejected: {row.rejected_reason}</span>
-                          : (row.notes || "—")}
-                      </TableCell>
-                      {actions && (
-                        <TableCell className="text-right">{actions(row)}</TableCell>
-                      )}
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
+          <div className="px-3 md:px-0">
+            <ResponsiveTable columns={columns} data={rows} rowKey={(r) => r.id} />
           </div>
         )}
       </CardContent>

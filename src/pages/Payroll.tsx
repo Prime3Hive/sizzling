@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { ResponsiveTable, type ResponsiveColumn } from '@/components/ui/responsive-table';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
@@ -367,6 +367,56 @@ const Payroll = () => {
     );
   }
 
+  const payrollColumns: ResponsiveColumn<PayrollRecord>[] = [
+    { key: "sn", header: "S/N", hideOnMobile: true, cell: (r) => filteredRecords.indexOf(r) + 1 },
+    { key: "staffId", header: "Staff ID", cell: (r) => <span className="font-mono text-xs">{r.staff_id_number}</span> },
+    { key: "name", header: "Staff Name", primary: true, cell: (r) => <span className="font-medium">{r.staff_name}</span> },
+    { key: "dept", header: "Department", cell: (r) => <span className="text-muted-foreground">{r.department || '-'}</span> },
+    {
+      key: "period", header: "Period",
+      cell: (r) => (
+        <div className="text-sm">
+          <Badge variant="outline" className="text-xs uppercase">{r.salary_period}</Badge>
+          <p className="text-xs text-muted-foreground mt-1">{format(new Date(r.period_start), 'dd MMM')} – {format(new Date(r.period_end), 'dd MMM yyyy')}</p>
+        </div>
+      ),
+    },
+    { key: "basic", header: "Basic Salary", align: "right", cell: (r) => formatNairaCompact(Number(r.basic_salary)) },
+    { key: "allow", header: "Allowances", align: "right", cell: (r) => <span className="text-green-600">{formatNairaCompact(Number(r.allowances))}</span> },
+    { key: "deduct", header: "Deductions", align: "right", cell: (r) => <span className="text-destructive">{formatNairaCompact(Number(r.deductions))}</span> },
+    { key: "net", header: "Net Pay", align: "right", cell: (r) => <span className="font-bold">{formatNairaCompact(Number(r.net_pay))}</span> },
+    { key: "bank", header: "Bank Details", hideOnMobile: true, cell: (r) => <span className="text-xs text-muted-foreground">{r.bank_name ? `${r.bank_name} - ${r.account_number}` : '-'}</span> },
+    { key: "status", header: "Status", cell: (r) => <Badge variant={r.status === 'paid' ? 'default' : 'secondary'} className="text-xs">{r.status === 'paid' ? 'Paid' : 'Pending'}</Badge> },
+    {
+      key: "actions", header: "Actions", align: "right", mobileFooter: true,
+      cell: (r) => (
+        <div className="flex items-center gap-1 md:justify-end">
+          {r.status === 'pending' && (
+            <>
+              <Button size="sm" variant="outline" onClick={() => markPaidMutation.mutate(r.id)}><CheckCircle className="h-3 w-3 mr-1" />Pay</Button>
+              <Button size="sm" variant="ghost" onClick={() => { setEditRecord(r); }}><Pencil className="h-3 w-3" /></Button>
+            </>
+          )}
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive"><Trash2 className="h-3 w-3" /></Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Delete payroll record?</AlertDialogTitle>
+                <AlertDialogDescription>This will permanently delete the payroll record for {r.staff_name} ({format(new Date(r.period_start), 'dd MMM')} – {format(new Date(r.period_end), 'dd MMM yyyy')}).</AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction onClick={() => deleteMutation.mutate(r.id)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Delete</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </div>
+      ),
+    },
+  ];
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -510,87 +560,16 @@ const Payroll = () => {
               <p className="text-sm">Click "Generate Payroll" to create entries from staff profiles</p>
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>S/N</TableHead>
-                  <TableHead>Staff ID</TableHead>
-                  <TableHead>Staff Name</TableHead>
-                  <TableHead>Department</TableHead>
-                  <TableHead>Period</TableHead>
-                  <TableHead className="text-right">Basic Salary</TableHead>
-                  <TableHead className="text-right">Allowances</TableHead>
-                  <TableHead className="text-right">Deductions</TableHead>
-                  <TableHead className="text-right font-bold">Net Pay</TableHead>
-                  <TableHead>Bank Details</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredRecords.map((r, i) => (
-                  <TableRow key={r.id}>
-                    <TableCell>{i + 1}</TableCell>
-                    <TableCell className="font-mono text-xs">{r.staff_id_number}</TableCell>
-                    <TableCell className="font-medium">{r.staff_name}</TableCell>
-                    <TableCell className="text-muted-foreground">{r.department || '-'}</TableCell>
-                    <TableCell>
-                      <div className="text-sm">
-                        <Badge variant="outline" className="text-xs uppercase">{r.salary_period}</Badge>
-                        <p className="text-xs text-muted-foreground mt-1">{format(new Date(r.period_start), 'dd MMM')} – {format(new Date(r.period_end), 'dd MMM yyyy')}</p>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right">{formatNairaCompact(Number(r.basic_salary))}</TableCell>
-                    <TableCell className="text-right text-green-600">{formatNairaCompact(Number(r.allowances))}</TableCell>
-                    <TableCell className="text-right text-destructive">{formatNairaCompact(Number(r.deductions))}</TableCell>
-                    <TableCell className="text-right font-bold">{formatNairaCompact(Number(r.net_pay))}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{r.bank_name ? `${r.bank_name} - ${r.account_number}` : '-'}</TableCell>
-                    <TableCell>
-                      <Badge variant={r.status === 'paid' ? 'default' : 'secondary'} className="text-xs">{r.status === 'paid' ? 'Paid' : 'Pending'}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1">
-                        {r.status === 'pending' && (
-                          <>
-                            <Button size="sm" variant="outline" onClick={() => markPaidMutation.mutate(r.id)}>
-                              <CheckCircle className="h-3 w-3 mr-1" />Pay
-                            </Button>
-                            <Button size="sm" variant="ghost" onClick={() => { setEditRecord(r); }}>
-                              <Pencil className="h-3 w-3" />
-                            </Button>
-                          </>
-                        )}
-                        <AlertDialog>
-                          <AlertDialogTrigger asChild>
-                            <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive">
-                              <Trash2 className="h-3 w-3" />
-                            </Button>
-                          </AlertDialogTrigger>
-                          <AlertDialogContent>
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>Delete payroll record?</AlertDialogTitle>
-                              <AlertDialogDescription>This will permanently delete the payroll record for {r.staff_name} ({format(new Date(r.period_start), 'dd MMM')} – {format(new Date(r.period_end), 'dd MMM yyyy')}).</AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel>Cancel</AlertDialogCancel>
-                              <AlertDialogAction onClick={() => deleteMutation.mutate(r.id)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Delete</AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-                <TableRow className="border-t-2 font-bold bg-muted/50">
-                  <TableCell colSpan={5}>TOTAL</TableCell>
-                  <TableCell className="text-right">{formatNairaCompact(totalBasic)}</TableCell>
-                  <TableCell className="text-right text-green-600">{formatNairaCompact(filteredRecords.reduce((s, r) => s + Number(r.allowances), 0))}</TableCell>
-                  <TableCell className="text-right text-destructive">{formatNairaCompact(filteredRecords.reduce((s, r) => s + Number(r.deductions), 0))}</TableCell>
-                  <TableCell className="text-right">{formatNairaCompact(totalNetPay)}</TableCell>
-                  <TableCell colSpan={3}></TableCell>
-                </TableRow>
-              </TableBody>
-            </Table>
+            <>
+              <ResponsiveTable columns={payrollColumns} data={filteredRecords} rowKey={(r) => r.id} mobileSubtitle={(r) => r.staff_id_number} />
+              <div className="mt-3 flex flex-wrap items-center justify-end gap-x-6 gap-y-1 border-t-2 pt-3 font-bold text-sm">
+                <span className="mr-auto">TOTAL</span>
+                <span>Basic: {formatNairaCompact(totalBasic)}</span>
+                <span className="text-green-600">Allow: {formatNairaCompact(filteredRecords.reduce((s, r) => s + Number(r.allowances), 0))}</span>
+                <span className="text-destructive">Deduct: {formatNairaCompact(filteredRecords.reduce((s, r) => s + Number(r.deductions), 0))}</span>
+                <span>Net: {formatNairaCompact(totalNetPay)}</span>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>

@@ -14,7 +14,7 @@ import {
   AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
   AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { ResponsiveTable, type ResponsiveColumn } from "@/components/ui/responsive-table";
 import { Plus, Pencil, Power, PowerOff, Landmark, Loader2 } from "lucide-react";
 
 interface BankAccount {
@@ -116,8 +116,37 @@ export default function BankAccounts() {
     saveMutation.mutate();
   };
 
+  const accountColumns: ResponsiveColumn<BankAccount>[] = [
+    { key: 'bank', header: 'Bank', primary: true, cell: (a) => <span className="font-medium">{a.bank_name}</span> },
+    { key: 'number', header: 'Account Number', cell: (a) => <span className="font-mono tracking-wider">{a.account_number}</span> },
+    { key: 'name', header: 'Account Name', cell: (a) => a.account_name },
+    {
+      key: 'status', header: 'Status',
+      cell: (a) => (
+        <Badge variant="outline" className={a.is_active ? "bg-green-50 text-green-700 border-green-200" : "bg-gray-50 text-gray-500 border-gray-200"}>
+          {a.is_active ? "Active" : "Inactive"}
+        </Badge>
+      ),
+    },
+    {
+      key: 'actions', header: 'Actions', align: 'right', mobileFooter: true,
+      cell: (a) => (
+        <div className="flex items-center gap-2 md:justify-end">
+          <Button size="sm" variant="ghost" onClick={() => openEdit(a)}>
+            <Pencil className="h-3.5 w-3.5" />
+          </Button>
+          <Button size="sm" variant="ghost"
+            className={a.is_active ? "text-destructive hover:text-destructive" : "text-green-600 hover:text-green-700"}
+            onClick={() => setToggleTarget(a)}>
+            {a.is_active ? <PowerOff className="h-3.5 w-3.5" /> : <Power className="h-3.5 w-3.5" />}
+          </Button>
+        </div>
+      ),
+    },
+  ];
+
   return (
-    <div className="space-y-6 p-6 max-w-4xl mx-auto">
+    <div className="space-y-6 p-1 sm:p-4 md:p-6 max-w-4xl mx-auto">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold">Bank Accounts</h1>
@@ -150,51 +179,7 @@ export default function BankAccounts() {
               <p>No bank accounts yet. Add your first one.</p>
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Bank</TableHead>
-                  <TableHead>Account Number</TableHead>
-                  <TableHead>Account Name</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {accounts.map((a) => (
-                  <TableRow key={a.id}>
-                    <TableCell className="font-medium">{a.bank_name}</TableCell>
-                    <TableCell className="font-mono tracking-wider">{a.account_number}</TableCell>
-                    <TableCell>{a.account_name}</TableCell>
-                    <TableCell>
-                      <Badge
-                        variant="outline"
-                        className={a.is_active
-                          ? "bg-green-50 text-green-700 border-green-200"
-                          : "bg-gray-50 text-gray-500 border-gray-200"}
-                      >
-                        {a.is_active ? "Active" : "Inactive"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex items-center gap-2 justify-end">
-                        <Button size="sm" variant="ghost" onClick={() => openEdit(a)}>
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className={a.is_active ? "text-destructive hover:text-destructive" : "text-green-600 hover:text-green-700"}
-                          onClick={() => setToggleTarget(a)}
-                        >
-                          {a.is_active ? <PowerOff className="h-3.5 w-3.5" /> : <Power className="h-3.5 w-3.5" />}
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <ResponsiveTable columns={accountColumns} data={accounts} rowKey={(a) => a.id} />
           )}
         </CardContent>
       </Card>

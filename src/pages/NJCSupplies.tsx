@@ -10,9 +10,7 @@ import {
 import {
   Card, CardContent, CardDescription, CardHeader, CardTitle,
 } from "@/components/ui/card";
-import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from "@/components/ui/table";
+import { ResponsiveTable, type ResponsiveColumn } from "@/components/ui/responsive-table";
 import { useToast } from "@/hooks/use-toast";
 import { Plus, Edit, Trash2, Package, FileSpreadsheet, FileText, Filter, X, Eye, TrendingUp, CheckCircle2, Clock, AlertCircle } from "lucide-react";
 import { formatNairaCompact } from "@/lib/currency";
@@ -280,8 +278,44 @@ const NJCSupplies = () => {
 
   const hasActiveFilters = dateFrom || dateTo || statusFilter !== "all";
 
+  const supplyColumns: ResponsiveColumn<NJCSupplyWithItems>[] = [
+    {
+      key: "select", header: (
+        <Checkbox
+          checked={selectedIds.size === filteredSupplies.length && filteredSupplies.length > 0}
+          onCheckedChange={toggleSelectAll}
+        />
+      ),
+      hideOnMobile: true,
+      cell: (s) => <Checkbox checked={selectedIds.has(s.id)} onCheckedChange={() => toggleSelect(s.id)} />,
+    },
+    { key: "title", header: "Title", primary: true, cell: (s) => <span className="font-medium">{s.invoice_title || "PROVISION OF SNACKS"}</span> },
+    { key: "date", header: "Date", cell: (s) => new Date(s.supply_date).toLocaleDateString() },
+    { key: "items", header: "Items", align: "center", cell: (s) => s.items.length || s.number_of_supplies },
+    { key: "subtotal", header: "Subtotal", align: "right", cell: (s) => formatNairaCompact(s.subtotal || 0) },
+    { key: "total", header: "Grand Total", align: "right", cell: (s) => <span className="font-semibold">{formatNairaCompact(s.total_amount)}</span> },
+    {
+      key: "status", header: "Status",
+      cell: (s) => (
+        <span className={`px-2 py-1 rounded-full text-xs font-medium ${getPaymentBadge(s.payment_status)}`}>
+          {s.payment_status.charAt(0).toUpperCase() + s.payment_status.slice(1)}
+        </span>
+      ),
+    },
+    {
+      key: "actions", header: "Actions", align: "right", mobileFooter: true,
+      cell: (s) => (
+        <div className="flex gap-1.5 md:justify-end">
+          <Button variant="ghost" size="sm" onClick={() => setViewingSupply(s)} title="View invoice"><Eye className="h-4 w-4" /></Button>
+          <Button variant="outline" size="sm" onClick={() => handleEdit(s)} title="Edit invoice"><Edit className="h-4 w-4" /></Button>
+          <Button variant="destructive" size="sm" onClick={() => handleDelete(s.id)} title="Delete invoice"><Trash2 className="h-4 w-4" /></Button>
+        </div>
+      ),
+    },
+  ];
+
   return (
-    <div className="container mx-auto p-6 space-y-6">
+    <div className="container mx-auto p-1 sm:p-4 md:p-6 space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
@@ -404,60 +438,12 @@ const NJCSupplies = () => {
           {isLoading ? (
             <div className="text-center py-8">Loading...</div>
           ) : filteredSupplies.length > 0 ? (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-10">
-                    <Checkbox
-                      checked={selectedIds.size === filteredSupplies.length && filteredSupplies.length > 0}
-                      onCheckedChange={toggleSelectAll}
-                    />
-                  </TableHead>
-                  <TableHead>Date</TableHead>
-                  <TableHead>Title</TableHead>
-                  <TableHead className="text-center">Items</TableHead>
-                  <TableHead>Subtotal</TableHead>
-                  <TableHead>Grand Total</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredSupplies.map((supply) => (
-                  <TableRow key={supply.id}>
-                    <TableCell>
-                      <Checkbox
-                        checked={selectedIds.has(supply.id)}
-                        onCheckedChange={() => toggleSelect(supply.id)}
-                      />
-                    </TableCell>
-                    <TableCell>{new Date(supply.supply_date).toLocaleDateString()}</TableCell>
-                    <TableCell className="max-w-[200px] truncate">{supply.invoice_title || "PROVISION OF SNACKS"}</TableCell>
-                    <TableCell className="text-center">{supply.items.length || supply.number_of_supplies}</TableCell>
-                    <TableCell>{formatNairaCompact(supply.subtotal || 0)}</TableCell>
-                    <TableCell className="font-semibold">{formatNairaCompact(supply.total_amount)}</TableCell>
-                    <TableCell>
-                      <span className={`px-2 py-1 rounded-full text-xs font-medium ${getPaymentBadge(supply.payment_status)}`}>
-                        {supply.payment_status.charAt(0).toUpperCase() + supply.payment_status.slice(1)}
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-1.5">
-                        <Button variant="ghost" size="sm" onClick={() => setViewingSupply(supply)} title="View invoice">
-                          <Eye className="h-4 w-4" />
-                        </Button>
-                        <Button variant="outline" size="sm" onClick={() => handleEdit(supply)} title="Edit invoice">
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                        <Button variant="destructive" size="sm" onClick={() => handleDelete(supply.id)} title="Delete invoice">
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <ResponsiveTable
+              columns={supplyColumns}
+              data={filteredSupplies}
+              rowKey={(s) => s.id}
+              mobileSubtitle={(s) => new Date(s.supply_date).toLocaleDateString()}
+            />
           ) : (
             <div className="text-center py-8 text-muted-foreground">
               {hasActiveFilters ? "No invoices match the current filters." : "No invoices found. Create your first invoice to get started."}

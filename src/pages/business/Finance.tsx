@@ -12,6 +12,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
+} from "@/components/ui/dialog";
+import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import {
@@ -96,9 +99,11 @@ interface LedgerRow {
   entry_date: string;
   entry_type: string;
   source_type: string;
+  source_id: string;
   description: string;
   amount: number;
   cost_center: string | null;
+  invoice_type: string | null;
   reference_number: string | null;
 }
 
@@ -128,11 +133,106 @@ const payMethodColor: Record<string, string> = {
   pos:          "bg-orange-100 text-orange-700",
 };
 
+// ── Ledger entry detail dialog ────────────────────────────────────────────────
+// Loads the underlying source record (sale or invoice) for a clicked ledger row
+// so users can trace a feed entry back to where it came from.
+
+function LedgerEntryDialog({ entry, onClose }: { entry: LedgerRow | null; onClose: () => void }) {
+  const { data: source, isLoading } = useQuery({
+    queryKey: ["ledger-source", entry?.id],
+    enabled: !!entry,
+    queryFn: async () => {
+      if (!entry) return null;
+      if (entry.source_type === "sale") {
+        const { data, error } = await supabase
+          .from("sales")
+          .select("id, sale_number, sale_date, sale_type, customer_name, total_amount, status, notes, payments(amount, payment_method, payment_date, status)")
+          .eq("id", entry.source_id)
+          .maybeSingle();
+        if (error) throw error;
+        return data;
+      }
+      if (entry.source_type === "invoice") {
+        const { data, error } = await supabase
+          .from("invoices")
+          .select("id, invoice_number, quotation_number, customer_name, invoice_type, total_amount, amount_paid, payment_status, issue_date")
+          .eq("id", entry.source_id)
+          .maybeSingle();
+        if (error) throw error;
+        return data;
+      }
+      return null;
+    },
+  });
+
+  const Row = ({ label, value }: { label: string; value: React.ReactNode }) => (
+    <div className="flex justify-between gap-4 py-1.5 text-sm border-b last:border-0">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="font-medium text-right">{value}</span>
+    </div>
+  );
+
+  return (
+    <Dialog open={!!entry} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>{entry?.description ?? "Ledger entry"}</DialogTitle>
+          <DialogDescription>
+            {entry && `${entry.entry_type === "payment_received" ? "Payment" : "Revenue"} · ${format(parseISO(entry.entry_date), "dd MMM yyyy")}`}
+          </DialogDescription>
+        </DialogHeader>
+
+        {/* Ledger entry summary (always available) */}
+        <div className="rounded-lg border p-3">
+          <Row label="Amount" value={entry ? formatNairaCompact(Number(entry.amount)) : "—"} />
+          <Row label="Source" value={<span className="capitalize">{entry?.source_type ?? "—"}</span>} />
+          <Row label="Reference" value={entry?.reference_number ?? "—"} />
+          <Row label="Cost Centre" value={entry?.cost_center ?? "—"} />
+        </div>
+
+        {/* Linked source record */}
+        {isLoading ? (
+          <p className="text-sm text-muted-foreground text-center py-4">Loading source…</p>
+        ) : source && entry?.source_type === "sale" ? (
+          <div className="rounded-lg border p-3">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Sale record</p>
+            <Row label="Sale #" value={(source as any).sale_number} />
+            <Row label="Type" value={<span className="capitalize">{(source as any).sale_type ?? "daily"}</span>} />
+            <Row label="Customer" value={(source as any).customer_name ?? "—"} />
+            <Row label="Date" value={format(parseISO((source as any).sale_date), "dd MMM yyyy")} />
+            <Row label="Total" value={formatNairaCompact(Number((source as any).total_amount))} />
+            <Row label="Status" value={<span className="capitalize">{(source as any).status}</span>} />
+            {(source as any).notes && (
+              <p className="text-xs text-muted-foreground mt-2">{(source as any).notes}</p>
+            )}
+          </div>
+        ) : source && entry?.source_type === "invoice" ? (
+          <div className="rounded-lg border p-3">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Invoice record</p>
+            <Row label="Invoice #" value={(source as any).invoice_number ?? (source as any).quotation_number} />
+            <Row label="Type" value={<span className="capitalize">{((source as any).invoice_type ?? "").replace("_", " ")}</span>} />
+            <Row label="Customer" value={(source as any).customer_name ?? "—"} />
+            <Row label="Issued" value={format(parseISO((source as any).issue_date), "dd MMM yyyy")} />
+            <Row label="Billed" value={formatNairaCompact(Number((source as any).total_amount))} />
+            <Row label="Paid" value={formatNairaCompact(Number((source as any).amount_paid ?? 0))} />
+            <Row label="Status" value={<span className="capitalize">{(source as any).payment_status}</span>} />
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground text-center py-4">
+            The original source record for this entry could not be found.
+          </p>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ── Finance Component ─────────────────────────────────────────────────────────
 
 export default function Finance() {
   const today = new Date();
   const [periodDate, setPeriodDate] = useState(today);
+  const [selectedEntry, setSelectedEntry] = useState<LedgerRow | null>(null);
 
   const periodStart = format(startOfMonth(periodDate), "yyyy-MM-dd");
   const periodEnd   = format(endOfMonth(periodDate),   "yyyy-MM-dd");
@@ -341,7 +441,7 @@ export default function Finance() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("finance_ledger")
-        .select("id, entry_date, entry_type, source_type, description, amount, cost_center, reference_number")
+        .select("id, entry_date, entry_type, source_type, source_id, description, amount, cost_center, invoice_type, reference_number")
         .gte("entry_date", periodStart)
         .lte("entry_date", periodEnd)
         .order("entry_date", { ascending: false });
@@ -1083,7 +1183,11 @@ export default function Finance() {
                     </TableHeader>
                     <TableBody>
                       {periodLedger.map(entry => (
-                        <TableRow key={entry.id}>
+                        <TableRow
+                          key={entry.id}
+                          className="cursor-pointer hover:bg-muted/40"
+                          onClick={() => setSelectedEntry(entry)}
+                        >
                           <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
                             {format(parseISO(entry.entry_date), "dd MMM yyyy")}
                           </TableCell>
@@ -1113,6 +1217,8 @@ export default function Finance() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      <LedgerEntryDialog entry={selectedEntry} onClose={() => setSelectedEntry(null)} />
     </div>
   );
 }

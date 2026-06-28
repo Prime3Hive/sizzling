@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { ResponsiveTable, type ResponsiveColumn } from "@/components/ui/responsive-table";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -162,8 +162,31 @@ export default function Messages() {
     toast({ title: `Exported ${subscribers.length} subscriber${subscribers.length === 1 ? "" : "s"}`, description: `${active.length} active` });
   };
 
+  const subscriberColumns: ResponsiveColumn<Subscriber>[] = [
+    { key: "email", header: "Email", primary: true, cell: (s) => <span className="font-medium">{s.email}</span> },
+    { key: "name", header: "Name", cell: (s) => s.name || "—" },
+    { key: "subscribed", header: "Subscribed", cell: (s) => <span className="text-sm text-muted-foreground">{safeFormat(s.subscribed_at, "MMM d, yyyy")}</span> },
+    {
+      key: "status", header: "Status",
+      cell: (s) => (
+        <Badge variant="outline" className={s.status === "active" ? "bg-green-50 text-green-700 border-green-200" : "bg-gray-50 text-gray-500 border-gray-200"}>
+          {s.status}
+        </Badge>
+      ),
+    },
+    {
+      key: "action", header: "Action", align: "right", mobileFooter: true,
+      cell: (s) => (
+        <Button size="sm" variant="ghost" className="text-xs md:w-auto w-full"
+          onClick={() => toggleSub.mutate({ id: s.id, status: s.status === "active" ? "unsubscribed" : "active" })}>
+          {s.status === "active" ? "Unsubscribe" : "Re-activate"}
+        </Button>
+      ),
+    },
+  ];
+
   return (
-    <div className="space-y-6 p-6 max-w-5xl mx-auto">
+    <div className="space-y-6 p-1 sm:p-4 md:p-6 max-w-5xl mx-auto">
       <div>
         <h1 className="text-2xl font-bold flex items-center gap-2">
           <Inbox className="h-6 w-6" /> Messages
@@ -273,40 +296,8 @@ export default function Messages() {
             </Card>
           ) : (
             <Card>
-              <CardContent className="p-0">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Email</TableHead>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Subscribed</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead className="text-right">Action</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {subscribers.map((s) => (
-                      <TableRow key={s.id}>
-                        <TableCell className="font-medium">{s.email}</TableCell>
-                        <TableCell>{s.name || "—"}</TableCell>
-                        <TableCell className="text-sm text-muted-foreground">{safeFormat(s.subscribed_at, "MMM d, yyyy")}</TableCell>
-                        <TableCell>
-                          <Badge variant="outline" className={s.status === "active" ? "bg-green-50 text-green-700 border-green-200" : "bg-gray-50 text-gray-500 border-gray-200"}>
-                            {s.status}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Button
-                            size="sm" variant="ghost" className="text-xs"
-                            onClick={() => toggleSub.mutate({ id: s.id, status: s.status === "active" ? "unsubscribed" : "active" })}
-                          >
-                            {s.status === "active" ? "Unsubscribe" : "Re-activate"}
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+              <CardContent className="p-0 px-3 md:px-0">
+                <ResponsiveTable columns={subscriberColumns} data={subscribers} rowKey={(s) => s.id} mobileSubtitle={(s) => s.name || undefined} />
               </CardContent>
             </Card>
           )}
