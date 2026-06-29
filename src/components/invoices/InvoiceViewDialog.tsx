@@ -200,9 +200,10 @@ export default function InvoiceViewDialog({ invoice, open, onOpenChange, onEdit 
         .eq("id", invoice.id);
       if (error) throw error;
 
-      // Revenue ledger entry
+      // Revenue ledger entry. user_id is the acting user (RLS requires
+      // auth.uid() = user_id) so any permitted staff can post a colleague's invoice.
       const { error: ledgerErr } = await supabase.from("finance_ledger").insert({
-        user_id: invoice.user_id,
+        user_id: user?.id ?? invoice.user_id,
         entry_date: entryDate,
         entry_type: "revenue",
         source_type: "invoice",
@@ -270,9 +271,10 @@ export default function InvoiceViewDialog({ invoice, open, onOpenChange, onEdit 
       });
       if (payErr) throw payErr;
 
-      // Mirror a dated receipt into the audit ledger (feeds Finance Feed + P&L cash)
+      // Mirror a dated receipt into the audit ledger (feeds Finance Feed + P&L cash).
+      // user_id is the acting user so RLS (auth.uid() = user_id) permits cross-user posting.
       await supabase.from("finance_ledger").insert({
-        user_id: invoice.user_id,
+        user_id: user?.id ?? invoice.user_id,
         entry_date: payForm.date,
         entry_type: "payment_received",
         source_type: "invoice",
