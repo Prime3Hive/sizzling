@@ -17,7 +17,8 @@ import { Switch } from '@/components/ui/switch';
 import { Plus, Trash2, ClipboardList, FileText, Loader2 } from 'lucide-react';
 import {
   REPORT_TYPES, REPORT_STATUS_COLOR, gradeColor, computeTimeliness,
-  gradeFromScore, summarizePerformance, type ReportType, type CreditLineKind,
+  gradeFromScore, summarizePerformance, OPERATIONS_FIELDS,
+  type ReportType, type CreditLineKind, type OperationsDetails,
 } from '@/lib/reports';
 import { formatNairaCompact } from '@/lib/currency';
 
@@ -45,6 +46,8 @@ export default function MyReports() {
   const [expLines, setExpLines] = useState<{ category: string; amount: string; description: string }[]>([{ category: '', amount: '', description: '' }]);
   const [invLines, setInvLines] = useState<{ item: string; counted: string; used: string }[]>([{ item: '', counted: '', used: '' }]);
   const [creditLines, setCreditLines] = useState<CreditLineForm[]>([emptyCreditLine()]);
+  const [kitchenLines, setKitchenLines] = useState<{ item: string; prepared: string; served: string; wasted: string }[]>([{ item: '', prepared: '', served: '', wasted: '' }]);
+  const [opsForm, setOpsForm] = useState<OperationsDetails>({ key_activities: '', challenges: '', observations: '', suggestions: '' });
 
   const { data: assignments = [] } = useQuery<Assignment[]>({
     queryKey: ['my-report-assignments', user?.id],
@@ -90,6 +93,8 @@ export default function MyReports() {
     setExpLines([{ category: '', amount: '', description: '' }]);
     setInvLines([{ item: '', counted: '', used: '' }]);
     setCreditLines([emptyCreditLine()]);
+    setKitchenLines([{ item: '', prepared: '', served: '', wasted: '' }]);
+    setOpsForm({ key_activities: '', challenges: '', observations: '', suggestions: '' });
   };
 
   const openNew = () => { setType(typeOptions[0] ?? 'sales'); resetForm(); setOpen(true); };
@@ -142,6 +147,22 @@ export default function MyReports() {
           .map(l => ({ item: l.item.trim(), counted: parseFloat(l.counted) || 0, used: parseFloat(l.used) || 0 }))
           .filter(l => l.item);
         details.lines = lines;
+      } else if (type === 'kitchen') {
+        const lines = kitchenLines
+          .map(l => ({ item: l.item.trim(), prepared: parseFloat(l.prepared) || 0, served: parseFloat(l.served) || 0, wasted: parseFloat(l.wasted) || 0 }))
+          .filter(l => l.item);
+        if (lines.length === 0) throw new Error('Add at least one kitchen item');
+        details.lines = lines;
+      } else if (type === 'operations') {
+        const ops: OperationsDetails = {
+          key_activities: opsForm.key_activities?.trim() || '',
+          challenges: opsForm.challenges?.trim() || '',
+          observations: opsForm.observations?.trim() || '',
+          suggestions: opsForm.suggestions?.trim() || '',
+        };
+        if (!ops.key_activities && !ops.challenges && !ops.observations && !ops.suggestions)
+          throw new Error('Fill in at least one section of the operations report');
+        details.operations = ops;
       }
 
       const timeliness = computeTimeliness({ reportDate: form.report_date, submittedAt: new Date(), dueTime: assignment?.due_time });
@@ -450,6 +471,37 @@ export default function MyReports() {
                   </div>
                 ))}
                 <Button type="button" variant="outline" size="sm" onClick={() => setInvLines(p => [...p, { item: '', counted: '', used: '' }])}><Plus className="h-3.5 w-3.5 mr-1" />Add line</Button>
+              </div>
+            )}
+
+            {type === 'kitchen' && (
+              <div className="space-y-2">
+                <Label>Food prepared</Label>
+                <p className="text-xs text-muted-foreground">Log what was prepared, how much was served and how much was wasted.</p>
+                <div className="hidden sm:flex gap-2 text-xs text-muted-foreground px-1">
+                  <span className="flex-1">Item</span><span className="w-24">Prepared</span><span className="w-24">Served</span><span className="w-24">Wasted</span><span className="w-9" />
+                </div>
+                {kitchenLines.map((l, i) => (
+                  <div key={i} className="flex gap-2">
+                    <Input className="flex-1" placeholder="Item" value={l.item} onChange={e => setKitchenLines(p => p.map((x, idx) => idx === i ? { ...x, item: e.target.value } : x))} />
+                    <Input className="w-24" type="number" min="0" placeholder="Prepared" value={l.prepared} onChange={e => setKitchenLines(p => p.map((x, idx) => idx === i ? { ...x, prepared: e.target.value } : x))} />
+                    <Input className="w-24" type="number" min="0" placeholder="Served" value={l.served} onChange={e => setKitchenLines(p => p.map((x, idx) => idx === i ? { ...x, served: e.target.value } : x))} />
+                    <Input className="w-24" type="number" min="0" placeholder="Wasted" value={l.wasted} onChange={e => setKitchenLines(p => p.map((x, idx) => idx === i ? { ...x, wasted: e.target.value } : x))} />
+                    <Button type="button" variant="ghost" size="icon" className="text-destructive shrink-0" onClick={() => setKitchenLines(p => p.length > 1 ? p.filter((_, idx) => idx !== i) : p)}><Trash2 className="h-4 w-4" /></Button>
+                  </div>
+                ))}
+                <Button type="button" variant="outline" size="sm" onClick={() => setKitchenLines(p => [...p, { item: '', prepared: '', served: '', wasted: '' }])}><Plus className="h-3.5 w-3.5 mr-1" />Add item</Button>
+              </div>
+            )}
+
+            {type === 'operations' && (
+              <div className="space-y-3">
+                {OPERATIONS_FIELDS.map(f => (
+                  <div key={f.key} className="space-y-2">
+                    <Label>{f.label}</Label>
+                    <Textarea rows={2} placeholder={f.placeholder} value={opsForm[f.key] ?? ''} onChange={e => setOpsForm(p => ({ ...p, [f.key]: e.target.value }))} />
+                  </div>
+                ))}
               </div>
             )}
 

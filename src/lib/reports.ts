@@ -1,15 +1,34 @@
 // Shared definitions and grading logic for the Staff Reports module.
 
-export type ReportType = 'sales' | 'inventory' | 'expense' | 'credit';
+export type ReportType = 'sales' | 'inventory' | 'expense' | 'credit' | 'kitchen' | 'operations';
 export type Cadence = 'daily' | 'weekly' | 'monthly';
 export type ReportStatus = 'submitted' | 'approved' | 'rejected' | 'converted';
 
 export const REPORT_TYPES: Record<ReportType, { label: string; blurb: string; convertsTo: string | null }> = {
-  sales:     { label: 'Sales Report',     blurb: 'Cash or transfer takings for the period.', convertsTo: 'Finance ledger (revenue)' },
-  inventory: { label: 'Inventory Report', blurb: 'Stock counts, usage and availability.',     convertsTo: null },
-  expense:   { label: 'Expense Report',   blurb: 'Money spent — recorded only once approved.', convertsTo: 'Expense record' },
-  credit:    { label: 'Credit Report',    blurb: 'Items bought on credit (unpaid) — from a supplier or otherwise.', convertsTo: 'Payables register' },
+  sales:      { label: 'Sales Report',     blurb: 'Cash or transfer takings for the period.', convertsTo: 'Finance ledger (revenue)' },
+  inventory:  { label: 'Inventory Report', blurb: 'Stock counts, usage and availability.',     convertsTo: null },
+  expense:    { label: 'Expense Report',   blurb: 'Money spent — recorded only once approved.', convertsTo: 'Expense record' },
+  credit:     { label: 'Credit Report',    blurb: 'Items bought on credit (unpaid) — from a supplier or otherwise.', convertsTo: 'Payables register' },
+  kitchen:    { label: 'Kitchen Report',   blurb: 'Food prepared, quantities served and wastage for the day.', convertsTo: null },
+  operations: { label: 'Operations Report', blurb: 'The general report: key activities, challenges, observations and suggestions.', convertsTo: null },
 };
+
+// ── Operations (general) report ──────────────────────────────────────────────
+// A narrative report covering the day's running. Stored on details as plain text
+// fields so it can be read back and rendered consistently.
+export interface OperationsDetails {
+  key_activities?: string;
+  challenges?: string;
+  observations?: string;
+  suggestions?: string;
+}
+
+export const OPERATIONS_FIELDS: { key: keyof OperationsDetails; label: string; placeholder: string }[] = [
+  { key: 'key_activities', label: 'Key activities', placeholder: 'What was done today — services, deliveries, events, staffing…' },
+  { key: 'challenges',     label: 'Challenges',     placeholder: 'Problems faced — shortages, downtime, complaints…' },
+  { key: 'observations',   label: 'Observations',   placeholder: 'Notable things you noticed — trends, customer feedback…' },
+  { key: 'suggestions',    label: 'Suggestions',    placeholder: 'What you would improve or recommend.' },
+];
 
 // ── Credit report line items ─────────────────────────────────────────────────
 // A credit report is a list of items bought on credit. Each item is either

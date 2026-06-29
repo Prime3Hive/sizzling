@@ -15,12 +15,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Plus, CheckCircle2, XCircle, Loader2, ClipboardList, Wallet, ClipboardCheck, TrendingUp } from 'lucide-react';
+import { Plus, CheckCircle2, XCircle, Loader2, ClipboardList, Wallet, ClipboardCheck, TrendingUp, FileText, ListChecks } from 'lucide-react';
 import {
   REPORT_TYPES, REPORT_STATUS_COLOR, CADENCES, gradeColor, gradeFromScore,
-  combinePerformance, summarizePerformance, describeCreditItems, type ReportType,
+  combinePerformance, summarizePerformance, describeCreditItems, OPERATIONS_FIELDS,
+  type ReportType,
 } from '@/lib/reports';
 import { formatNairaCompact } from '@/lib/currency';
+import ChecklistAdmin from '@/components/reports/ChecklistAdmin';
 
 interface Report {
   id: string; user_id: string; report_type: ReportType; report_date: string; submitted_at: string;
@@ -88,6 +90,7 @@ export default function StaffReportsAdmin() {
   }, [profiles]);
 
   const pending = reports.filter(r => r.status === 'submitted');
+  const operationsReports = reports.filter(r => r.report_type === 'operations');
 
   // Per-staff performance roll-up for the Performance tab.
   const staffSummaries = useMemo(() => {
@@ -264,9 +267,11 @@ export default function StaffReportsAdmin() {
       </div>
 
       <Tabs defaultValue="review">
-        <TabsList>
+        <TabsList className="flex-wrap h-auto">
           <TabsTrigger value="review">Review{pending.length > 0 && <Badge className="ml-2 text-xs">{pending.length}</Badge>}</TabsTrigger>
           <TabsTrigger value="all">All Reports</TabsTrigger>
+          <TabsTrigger value="general"><FileText className="h-4 w-4 mr-1.5" />General Report</TabsTrigger>
+          <TabsTrigger value="checklists"><ListChecks className="h-4 w-4 mr-1.5" />Checklists</TabsTrigger>
           <TabsTrigger value="performance">Performance</TabsTrigger>
           <TabsTrigger value="assignments">Assignments</TabsTrigger>
           <TabsTrigger value="payables">Payables{outstanding > 0 && <Badge className="ml-2 text-xs">{formatNairaCompact(outstanding)}</Badge>}</TabsTrigger>
@@ -279,6 +284,50 @@ export default function StaffReportsAdmin() {
 
         <TabsContent value="all" className="mt-4">
           <ReportTable rows={reports} nameOf={nameOf} emptyMsg="No reports yet." onRow={(r) => { setReview(r); setQuality(r.quality_score?.toString() ?? ''); setReviewNote(r.review_note ?? ''); }} actionLabel="View" />
+        </TabsContent>
+
+        {/* General (operations) report — a running log of key activities, challenges,
+            observations and suggestions across the team. */}
+        <TabsContent value="general" className="mt-4 space-y-3">
+          {operationsReports.length === 0 ? (
+            <Card><CardContent className="p-0"><Empty icon={FileText} msg="No operations reports submitted yet." /></CardContent></Card>
+          ) : (
+            operationsReports.map(r => {
+              const ops = r.details?.operations ?? {};
+              return (
+                <Card key={r.id}>
+                  <CardContent className="p-4 space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <p className="font-medium">{nameOf(r.user_id)}</p>
+                        <p className="text-xs text-muted-foreground">For {format(parseISO(r.report_date), 'dd MMM yyyy')} · submitted {format(parseISO(r.submitted_at), 'dd MMM, HH:mm')}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Badge className={`text-xs border capitalize ${REPORT_STATUS_COLOR[r.status as keyof typeof REPORT_STATUS_COLOR] ?? ''}`}>{r.status}</Badge>
+                        {r.grade && <Badge className={`text-xs border ${gradeColor(r.grade)}`}>{r.grade}{r.performance_score != null ? ` · ${r.performance_score}` : ''}</Badge>}
+                        <Button size="sm" variant="outline" onClick={() => { setReview(r); setQuality(r.quality_score?.toString() ?? ''); setReviewNote(r.review_note ?? ''); }}>{r.status === 'submitted' ? 'Review' : 'View'}</Button>
+                      </div>
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {OPERATIONS_FIELDS.map(f => (
+                        ops[f.key] ? (
+                          <div key={f.key} className="rounded-lg border p-2">
+                            <p className="text-xs font-medium text-muted-foreground">{f.label}</p>
+                            <p className="text-sm whitespace-pre-wrap mt-0.5">{ops[f.key]}</p>
+                          </div>
+                        ) : null
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })
+          )}
+        </TabsContent>
+
+        {/* Daily checklists — templates, assignments and grading */}
+        <TabsContent value="checklists" className="mt-4">
+          <ChecklistAdmin profiles={profiles} nameOf={nameOf} />
         </TabsContent>
 
         {/* Performance summary — per staff member */}
@@ -396,13 +445,31 @@ export default function StaffReportsAdmin() {
                     {review.details.lines.map((l: any, i: number) => (
                       <div key={i} className="flex justify-between text-xs">
                         <span>{l.category ?? l.item}{l.qty ? ` ×${l.qty}` : ''}</span>
-                        <span className="text-muted-foreground">{l.amount != null ? formatNairaCompact(l.amount) : `counted ${l.counted ?? 0} · used ${l.used ?? 0}`}</span>
+                        <span className="text-muted-foreground">
+                          {l.amount != null
+                            ? formatNairaCompact(l.amount)
+                            : l.prepared != null
+                              ? `prepared ${l.prepared} · served ${l.served ?? 0} · wasted ${l.wasted ?? 0}`
+                              : `counted ${l.counted ?? 0} · used ${l.used ?? 0}`}
+                        </span>
                       </div>
                     ))}
                   </div>
                 )}
                 {review.report_type === 'credit' && (review.details?.source || review.details?.supplier) && (
                   <p>Bought from: <span className="font-medium">{review.details?.source ?? review.details?.supplier}</span>{review.details?.is_supplier ? ' · registered supplier' : ' · not a supplier'}</p>
+                )}
+                {review.report_type === 'operations' && review.details?.operations && (
+                  <div className="space-y-2">
+                    {OPERATIONS_FIELDS.map(f => (
+                      review.details.operations[f.key] ? (
+                        <div key={f.key} className="rounded-lg border p-2">
+                          <p className="text-xs font-medium text-muted-foreground">{f.label}</p>
+                          <p className="text-sm whitespace-pre-wrap mt-0.5">{review.details.operations[f.key]}</p>
+                        </div>
+                      ) : null
+                    ))}
+                  </div>
                 )}
                 {review.summary && <p className="text-muted-foreground">{review.summary}</p>}
                 {review.converted_ref && <p className="text-violet-600 text-xs">Already converted to a financial record.</p>}
