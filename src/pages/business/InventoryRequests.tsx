@@ -18,9 +18,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import {
   Tooltip, TooltipContent, TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { Separator } from "@/components/ui/separator";
 import {
   Plus, Clock, CheckCircle2, XCircle, ShoppingCart,
-  Search, ClipboardList, FileText, PackageCheck, Pencil,
+  Search, ClipboardList, FileText, PackageCheck, Pencil, Eye, StickyNote,
 } from "lucide-react";
 import LPOSheet, { type SourceRequest } from "@/components/procurement/LPOSheet";
 import { formatNairaCompact } from "@/lib/currency";
@@ -65,7 +66,6 @@ interface InventoryRequest {
   purchase_cost: number | null;
   created_at: string;
   skus: { name: string; unit_of_measure: string; category: string } | null;
-  profiles: { full_name: string } | null;
   inventory_request_items: RequestItem[] | null;
 }
 
@@ -152,6 +152,9 @@ export default function InventoryRequests() {
   const [lpoSheetOpen, setLpoSheetOpen] = useState(false);
   const [lpoSource, setLpoSource] = useState<SourceRequest | undefined>(undefined);
 
+  // Details dialog — stores the request id so the view stays fresh after mutations
+  const [detailsId, setDetailsId] = useState<string | null>(null);
+
   // ── Queries ───────────────────────────────────────────────────────────────
 
   const { data: skus = [] } = useQuery<SKU[]>({
@@ -189,6 +192,25 @@ export default function InventoryRequests() {
     },
     enabled: !!user,
   });
+
+  // Requester / approver names — inventory_requests has no FK to profiles,
+  // so names are resolved through a directory lookup keyed by user_id.
+  const { data: profiles = [] } = useQuery<{ user_id: string; full_name: string | null }[]>({
+    queryKey: ["profiles-directory"],
+    queryFn: async () => {
+      const { data, error } = await supabase.from("profiles").select("user_id, full_name");
+      if (error) throw error;
+      return data ?? [];
+    },
+    staleTime: 5 * 60_000,
+  });
+
+  const nameByUserId = useMemo(
+    () => Object.fromEntries(profiles.map(p => [p.user_id, p.full_name])),
+    [profiles],
+  );
+  const nameOf = (id: string | null) =>
+    id ? (nameByUserId[id] || `${id.slice(0, 8)}…`) : "—";
 
   // Fetch LPOs that were raised from inventory requests
   const { data: linkedLPOs = [] } = useQuery<LinkedLPO[]>({
@@ -437,13 +459,22 @@ export default function InventoryRequests() {
   // ── Derived ───────────────────────────────────────────────────────────────
 
   const filtered  = requests.filter(r => {
-    const q = search.toLowerCase();
-    return itemsOf(r).some(it => (it.skus?.name ?? "").toLowerCase().includes(q));
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      itemsOf(r).some(it => (it.skus?.name ?? it.item_name ?? "").toLowerCase().includes(q)) ||
+      nameOf(r.user_id).toLowerCase().includes(q) ||
+      (r.notes ?? "").toLowerCase().includes(q)
+    );
   });
   const pending   = requests.filter(r => r.status === "pending").length;
   const approved  = requests.filter(r => r.status === "approved").length;
   const fulfilled = requests.filter(r => r.status === "fulfilled").length;
   const byStatus  = (s: string) => filtered.filter(r => r.status === s);
+
+  // Resolve the details row from the live query so the dialog reflects
+  // approvals/fulfilments made while it is open.
+  const detailsRow = detailsId ? requests.find(r => r.id === detailsId) ?? null : null;
 
   if (isLoading) return (
     <div className="flex items-center justify-center h-64 text-muted-foreground">Loading…</div>
@@ -588,6 +619,9 @@ export default function InventoryRequests() {
             <RequestsTable
               rows={byStatus("pending")}
               emptyMsg="No pending requests."
+              showRequester
+              nameOf={nameOf}
+              onView={setDetailsId}
               actions={(row) => (
                 <div className="flex gap-2 justify-end">
                   <Button size="sm" variant="outline" onClick={() => openEdit(row)}>
@@ -626,6 +660,8 @@ export default function InventoryRequests() {
               rows={byStatus("approved")}
               emptyMsg="No approved requests awaiting purchase."
               showRequester
+              nameOf={nameOf}
+              onView={setDetailsId}
               actions={(row) => <ApprovedActions row={row} />}
             />
           </TabsContent>
@@ -637,6 +673,8 @@ export default function InventoryRequests() {
             rows={filtered}
             emptyMsg={canManage ? "No requests found." : "You have not submitted any requests yet."}
             showRequester={canManage}
+            nameOf={nameOf}
+            onView={setDetailsId}
             lpoByRequest={lpoByRequest}
             actions={(row) => {
               if (row.status === "approved" && canRecordPurchase && canManage)
@@ -805,6 +843,53 @@ export default function InventoryRequests() {
         </DialogContent>
       </Dialog>
 
+      {/* ── Request Details Dialog — viewable at every stage ── */}
+      <RequestDetailsDialog
+        request={detailsRow}
+        open={!!detailsRow}
+        onOpenChange={open => !open && setDetailsId(null)}
+        nameOf={nameOf}
+        linkedLPO={detailsRow ? lpoByRequest[detailsRow.id] : undefined}
+        footer={detailsRow && (
+          <>
+            {detailsRow.status === "pending" && (detailsRow.user_id === user!.id || canManage) && (
+              <Button size="sm" variant="outline" onClick={() => { setDetailsId(null); openEdit(detailsRow); }}>
+                <Pencil className="h-3.5 w-3.5 mr-1" />Edit
+              </Button>
+            )}
+            {detailsRow.status === "pending" && canManage && (
+              <>
+                <Button size="sm" variant="outline"
+                  className="text-green-700 border-green-300 hover:bg-green-50"
+                  onClick={() => { setDetailsId(null); approveRequest.mutate(detailsRow.id); }}
+                  disabled={approveRequest.isPending}
+                >
+                  <CheckCircle2 className="h-3.5 w-3.5 mr-1" />Approve
+                </Button>
+                <Button size="sm" variant="outline"
+                  className="text-red-700 border-red-300 hover:bg-red-50"
+                  onClick={() => { setDetailsId(null); setRejectTarget(detailsRow.id); setRejectReason(""); }}
+                >
+                  <XCircle className="h-3.5 w-3.5 mr-1" />Reject
+                </Button>
+              </>
+            )}
+            {detailsRow.status === "approved" && canRecordPurchase && !lpoByRequest[detailsRow.id] && (
+              <>
+                {itemsOf(detailsRow).some(it => !isMisc(it) && it.sku_id) && (
+                  <Button size="sm" onClick={() => { setDetailsId(null); openRaiseLPO(detailsRow); }}>
+                    <FileText className="h-3.5 w-3.5 mr-1" />Raise LPO
+                  </Button>
+                )}
+                <Button size="sm" variant="outline" onClick={() => { setDetailsId(null); openDirectPurchase(detailsRow); }}>
+                  <ShoppingCart className="h-3.5 w-3.5 mr-1" />Direct Purchase
+                </Button>
+              </>
+            )}
+          </>
+        )}
+      />
+
       {/* ── LPO Sheet (procurement path) ── */}
       <LPOSheet
         mode="create"
@@ -828,65 +913,73 @@ export default function InventoryRequests() {
   );
 }
 
+// ── Line item rendering (shared by table + details dialog) ──────────────────
+
+function LineItemLabel({ it }: { it: RequestItem }) {
+  return isMisc(it) ? (
+    <>
+      <span className="font-medium">{it.item_name ?? "—"}</span>
+      <span className="text-xs text-muted-foreground"> · qty {it.requested_quantity}{it.amount != null ? ` · ${formatNairaCompact(it.amount)}` : ""}</span>
+      <Badge variant="outline" className="ml-1.5 text-[10px] px-1 py-0 align-middle text-muted-foreground">misc</Badge>
+    </>
+  ) : (
+    <>
+      <span className="font-medium">{it.skus?.name ?? "—"}</span>
+      <span className="text-xs text-muted-foreground"> · {it.requested_quantity} {it.skus?.unit_of_measure ?? ""}</span>
+    </>
+  );
+}
+
 // ── RequestsTable ─────────────────────────────────────────────────────────────
+
+const MAX_PREVIEW_LINES = 2;
 
 function RequestsTable({
   rows,
   emptyMsg,
   showRequester = false,
   lpoByRequest = {},
+  nameOf,
+  onView,
   actions,
 }: {
   rows: InventoryRequest[];
   emptyMsg: string;
   showRequester?: boolean;
   lpoByRequest?: Record<string, LinkedLPO>;
+  nameOf: (id: string | null) => string;
+  onView: (id: string) => void;
   actions?: (row: InventoryRequest) => React.ReactNode;
 }) {
   const columns: ResponsiveColumn<InventoryRequest>[] = [
     {
-      key: "item", header: "Item", primary: true,
-      cell: (row) => (
-        <div className="space-y-1">
-          {itemsOf(row).map(it => (
-            <div key={it.id}>
-              {isMisc(it) ? (
-                <>
-                  <span className="font-medium">{it.item_name ?? "—"}</span>
-                  <span className="text-xs text-muted-foreground"> · misc{it.amount != null ? ` · ${formatNairaCompact(it.amount)}` : ""}</span>
-                </>
-              ) : (
-                <>
-                  <span className="font-medium">{it.skus?.name ?? "—"}</span>
-                  <span className="text-xs text-muted-foreground capitalize"> · {it.skus?.category}</span>
-                </>
-              )}
-            </div>
-          ))}
-        </div>
-      ),
+      key: "items", header: "Items", primary: true,
+      cell: (row) => {
+        const items = itemsOf(row);
+        const preview = items.slice(0, MAX_PREVIEW_LINES);
+        const extra = items.length - preview.length;
+        return (
+          <div className="space-y-0.5">
+            {preview.map(it => <div key={it.id}><LineItemLabel it={it} /></div>)}
+            {extra > 0 && (
+              <div className="text-xs text-muted-foreground">+{extra} more item{extra > 1 ? "s" : ""}</div>
+            )}
+            {row.notes && (
+              <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                <StickyNote className="h-3 w-3 shrink-0" />
+                <span className="truncate max-w-[220px]">{row.notes}</span>
+              </div>
+            )}
+          </div>
+        );
+      },
     },
     ...(showRequester ? [{
       key: "requester", header: "Requester",
       cell: (row: InventoryRequest) => (
-        <span className="text-sm text-muted-foreground">{row.profiles?.full_name ?? `${row.user_id.slice(0, 8)}…`}</span>
+        <span className="text-sm text-muted-foreground whitespace-nowrap">{nameOf(row.user_id)}</span>
       ),
     } as ResponsiveColumn<InventoryRequest>] : []),
-    {
-      key: "qty", header: "Qty",
-      cell: (row) => (
-        <div className="space-y-1">
-          {itemsOf(row).map(it => (
-            <div key={it.id} className="whitespace-nowrap">
-              {it.fulfilled_quantity > 0
-                ? <><span className="font-semibold">{it.fulfilled_quantity}</span><span className="text-muted-foreground">/{it.requested_quantity}</span></>
-                : it.requested_quantity}{" "}
-              <span className="text-xs text-muted-foreground">{it.skus?.unit_of_measure}</span>
-            </div>
-          ))}
-        </div>
-      ),
-    },
     {
       key: "date", header: "Date",
       cell: (row) => <span className="text-sm text-muted-foreground whitespace-nowrap">{format(parseISO(row.created_at), "dd MMM yyyy")}</span>,
@@ -908,19 +1001,21 @@ function RequestsTable({
       },
     },
     {
-      key: "notes", header: "Notes", hideOnMobile: true,
-      cell: (row) => (
-        <span className="max-w-xs truncate text-sm text-muted-foreground block">
-          {row.rejected_reason
-            ? <span className="text-red-600 text-xs">Rejected: {row.rejected_reason}</span>
-            : (row.notes || "—")}
-        </span>
+      key: "action", header: "", align: "right" as const, mobileFooter: true,
+      cell: (row: InventoryRequest) => (
+        <div className="flex items-center gap-2 justify-end" onClick={e => e.stopPropagation()}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button size="sm" variant="ghost" className="text-muted-foreground" onClick={() => onView(row.id)}>
+                <Eye className="h-3.5 w-3.5 mr-1" />View
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="text-xs">View full request details</TooltipContent>
+          </Tooltip>
+          {actions?.(row)}
+        </div>
       ),
-    },
-    ...(actions ? [{
-      key: "action", header: "Action", align: "right" as const, mobileFooter: true,
-      cell: (row: InventoryRequest) => actions(row),
-    } as ResponsiveColumn<InventoryRequest>] : []),
+    } as ResponsiveColumn<InventoryRequest>,
   ];
 
   return (
@@ -933,10 +1028,174 @@ function RequestsTable({
           </div>
         ) : (
           <div className="px-3 md:px-0">
-            <ResponsiveTable columns={columns} data={rows} rowKey={(r) => r.id} />
+            <ResponsiveTable
+              columns={columns}
+              data={rows}
+              rowKey={(r) => r.id}
+              onRowClick={(r) => onView(r.id)}
+            />
           </div>
         )}
       </CardContent>
     </Card>
+  );
+}
+
+// ── RequestDetailsDialog ──────────────────────────────────────────────────────
+// Full read-only view of a request — items, people, dates, notes and outcome —
+// available at every stage, including after approval and fulfilment.
+
+function DetailField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p>
+      <div className="text-sm mt-0.5">{children}</div>
+    </div>
+  );
+}
+
+function RequestDetailsDialog({
+  request,
+  open,
+  onOpenChange,
+  nameOf,
+  linkedLPO,
+  footer,
+}: {
+  request: InventoryRequest | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  nameOf: (id: string | null) => string;
+  linkedLPO?: LinkedLPO;
+  footer?: React.ReactNode;
+}) {
+  if (!request) return null;
+
+  const items = itemsOf(request);
+  const skuLines = items.filter(it => !isMisc(it));
+  const miscLines = items.filter(isMisc);
+  const miscTotal = miscLines.reduce((s, it) => s + Number(it.amount ?? 0), 0);
+  const fmtDate = (d: string | null, withTime = false) =>
+    d ? format(parseISO(d), withTime ? "dd MMM yyyy, HH:mm" : "dd MMM yyyy") : null;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 flex-wrap">
+            Request <span className="font-mono text-sm text-muted-foreground">#{request.id.slice(0, 8)}</span>
+            <StatusBadge status={request.status} />
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4 py-1">
+          {/* People & dates */}
+          <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+            <DetailField label="Requested by">{nameOf(request.user_id)}</DetailField>
+            <DetailField label="Requested on">{fmtDate(request.created_at, true)}</DetailField>
+            {request.approved_by && (
+              <DetailField label={request.status === "rejected" ? "Rejected by" : "Approved by"}>
+                {nameOf(request.approved_by)}
+              </DetailField>
+            )}
+            {request.approved_at && (
+              <DetailField label={request.status === "rejected" ? "Rejected on" : "Approved on"}>
+                {fmtDate(request.approved_at, true)}
+              </DetailField>
+            )}
+            {request.fulfilled_date && (
+              <DetailField label="Fulfilled on">{fmtDate(request.fulfilled_date)}</DetailField>
+            )}
+            {request.purchase_cost != null && (
+              <DetailField label="Purchase cost">
+                <span className="font-semibold">{formatNairaCompact(request.purchase_cost)}</span>
+              </DetailField>
+            )}
+            {linkedLPO && (
+              <DetailField label="Linked LPO">
+                <Badge variant="outline" className="text-xs font-mono gap-1 text-indigo-700 border-indigo-200 bg-indigo-50">
+                  <FileText className="h-3 w-3" />{linkedLPO.lpo_number}
+                </Badge>
+                <span className="ml-2 text-xs text-muted-foreground capitalize">{linkedLPO.status.replace(/_/g, " ")}</span>
+              </DetailField>
+            )}
+          </div>
+
+          <Separator />
+
+          {/* Stock items */}
+          {skuLines.length > 0 && (
+            <div>
+              <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-2">
+                Stock items ({skuLines.length})
+              </p>
+              <div className="rounded-lg border divide-y">
+                {skuLines.map(it => (
+                  <div key={it.id} className="flex items-center justify-between gap-3 px-3 py-2">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate">{it.skus?.name ?? "—"}</p>
+                      <p className="text-xs text-muted-foreground capitalize">{it.skus?.category ?? ""}{it.note ? ` · ${it.note}` : ""}</p>
+                    </div>
+                    <div className="text-sm whitespace-nowrap text-right">
+                      {it.fulfilled_quantity > 0
+                        ? <><span className="font-semibold">{it.fulfilled_quantity}</span><span className="text-muted-foreground">/{it.requested_quantity}</span></>
+                        : <span className="font-semibold">{it.requested_quantity}</span>}
+                      {" "}<span className="text-xs text-muted-foreground">{it.skus?.unit_of_measure ?? ""}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Miscellaneous items */}
+          {miscLines.length > 0 && (
+            <div>
+              <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-2">
+                Miscellaneous items ({miscLines.length})
+              </p>
+              <div className="rounded-lg border divide-y">
+                {miscLines.map(it => (
+                  <div key={it.id} className="flex items-center justify-between gap-3 px-3 py-2">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate">{it.item_name ?? "—"}</p>
+                      <p className="text-xs text-muted-foreground">Qty {it.requested_quantity} · recorded as expense</p>
+                    </div>
+                    <span className="text-sm font-semibold whitespace-nowrap">
+                      {it.amount != null ? formatNairaCompact(it.amount) : "—"}
+                    </span>
+                  </div>
+                ))}
+                <div className="flex items-center justify-between px-3 py-2 bg-muted/40">
+                  <span className="text-xs font-medium text-muted-foreground">Misc total</span>
+                  <span className="text-sm font-semibold">{formatNairaCompact(miscTotal)}</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Notes */}
+          {request.notes && (
+            <div className="rounded-lg bg-muted/40 border px-3 py-2.5">
+              <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">Notes</p>
+              <p className="text-sm whitespace-pre-wrap">{request.notes}</p>
+            </div>
+          )}
+
+          {/* Rejection reason */}
+          {request.status === "rejected" && (
+            <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2.5">
+              <p className="text-[11px] uppercase tracking-wide text-red-600 mb-1">Rejection reason</p>
+              <p className="text-sm text-red-700">{request.rejected_reason || "No reason provided."}</p>
+            </div>
+          )}
+        </div>
+
+        <DialogFooter className="gap-2 flex-wrap">
+          {footer}
+          <Button size="sm" variant="outline" onClick={() => onOpenChange(false)}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
