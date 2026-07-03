@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Plus, FileSpreadsheet, Search, CheckCircle, Clock, Users, DollarSign, Calendar, Pencil, Trash2 } from 'lucide-react';
+import { Plus, FileSpreadsheet, FileText, Search, CheckCircle, Clock, Users, DollarSign, Calendar, Pencil, Trash2 } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
@@ -19,7 +19,11 @@ import { formatNairaCompact } from '@/lib/currency';
 import { format } from 'date-fns';
 import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
+import html2canvas from 'html2canvas';
+import { jsPDF } from 'jspdf';
 import { SALARY_PERIODS } from '@/lib/expenseConstants';
+import { exportPayrollRegisterPdf } from '@/lib/payrollPdf';
+import PayslipTemplate from '@/components/PayslipTemplate';
 
 interface StaffProfile {
   id: string;
@@ -70,6 +74,9 @@ const Payroll = () => {
   const [selectedStaffId, setSelectedStaffId] = useState('');
   const [allowances, setAllowances] = useState(0);
   const [deductions, setDeductions] = useState(0);
+  // Individual payslip → PDF (rendered off-screen via PayslipTemplate)
+  const [payslipRecord, setPayslipRecord] = useState<PayrollRecord | null>(null);
+  const payslipRef = useRef<HTMLDivElement>(null);
 
   const { data: staffProfiles = [] } = useQuery({
     queryKey: ['payroll-staff'],
@@ -355,6 +362,47 @@ const Payroll = () => {
     saveAs(new Blob([wbout], { type: 'application/octet-stream' }), `Payroll_${format(new Date(), 'yyyy-MM-dd')}.xlsx`);
   };
 
+  // Export the current (filtered) payroll list as a register PDF
+  const exportToPdf = () => {
+    const statusLabel = statusFilter === 'all' ? 'All statuses' : statusFilter === 'paid' ? 'Paid' : 'Pending';
+    const periodLabel = periodFilter && periodFilter !== 'all'
+      ? (SALARY_PERIODS.find(p => p.value === periodFilter)?.label ?? periodFilter)
+      : 'All periods';
+    exportPayrollRegisterPdf(filteredRecords, {
+      scopeLabel: 'All Staff',
+      filterLabel: `Status: ${statusLabel} · Period: ${periodLabel}`,
+    });
+  };
+
+  // Render the selected record off-screen, then snapshot it into a payslip PDF
+  useEffect(() => {
+    if (!payslipRecord) return;
+    let cancelled = false;
+    const run = async () => {
+      // Wait for the off-screen PayslipTemplate to paint
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const el = payslipRef.current;
+      if (!el || cancelled) return;
+      try {
+        const canvas = await html2canvas(el, { scale: 2, useCORS: true, logging: false, backgroundColor: '#ffffff' });
+        const imgData = canvas.toDataURL('image/png');
+        // PayslipTemplate is A5-landscape (210mm × ~148mm)
+        const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a5' });
+        const pageW = pdf.internal.pageSize.getWidth();
+        const imgH = (canvas.height / canvas.width) * pageW;
+        pdf.addImage(imgData, 'PNG', 0, 0, pageW, imgH);
+        const safeName = payslipRecord.staff_name.replace(/[^\w]+/g, '_');
+        pdf.save(`Payslip_${safeName}_${format(new Date(payslipRecord.period_end), 'yyyy-MM-dd')}.pdf`);
+      } catch (err: any) {
+        toast({ title: 'PDF failed', description: err?.message ?? 'Could not generate payslip', variant: 'destructive' });
+      } finally {
+        if (!cancelled) setPayslipRecord(null);
+      }
+    };
+    run();
+    return () => { cancelled = true; };
+  }, [payslipRecord, toast]);
+
   const selectedStaff = selectedStaffId && selectedStaffId !== 'all' ? staffProfiles.find(s => s.id === selectedStaffId) : undefined;
 
   if (isLoading) {
@@ -391,6 +439,9 @@ const Payroll = () => {
       key: "actions", header: "Actions", align: "right", mobileFooter: true,
       cell: (r) => (
         <div className="flex items-center gap-1 md:justify-end">
+          <Button size="sm" variant="ghost" title="Download payslip PDF" onClick={() => setPayslipRecord(r)} disabled={!!payslipRecord}>
+            <FileText className="h-3 w-3" />
+          </Button>
           {r.status === 'pending' && (
             <>
               <Button size="sm" variant="outline" onClick={() => markPaidMutation.mutate(r.id)}><CheckCircle className="h-3 w-3 mr-1" />Pay</Button>
@@ -427,6 +478,9 @@ const Payroll = () => {
         <div className="flex items-center gap-3">
           <Button variant="outline" onClick={exportToExcel} disabled={filteredRecords.length === 0}>
             <FileSpreadsheet className="h-4 w-4 mr-2" />Export Excel
+          </Button>
+          <Button variant="outline" onClick={exportToPdf} disabled={filteredRecords.length === 0}>
+            <FileText className="h-4 w-4 mr-2" />Export PDF
           </Button>
           <Button variant="outline" disabled={filteredRecords.filter(r => r.status === 'pending').length === 0} onClick={() => {
             const rows = filteredRecords.filter(r => r.status === 'pending');
@@ -606,6 +660,15 @@ const Payroll = () => {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Off-screen payslip template — captured by html2canvas for the per-row PDF */}
+      {payslipRecord && (
+        <div style={{ position: 'fixed', left: '-10000px', top: 0, pointerEvents: 'none' }} aria-hidden>
+          <div ref={payslipRef}>
+            <PayslipTemplate record={payslipRecord} />
+          </div>
+        </div>
+      )}
     </div>
   );
 };
