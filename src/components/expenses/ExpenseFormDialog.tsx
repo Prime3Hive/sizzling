@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Plus, X } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
+import { useRoles } from '@/hooks/useRoles';
 import { useToast } from '@/hooks/use-toast';
 import { EXPENSE_CATEGORIES, ACCOUNT_TYPES, COST_CENTERS, PAYMENT_METHODS } from '@/lib/expenseConstants';
 
@@ -49,6 +50,7 @@ interface ExpenseFormDialogProps {
 
 const ExpenseFormDialog = ({ budgets, onExpenseAdded, editingExpense, isEditOpen, onEditOpenChange, onExpenseUpdated }: ExpenseFormDialogProps) => {
   const { user } = useAuth();
+  const { isAdmin } = useRoles();
   const { toast } = useToast();
   const [isOpen, setIsOpen] = useState(false);
   const isEditMode = !!editingExpense;
@@ -190,6 +192,8 @@ const ExpenseFormDialog = ({ budgets, onExpenseAdded, editingExpense, isEditOpen
           receiptPath = await uploadReceipt();
           if (!receiptPath) return;
         }
+        // Maker-checker: non-admin entries start as 'pending' and only reach
+        // the ledger and reports once an admin approves them.
         const { error } = await supabase.from('expenses').insert({
           amount: validation.data.amount,
           description: validation.data.description,
@@ -201,9 +205,13 @@ const ExpenseFormDialog = ({ budgets, onExpenseAdded, editingExpense, isEditOpen
           cost_center: validation.data.costCenter || 'Daily Orders',
           bank_account: validation.data.bankAccount || null,
           payment_method: validation.data.paymentMethod || null,
+          status: isAdmin ? 'approved' : 'pending',
         });
         if (error) throw error;
-        toast({ title: 'Expense added!', description: 'Your expense has been recorded.' });
+        toast({
+          title: 'Expense added!',
+          description: isAdmin ? 'Your expense has been recorded.' : 'Submitted for approval — it will count once an admin approves it.',
+        });
         setIsOpen(false);
         resetForm();
         onExpenseAdded();

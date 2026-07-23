@@ -23,10 +23,17 @@ interface Sale {
   sale_number: string;
   sale_type: string | null;
   total_amount: number;
+  vat_amount?: number;
   customer_name: string | null;
   notes: string | null;
   status: string;
 }
+
+// Standard VAT rate (VAT Act, Finance Act 2019). Takings entered VAT-inclusive
+// are split: vat = total × RATE / (100 + RATE), so revenue is credited net.
+const VAT_RATE = 7.5;
+const vatFromInclusive = (total: number) =>
+  Math.round(((total * VAT_RATE) / (100 + VAT_RATE)) * 100) / 100;
 
 interface WeeklySalesEntryProps {
   sales: Sale[];
@@ -96,13 +103,16 @@ const WeeklySalesEntry = ({ sales, selectedYear, onSaleAdded }: WeeklySalesEntry
     setIsSubmitting(true);
     const formData = new FormData(e.currentTarget);
     try {
+      const total = parseFloat(formData.get('total_amount') as string);
+      const vatInclusive = formData.get('vat_inclusive') === 'on';
       const { error } = await supabase.from('sales').insert({
         user_id: user.id,
         created_by: user.id,
         sale_number: generateSaleNumber(),
         sale_date: formData.get('sale_date') as string,
         sale_type: formData.get('sale_type') as string,
-        total_amount: parseFloat(formData.get('total_amount') as string),
+        total_amount: total,
+        vat_amount: vatInclusive ? vatFromInclusive(total) : 0,
         customer_name: (formData.get('customer_name') as string) || null,
         notes: (formData.get('notes') as string) || null,
         status: 'completed',
@@ -124,10 +134,13 @@ const WeeklySalesEntry = ({ sales, selectedYear, onSaleAdded }: WeeklySalesEntry
     setIsSubmitting(true);
     const formData = new FormData(e.currentTarget);
     try {
+      const total = parseFloat(formData.get('total_amount') as string);
+      const vatInclusive = formData.get('vat_inclusive') === 'on';
       const { error } = await supabase.from('sales').update({
         sale_date: formData.get('sale_date') as string,
         sale_type: formData.get('sale_type') as string,
-        total_amount: parseFloat(formData.get('total_amount') as string),
+        total_amount: total,
+        vat_amount: vatInclusive ? vatFromInclusive(total) : 0,
         customer_name: (formData.get('customer_name') as string) || null,
         notes: (formData.get('notes') as string) || null,
       }).eq('id', editSale.id);
@@ -198,6 +211,21 @@ const WeeklySalesEntry = ({ sales, selectedYear, onSaleAdded }: WeeklySalesEntry
             placeholder="e.g. 500000"
           />
         </div>
+        <label className="flex items-start gap-2 rounded-md border border-dashed p-3 text-sm cursor-pointer">
+          <input
+            type="checkbox"
+            name="vat_inclusive"
+            className="mt-0.5"
+            defaultChecked={Number(defaults?.vat_amount ?? 0) > 0}
+          />
+          <span>
+            Takings include {VAT_RATE}% VAT
+            <span className="block text-xs text-muted-foreground mt-0.5">
+              The VAT portion is split out to VAT Payable and revenue is recorded net. Leave
+              unchecked if these takings are VAT-exempt (e.g. basic food items).
+            </span>
+          </span>
+        </label>
         <div className="grid gap-2">
           <Label>Description / Label</Label>
           <Input

@@ -83,6 +83,7 @@ const Dashboard = () => {
       const { data, error } = await supabase
         .from('expenses')
         .select('amount, category, account_type')
+        .eq('status', 'approved')
         .gte('date', monthStart)
         .lte('date', monthEnd);
       if (error) throw error;
@@ -97,7 +98,7 @@ const Dashboard = () => {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('sales')
-        .select('total_amount, sale_type, sale_date')
+        .select('total_amount, vat_amount, sale_type, sale_date')
         .gte('sale_date', yearStart)
         .lte('sale_date', yearEnd)
         .neq('status', 'cancelled');
@@ -114,6 +115,7 @@ const Dashboard = () => {
       const { data, error } = await supabase
         .from('expenses')
         .select('amount, account_type')
+        .eq('status', 'approved')
         .gte('date', yearStart)
         .lte('date', yearEnd);
       if (error) throw error;
@@ -128,7 +130,7 @@ const Dashboard = () => {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('payroll_records')
-        .select('net_pay, status, salary_period, period_start, period_end')
+        .select('net_pay, basic_salary, allowances, pension_employer, status, salary_period, period_start, period_end')
         .order('created_at', { ascending: false })
         .limit(100);
       if (error) throw error;
@@ -235,7 +237,7 @@ const Dashboard = () => {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('invoices')
-        .select('total_amount, issue_date, invoice_type')
+        .select('total_amount, tax_amount, issue_date, invoice_type')
         .eq('status', 'invoice')
         .gte('issue_date', yearStart).lte('issue_date', yearEnd);
       if (error) throw error;
@@ -288,7 +290,7 @@ const Dashboard = () => {
     queryKey: ['dash-6m-sales', sixAgo],
     queryFn: async () => {
       const { data, error } = await supabase.from('sales')
-        .select('total_amount, sale_date, status').gte('sale_date', sixAgo).neq('status', 'cancelled');
+        .select('total_amount, vat_amount, sale_date, status').gte('sale_date', sixAgo).neq('status', 'cancelled');
       if (error) throw error;
       return data || [];
     },
@@ -298,7 +300,7 @@ const Dashboard = () => {
     queryKey: ['dash-6m-invoices', sixAgo],
     queryFn: async () => {
       const { data, error } = await supabase.from('invoices')
-        .select('total_amount, issue_date, status').eq('status', 'invoice').gte('issue_date', sixAgo);
+        .select('total_amount, tax_amount, issue_date, status').eq('status', 'invoice').gte('issue_date', sixAgo);
       if (error) throw error;
       return data || [];
     },
@@ -308,7 +310,7 @@ const Dashboard = () => {
     queryKey: ['dash-6m-expenses', sixAgo],
     queryFn: async () => {
       const { data, error } = await supabase.from('expenses')
-        .select('amount, date').gte('date', sixAgo);
+        .select('amount, date').eq('status', 'approved').gte('date', sixAgo);
       if (error) throw error;
       return data || [];
     },
@@ -347,6 +349,7 @@ const Dashboard = () => {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('expenses').select('amount, category')
+        .eq('status', 'approved')
         .gte('date', monthStart).lte('date', monthEnd);
       if (error) throw error;
       return data || [];
@@ -393,13 +396,20 @@ const Dashboard = () => {
   const totalPaidPay = paidPayroll.reduce((sum, r) => sum + Number(r.net_pay), 0);
 
   // Revenue = legacy sales + issued invoices (single source of truth, matches Finance)
-  const ytdSalesRevenue   = ytdSales.reduce((sum, s) => sum + Number(s.total_amount), 0);
-  const ytdInvoiceRevenue = ytdInvoices.reduce((sum, i) => sum + Number(i.total_amount), 0);
+  // Invoice revenue is NET of VAT — the tax portion is a FIRS liability, not income.
+  const invNet = (i: { total_amount: number; tax_amount?: number | null }) =>
+    Number(i.total_amount) - Number((i as any).tax_amount ?? 0);
+  const saleNet = (s: { total_amount: number }) =>
+    Number(s.total_amount) - Number((s as any).vat_amount ?? 0);
+  const ytdSalesRevenue   = ytdSales.reduce((sum, s) => sum + saleNet(s), 0);
+  const ytdInvoiceRevenue = ytdInvoices.reduce((sum, i) => sum + invNet(i), 0);
   const ytdRevenue = ytdSalesRevenue + ytdInvoiceRevenue;
 
   const ytdCOGS = ytdExpenses.filter(e => (e.account_type || 'COGS') === 'COGS').reduce((sum, e) => sum + Number(e.amount), 0);
   const ytdOpEX = ytdExpenses.filter(e => e.account_type === 'OpEX').reduce((sum, e) => sum + Number(e.amount), 0);
-  const ytdPayrollOpEX = paidPayroll.reduce((sum, r) => sum + Number(r.net_pay), 0);
+  // Staff cost at gross + employer pension (matches the general ledger)
+  const ytdPayrollOpEX = paidPayroll.reduce(
+    (sum, r: any) => sum + Number(r.basic_salary ?? r.net_pay) + Number(r.allowances ?? 0) + Number(r.pension_employer ?? 0), 0);
   const ytdGrossProfit = ytdRevenue - ytdCOGS;
   const ytdTotalOpEX = ytdOpEX + ytdPayrollOpEX;
   const ytdNetProfit = ytdGrossProfit - ytdTotalOpEX;
@@ -407,10 +417,10 @@ const Dashboard = () => {
 
   const monthlySalesRev = ytdSales
     .filter(s => s.sale_date >= monthStart && s.sale_date <= monthEnd)
-    .reduce((sum, s) => sum + Number(s.total_amount), 0);
+    .reduce((sum, s) => sum + saleNet(s), 0);
   const monthlyInvoiceRev = ytdInvoices
     .filter(i => i.issue_date >= monthStart && i.issue_date <= monthEnd)
-    .reduce((sum, i) => sum + Number(i.total_amount), 0);
+    .reduce((sum, i) => sum + invNet(i), 0);
   const monthlySales = monthlySalesRev + monthlyInvoiceRev;
 
   // Cash collected this month (dated)
@@ -436,8 +446,8 @@ const Dashboard = () => {
       return d.getFullYear() === y && d.getMonth() === m;
     };
     const rev =
-      sixSales.filter(s => inMonth(s.sale_date)).reduce((a, s) => a + Number(s.total_amount), 0) +
-      sixInvoices.filter(i => inMonth(i.issue_date)).reduce((a, i) => a + Number(i.total_amount), 0);
+      sixSales.filter(s => inMonth(s.sale_date)).reduce((a, s) => a + saleNet(s), 0) +
+      sixInvoices.filter(i => inMonth(i.issue_date)).reduce((a, i) => a + invNet(i), 0);
     const exp = sixExpenses.filter(e => inMonth(e.date)).reduce((a, e) => a + Number(e.amount), 0);
     return { name: label, Revenue: rev, Expenses: exp };
   });

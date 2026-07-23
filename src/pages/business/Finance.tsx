@@ -78,11 +78,17 @@ interface InvoiceRow {
   customer_name: string;
   invoice_type: string;
   total_amount: number;
+  tax_amount?: number;
   amount_paid: number;
   payment_status: string;
   issue_date: string;
   valid_until?: string | null;
 }
+
+// Revenue is recognised NET of VAT — the tax portion is a liability owed to
+// FIRS, not income (audit fix A2). Receivables/collections stay VAT-inclusive.
+const netOfVat = (r: { total_amount: number; tax_amount?: number }) =>
+  Number(r.total_amount) - Number(r.tax_amount ?? 0);
 
 interface UnpaidSaleRow {
   id: string;
@@ -253,7 +259,7 @@ export default function Finance() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("sales")
-        .select("id, sale_number, sale_date, customer_name, total_amount, status, sale_type")
+        .select("id, sale_number, sale_date, customer_name, total_amount, vat_amount, status, sale_type")
         .gte("sale_date", periodStart)
         .lte("sale_date", periodEnd)
         .neq("status", "cancelled")
@@ -286,6 +292,7 @@ export default function Finance() {
       const { data, error } = await supabase
         .from("expenses")
         .select("id, date, amount, category, account_type, cost_center, description, budget_id")
+        .eq("status", "approved")
         .gte("date", periodStart)
         .lte("date", periodEnd)
         .order("date", { ascending: false });
@@ -300,7 +307,7 @@ export default function Finance() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("invoices")
-        .select("id, invoice_number, quotation_number, customer_name, invoice_type, total_amount, amount_paid, payment_status, issue_date")
+        .select("id, invoice_number, quotation_number, customer_name, invoice_type, total_amount, tax_amount, amount_paid, payment_status, issue_date")
         .eq("status", "invoice")
         .gte("issue_date", periodStart)
         .lte("issue_date", periodEnd)
@@ -345,6 +352,7 @@ export default function Finance() {
       const { data, error } = await supabase
         .from("expenses")
         .select("id, budget_id, amount, category, date")
+        .eq("status", "approved")
         .order("date", { ascending: false });
       if (error) throw error;
       return data ?? [];
@@ -357,7 +365,7 @@ export default function Finance() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("sales")
-        .select("sale_date, total_amount, status")
+        .select("sale_date, total_amount, vat_amount, status")
         .gte("sale_date", sixAgo)
         .neq("status", "cancelled");
       if (error) throw error;
@@ -372,6 +380,7 @@ export default function Finance() {
       const { data, error } = await supabase
         .from("expenses")
         .select("date, amount")
+        .eq("status", "approved")
         .gte("date", sixAgo);
       if (error) throw error;
       return (data ?? []) as ExpenseRow[];
@@ -384,7 +393,7 @@ export default function Finance() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("invoices")
-        .select("issue_date, total_amount, status")
+        .select("issue_date, total_amount, tax_amount, status")
         .eq("status", "invoice")
         .gte("issue_date", sixAgo);
       if (error) throw error;
@@ -407,13 +416,15 @@ export default function Finance() {
     },
   });
 
-  // Paid payroll for the period (a real operating cost — must hit net profit)
-  const { data: periodPayroll = [] } = useQuery<{ net_pay: number }[]>({
+  // Paid payroll for the period (a real operating cost — must hit net profit).
+  // Costed at GROSS + employer pension: deductions withheld from staff are
+  // still the employer's expense, and this matches how the ledger books it.
+  const { data: periodPayroll = [] } = useQuery<{ net_pay: number; basic_salary: number; allowances: number; pension_employer?: number | null }[]>({
     queryKey: ["fin-payroll", periodStart, periodEnd],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("payroll_records")
-        .select("net_pay, status, period_start")
+        .select("net_pay, basic_salary, allowances, pension_employer, status, period_start")
         .eq("status", "paid")
         .gte("period_start", periodStart)
         .lte("period_start", periodEnd);
@@ -421,6 +432,9 @@ export default function Finance() {
       return data ?? [];
     },
   });
+
+  const payrollGross = (p: { basic_salary: number; allowances: number; pension_employer?: number | null }) =>
+    Number(p.basic_salary) + Number(p.allowances) + Number(p.pension_employer ?? 0);
 
   // Unpaid legacy sales (receivable that revenue recognition would otherwise leak)
   const { data: unpaidSales = [] } = useQuery<UnpaidSaleRow[]>({
@@ -476,8 +490,8 @@ export default function Finance() {
 
   const kpi = useMemo(() => {
     // Revenue (accrual): issued invoices (primary) + non-cancelled legacy sales (historical)
-    const salesRevenue   = periodSales.reduce((s, r) => s + Number(r.total_amount), 0);
-    const invoiceRevenue = periodInvoices.reduce((s, r) => s + Number(r.total_amount), 0);
+    const salesRevenue   = periodSales.reduce((s, r) => s + (Number(r.total_amount) - Number((r as any).vat_amount ?? 0)), 0);
+    const invoiceRevenue = periodInvoices.reduce((s, r) => s + netOfVat(r), 0);
     const totalRevenue   = salesRevenue + invoiceRevenue;
 
     // Cash collected (cash basis) — dated payment events only.
@@ -488,7 +502,7 @@ export default function Finance() {
 
     // Costs: expense records + paid payroll (payroll is a real operating cost).
     const expenseTotal = periodExpenses.reduce((s, e) => s + Number(e.amount), 0);
-    const payrollCost  = periodPayroll.reduce((s, p) => s + Number(p.net_pay), 0);
+    const payrollCost  = periodPayroll.reduce((s, p) => s + payrollGross(p), 0);
     const totalExpenses = expenseTotal + payrollCost;
 
     // Net profit = revenue − (expenses + payroll)
@@ -536,17 +550,17 @@ export default function Finance() {
 
     const sales = sixMonthSales
       .filter(s => getMonth(parseISO(s.sale_date)) === m && getYear(parseISO(s.sale_date)) === y)
-      .reduce((acc, s) => acc + Number(s.total_amount), 0);
+      .reduce((acc, s) => acc + Number(s.total_amount) - Number((s as any).vat_amount ?? 0), 0);
 
-    const invoices = sixMonthInvoices
+    const invoicesNet = sixMonthInvoices
       .filter(inv => getMonth(parseISO(inv.issue_date)) === m && getYear(parseISO(inv.issue_date)) === y)
-      .reduce((acc, inv) => acc + Number(inv.total_amount), 0);
+      .reduce((acc, inv) => acc + netOfVat(inv), 0);
 
     const expenses = sixMonthExpenses
       .filter(e => getMonth(parseISO(e.date)) === m && getYear(parseISO(e.date)) === y)
       .reduce((acc, e) => acc + Number(e.amount), 0);
 
-    return { name: label, Revenue: sales + invoices, Expenses: expenses };
+    return { name: label, Revenue: sales + invoicesNet, Expenses: expenses };
   }), [sixMonthSales, sixMonthInvoices, sixMonthExpenses]);
 
   // ── Expense breakdown by category ───────────────────────────────────────────
@@ -556,7 +570,7 @@ export default function Finance() {
     periodExpenses.forEach(e => {
       map[e.category] = (map[e.category] ?? 0) + Number(e.amount);
     });
-    const payroll = periodPayroll.reduce((s, p) => s + Number(p.net_pay), 0);
+    const payroll = periodPayroll.reduce((s, p) => s + payrollGross(p), 0);
     if (payroll > 0) map["payroll"] = (map["payroll"] ?? 0) + payroll;
     return Object.entries(map).sort((a, b) => b[1] - a[1]);
   }, [periodExpenses, periodPayroll]);

@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
+import { useRoles } from '@/hooks/useRoles';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import ExpenseFormDialog from '@/components/expenses/ExpenseFormDialog';
 import BulkExpenseDialog from '@/components/expenses/BulkExpenseDialog';
@@ -14,6 +15,7 @@ import ExpenseSummary from '@/components/expenses/ExpenseSummary';
 
 const Expenses = () => {
   const { user } = useAuth();
+  const { isAdmin } = useRoles();
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [editingExpense, setEditingExpense] = React.useState<any | null>(null);
@@ -76,6 +78,22 @@ const Expenses = () => {
     queryClient.invalidateQueries({ queryKey: ['expenses'] });
     queryClient.invalidateQueries({ queryKey: ['pl-expenses'] });
   };
+
+  // Maker-checker: admin approves or rejects pending expenses. A DB trigger
+  // posts the journal on approval (and blocks non-admin status changes).
+  const setStatusMutation = useMutation({
+    mutationFn: async ({ id, status }: { id: string; status: 'approved' | 'rejected' }) => {
+      const { error } = await supabase.from('expenses').update({ status }).eq('id', id);
+      if (error) throw error;
+      return status;
+    },
+    onSuccess: (status) => {
+      queryClient.invalidateQueries({ queryKey: ['expenses'] });
+      queryClient.invalidateQueries({ queryKey: ['pl-expenses'] });
+      toast({ title: status === 'approved' ? 'Expense approved' : 'Expense rejected' });
+    },
+    onError: (error: any) => toast({ title: 'Error', description: error.message, variant: 'destructive' }),
+  });
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
@@ -146,6 +164,7 @@ const Expenses = () => {
         onAddExpense={() => {}}
         onEdit={handleEdit}
         onDelete={handleDelete}
+        onSetStatus={isAdmin ? (id, status) => setStatusMutation.mutate({ id, status }) : undefined}
       />
 
       {editingExpense && (

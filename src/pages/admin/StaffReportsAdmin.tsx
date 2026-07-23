@@ -27,7 +27,7 @@ import ReportDetailsDialog, { type StaffReportRecord } from '@/components/report
 
 type Report = StaffReportRecord;
 interface Assignment { id: string; user_id: string; report_type: ReportType; cadence: string; due_time: string | null; active: boolean; }
-interface Payable { id: string; supplier: string; description: string | null; category: string | null; amount: number; incurred_date: string; due_date: string | null; status: string; paid_at: string | null; }
+interface Payable { id: string; supplier: string; description: string | null; category: string | null; amount: number; incurred_date: string; due_date: string | null; status: string; paid_at: string | null; expense_id: string | null; }
 interface Profile { user_id: string; full_name: string; }
 
 export default function StaffReportsAdmin() {
@@ -147,11 +147,28 @@ export default function StaffReportsAdmin() {
         const supplier = r.details?.is_supplier && r.details?.source
           ? r.details.source
           : (r.details?.source ?? r.details?.supplier ?? 'Miscellaneous');
+
+        // Accrual basis (audit fix A7): the cost is recognised when incurred,
+        // not when the supplier is eventually paid — so the expense record is
+        // created NOW, dated to the report date, alongside the payable.
+        const { data: exp, error: expErr } = await supabase.from('expenses').insert({
+          amount: r.amount ?? 0,
+          description: `Credit purchase — ${supplier}${items ? `: ${items}` : ''}`,
+          category: 'Credit Purchase',
+          date: r.report_date,
+          budget_id: null,
+          account_type: 'COGS',
+          cost_center: 'Daily Orders',
+          created_by: user!.id,
+        }).select('id').single();
+        if (expErr) throw expErr;
+
         const { data, error } = await supabase.from('payables').insert({
           supplier,
           description: items || r.title || null, category: 'Credit Purchase',
           amount: r.amount ?? 0, incurred_date: r.report_date,
           due_date: r.details?.due_date ?? null, status: 'unpaid',
+          expense_id: exp!.id,
           source_report_id: r.id, created_by: user!.id,
         }).select('id');
         if (error) throw error;
@@ -220,20 +237,30 @@ export default function StaffReportsAdmin() {
 
   const markPaid = useMutation({
     mutationFn: async (p: Payable) => {
-      const { data: exp, error: expErr } = await supabase.from('expenses').insert({
-        amount: p.amount, description: `Credit settled — ${p.supplier}${p.description ? `: ${p.description}` : ''}`,
-        category: p.category || 'Credit Purchase', date: new Date().toISOString().slice(0, 10),
-        budget_id: null, account_type: 'COGS', cost_center: 'Daily Orders',
-        payment_method: payMethod, created_by: user!.id,
-      }).select('id').single();
-      if (expErr) throw expErr;
+      // Accrual basis (audit fix A7): the expense was already recorded when
+      // the credit was approved (dated to when it was incurred). Settling the
+      // payable only clears the liability — recording another expense here
+      // would double-count the cost.
+      // Legacy payables created before that change have no linked expense yet,
+      // so record one, dated to the incurred date (the correct P&L period).
+      let expenseId = p.expense_id ?? null;
+      if (!expenseId) {
+        const { data: exp, error: expErr } = await supabase.from('expenses').insert({
+          amount: p.amount, description: `Credit purchase — ${p.supplier}${p.description ? `: ${p.description}` : ''}`,
+          category: p.category || 'Credit Purchase', date: p.incurred_date,
+          budget_id: null, account_type: 'COGS', cost_center: 'Daily Orders',
+          payment_method: payMethod, created_by: user!.id,
+        }).select('id').single();
+        if (expErr) throw expErr;
+        expenseId = exp!.id;
+      }
       const { error } = await supabase.from('payables').update({
-        status: 'paid', paid_at: new Date().toISOString(), payment_method: payMethod, expense_id: exp!.id,
+        status: 'paid', paid_at: new Date().toISOString(), payment_method: payMethod, expense_id: expenseId,
       }).eq('id', p.id);
       if (error) throw error;
     },
     onSuccess: () => {
-      toast({ title: 'Marked paid', description: 'An expense has been recorded.' });
+      toast({ title: 'Marked paid', description: 'Payable settled.' });
       setPayOpen(false); setPayTarget(null);
       qc.invalidateQueries({ queryKey: ['admin-payables'] });
     },

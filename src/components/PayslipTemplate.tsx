@@ -13,6 +13,11 @@ interface PayslipRecord {
   basic_salary: number;
   allowances: number;
   deductions: number;
+  paye?: number | null;
+  pension_employee?: number | null;
+  pension_employer?: number | null;
+  nhf?: number | null;
+  other_deductions?: number | null;
   net_pay: number;
   bank_name: string | null;
   account_number: string | null;
@@ -34,6 +39,15 @@ const PayslipTemplate = ({ record }: PayslipTemplateProps) => {
   const totalDeductions = Number(record.deductions);
   const netPay = Number(record.net_pay);
   const docRef = `PAY-${record.id.slice(0, 6).toUpperCase()}`;
+  // Statutory breakdown (PAYE / pension / NHF) — present on records generated
+  // by the statutory payroll engine; legacy records show the lump sum only.
+  const paye = Number(record.paye ?? 0);
+  const pension = Number(record.pension_employee ?? 0);
+  const nhf = Number(record.nhf ?? 0);
+  const hasStatutory = paye > 0 || pension > 0 || nhf > 0;
+  const otherDeductions = hasStatutory
+    ? Math.max(0, totalDeductions - paye - pension - nhf)
+    : totalDeductions;
 
   return (
     <div
@@ -125,9 +139,18 @@ const PayslipTemplate = ({ record }: PayslipTemplateProps) => {
           {/* Deductions */}
           <div>
             <p style={{ fontSize: "8px", fontWeight: 700, color: "#dc2626", textTransform: "uppercase", letterSpacing: "1.5px", borderBottom: "1.5px solid #fee2e2", paddingBottom: "4px", margin: "0 0 8px" }}>Deductions</p>
-            <EarningsRow label="Total Deductions" value={fmt(record.deductions)} red />
+            {hasStatutory ? (
+              <>
+                <EarningsRow label="PAYE Tax" value={fmt(paye)} red muted={paye === 0} />
+                <EarningsRow label="Pension (8%)" value={fmt(pension)} red muted={pension === 0} />
+                <EarningsRow label="NHF (2.5%)" value={fmt(nhf)} red muted={nhf === 0} />
+                <EarningsRow label="Other" value={fmt(otherDeductions)} red muted={otherDeductions === 0} />
+              </>
+            ) : (
+              <EarningsRow label="Deductions" value={fmt(record.deductions)} red />
+            )}
             <div style={{ borderTop: "1.5px solid #f1f5f9", marginTop: "6px", paddingTop: "6px" }}>
-              <EarningsRow label="Net Deductions" value={fmt(totalDeductions)} bold red />
+              <EarningsRow label="Total Deductions" value={fmt(totalDeductions)} bold red />
             </div>
           </div>
         </div>

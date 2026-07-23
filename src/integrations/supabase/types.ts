@@ -262,6 +262,8 @@ export type Database = {
         Row: {
           account_type: string | null
           amount: number
+          approved_at: string | null
+          approved_by: string | null
           bank_account: string | null
           budget_id: string
           category: string
@@ -273,11 +275,14 @@ export type Database = {
           id: string
           payment_method: string | null
           receipt_path: string | null
+          status: string
           updated_at: string | null
         }
         Insert: {
           account_type?: string | null
           amount: number
+          approved_at?: string | null
+          approved_by?: string | null
           bank_account?: string | null
           budget_id: string
           category: string
@@ -289,11 +294,14 @@ export type Database = {
           id?: string
           payment_method?: string | null
           receipt_path?: string | null
+          status?: string
           updated_at?: string | null
         }
         Update: {
           account_type?: string | null
           amount?: number
+          approved_at?: string | null
+          approved_by?: string | null
           bank_account?: string | null
           budget_id?: string
           category?: string
@@ -305,6 +313,7 @@ export type Database = {
           id?: string
           payment_method?: string | null
           receipt_path?: string | null
+          status?: string
           updated_at?: string | null
         }
         Relationships: [
@@ -645,9 +654,14 @@ export type Database = {
           department: string | null
           id: string
           net_pay: number
+          nhf: number
           notes: string | null
+          other_deductions: number
           paid_at: string | null
+          paye: number
           payment_method: string | null
+          pension_employee: number
+          pension_employer: number
           period_end: string
           period_start: string
           position: string | null
@@ -670,9 +684,14 @@ export type Database = {
           department?: string | null
           id?: string
           net_pay?: number
+          nhf?: number
           notes?: string | null
+          other_deductions?: number
           paid_at?: string | null
+          paye?: number
           payment_method?: string | null
+          pension_employee?: number
+          pension_employer?: number
           period_end: string
           period_start: string
           position?: string | null
@@ -695,9 +714,14 @@ export type Database = {
           department?: string | null
           id?: string
           net_pay?: number
+          nhf?: number
           notes?: string | null
+          other_deductions?: number
           paid_at?: string | null
+          paye?: number
           payment_method?: string | null
+          pension_employee?: number
+          pension_employer?: number
           period_end?: string
           period_start?: string
           position?: string | null
@@ -722,6 +746,7 @@ export type Database = {
       products: {
         Row: {
           category: string
+          cost_price: number | null
           created_at: string
           created_by: string | null
           description: string | null
@@ -735,6 +760,7 @@ export type Database = {
         }
         Insert: {
           category: string
+          cost_price?: number | null
           created_at?: string
           created_by?: string | null
           description?: string | null
@@ -748,6 +774,7 @@ export type Database = {
         }
         Update: {
           category?: string
+          cost_price?: number | null
           created_at?: string
           created_by?: string | null
           description?: string | null
@@ -890,6 +917,7 @@ export type Database = {
           total_amount: number
           updated_at: string
           user_id: string
+          vat_amount: number
         }
         Insert: {
           created_at?: string
@@ -906,6 +934,7 @@ export type Database = {
           total_amount: number
           updated_at?: string
           user_id: string
+          vat_amount?: number
         }
         Update: {
           created_at?: string
@@ -922,6 +951,7 @@ export type Database = {
           total_amount?: number
           updated_at?: string
           user_id?: string
+          vat_amount?: number
         }
         Relationships: []
       }

@@ -106,6 +106,7 @@ const Budgets = () => {
         supabase
           .from('expenses')
           .select('*')
+          .eq('status', 'approved')
           .in('budget_id', budgetIds)
           .order('date', { ascending: false })
       ]);

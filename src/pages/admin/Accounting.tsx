@@ -13,7 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { Scale, BookOpen, ListTree, Plus, Trash2, Loader2, CheckCircle2, AlertTriangle, TrendingUp, Landmark } from "lucide-react";
+import { Scale, BookOpen, ListTree, Plus, Trash2, Loader2, CheckCircle2, AlertTriangle, TrendingUp, Landmark, Receipt, Banknote } from "lucide-react";
 import { formatNairaCompact } from "@/lib/currency";
 import { safeFormat } from "@/lib/safeDate";
 
@@ -22,8 +22,8 @@ interface Account {
   type: "asset" | "liability" | "equity" | "income" | "expense";
   normal_balance: "debit" | "credit"; is_active: boolean; sort_order: number;
 }
-interface JournalLine { id: string; entry_id: string; account_id: string; debit: number; credit: number; description: string | null; }
-interface LineWithMeta extends JournalLine { entry_date: string; chart_of_accounts: { code: string; name: string; type: string; normal_balance: string } | null; }
+interface JournalLine { id: string; entry_id: string; account_id: string; debit: number; credit: number; description: string | null; reconciled_at?: string | null; }
+interface LineWithMeta extends JournalLine { entry_date: string; memo?: string | null; chart_of_accounts: { code: string; name: string; type: string; normal_balance: string } | null; }
 interface JournalEntry { id: string; entry_no: number; entry_date: string; memo: string | null; source_type: string; }
 
 const typeLabels: Record<string, string> = {
@@ -32,6 +32,17 @@ const typeLabels: Record<string, string> = {
 const typeOrder = ["asset", "liability", "equity", "income", "expense"];
 
 const BLANK_LINE = () => ({ account_id: "", debit: "", credit: "", description: "" });
+
+// Liability accounts tracked in the Remittances register, with the party each
+// balance is owed to and its deadline (statutory where applicable).
+const REMITTANCE_ACCOUNTS: { code: string; agency: string; deadline: string }[] = [
+  { code: "2000", agency: "Trade suppliers (goods received)", deadline: "Per supplier terms" },
+  { code: "2100", agency: "FIRS (VAT)", deadline: "21st of the following month" },
+  { code: "2300", agency: "State IRS (PAYE)", deadline: "10th of the following month" },
+  { code: "2310", agency: "Staff PFAs (Pension)", deadline: "7 working days after payday" },
+  { code: "2320", agency: "Federal Mortgage Bank (NHF)", deadline: "Monthly" },
+  { code: "2340", agency: "Per agreement (other deductions)", deadline: "—" },
+];
 
 export default function Accounting() {
   const { user } = useAuth();
@@ -67,10 +78,10 @@ export default function Accounting() {
     queryFn: async () => {
       const { data, error } = await (supabase as any)
         .from("journal_lines")
-        .select("id, entry_id, account_id, debit, credit, description, journal_entries!inner(entry_date), chart_of_accounts(code, name, type, normal_balance)")
+        .select("id, entry_id, account_id, debit, credit, description, reconciled_at, journal_entries!inner(entry_date, memo), chart_of_accounts(code, name, type, normal_balance)")
         .limit(10000);
       if (error) throw error;
-      return (data ?? []).map((r: any) => ({ ...r, entry_date: r.journal_entries?.entry_date }));
+      return (data ?? []).map((r: any) => ({ ...r, entry_date: r.journal_entries?.entry_date, memo: r.journal_entries?.memo }));
     },
   });
 
@@ -223,6 +234,186 @@ export default function Accounting() {
   const addLine = () => setLines((prev) => [...prev, BLANK_LINE()]);
   const removeLine = (i: number) => setLines((prev) => prev.length > 2 ? prev.filter((_, idx) => idx !== i) : prev);
 
+  // ── Statutory remittances ────────────────────────────────────────────────────
+  // Outstanding balance per statutory liability account (2100 VAT, 2300 PAYE,
+  // 2310 Pension, 2320 NHF, 2340 Other) as of today, straight from the ledger.
+  const remittanceRows = useMemo(() => {
+    const byAccount = aggregate(null, today);
+    return REMITTANCE_ACCOUNTS.map((meta) => {
+      const entry = Object.entries(byAccount).find(([, r]) => (r.account as any)?.code === meta.code);
+      const accountId = entry?.[0] ?? accounts.find((a) => a.code === meta.code)?.id ?? null;
+      const r = entry?.[1];
+      const balance = r ? r.credit - r.debit : 0; // credit-normal liability
+      const name = (r?.account as any)?.name ?? accounts.find((a) => a.code === meta.code)?.name ?? meta.code;
+      return { ...meta, accountId, name, balance };
+    });
+  }, [allLines, accounts, today]);
+
+  const [remitOpen, setRemitOpen] = useState(false);
+  const [remitTarget, setRemitTarget] = useState<{ code: string; name: string; accountId: string | null; balance: number } | null>(null);
+  const [remitAmount, setRemitAmount] = useState("");
+  const [remitDate, setRemitDate] = useState(today);
+  const [remitRef, setRemitRef] = useState("");
+
+  const bankAccountId = accounts.find((a) => a.code === "1010")?.id ?? null;
+
+  // ── Books Check: GL vs operational reports ───────────────────────────────────
+  // The operational pages (Finance, P&L, Dashboard) aggregate raw tables; the
+  // statements here derive from the journal. This check compares the two so any
+  // drift between the books is surfaced instead of silently diverging.
+  const [bcFrom, setBcFrom] = useState(yearStart);
+  const [bcTo, setBcTo] = useState(today);
+
+  const { data: bcInvoices = [] } = useQuery<any[]>({
+    queryKey: ["bc-invoices", bcFrom, bcTo],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("invoices")
+        .select("total_amount, tax_amount, issue_date")
+        .eq("status", "invoice")
+        .gte("issue_date", bcFrom).lte("issue_date", bcTo);
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+  const { data: bcSales = [] } = useQuery<any[]>({
+    queryKey: ["bc-sales", bcFrom, bcTo],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("sales")
+        .select("total_amount, vat_amount, sale_date")
+        .neq("status", "cancelled")
+        .gte("sale_date", bcFrom).lte("sale_date", bcTo);
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+  const { data: bcExpenses = [] } = useQuery<any[]>({
+    queryKey: ["bc-expenses", bcFrom, bcTo],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("expenses")
+        .select("amount, date")
+        .eq("status", "approved")
+        .gte("date", bcFrom).lte("date", bcTo);
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+  const { data: bcPayroll = [] } = useQuery<any[]>({
+    queryKey: ["bc-payroll", bcFrom, bcTo],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("payroll_records")
+        .select("basic_salary, allowances, pension_employer, net_pay")
+        .eq("status", "paid")
+        .gte("period_start", bcFrom).lte("period_start", bcTo);
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+
+  const booksCheck = useMemo(() => {
+    const byAccount = aggregate(bcFrom, bcTo);
+    let glRevenue = 0, glExpense = 0;
+    for (const r of Object.values(byAccount)) {
+      if ((r.account as any).type === "income") glRevenue += r.credit - r.debit;
+      if ((r.account as any).type === "expense") glExpense += r.debit - r.credit;
+    }
+
+    const opsRevenue =
+      bcInvoices.reduce((s, i) => s + Number(i.total_amount) - Number(i.tax_amount ?? 0), 0) +
+      bcSales.reduce((s, x) => s + Number(x.total_amount) - Number(x.vat_amount ?? 0), 0);
+    const opsExpenses = bcExpenses.reduce((s, e) => s + Number(e.amount), 0);
+    const opsPayrollGross = bcPayroll.reduce(
+      (s, p) => s + Number(p.basic_salary) + Number(p.allowances) + Number(p.pension_employer ?? 0), 0);
+    const opsCosts = opsExpenses + opsPayrollGross;
+
+    return {
+      glRevenue, glExpense,
+      glNet: glRevenue - glExpense,
+      opsRevenue, opsCosts,
+      opsNet: opsRevenue - opsCosts,
+      revDelta: glRevenue - opsRevenue,
+      expDelta: glExpense - opsCosts,
+    };
+  }, [allLines, bcFrom, bcTo, bcInvoices, bcSales, bcExpenses, bcPayroll]);
+
+  // ── Bank reconciliation ──────────────────────────────────────────────────────
+  const [recAccountCode, setRecAccountCode] = useState("1010");
+  const [recTo, setRecTo] = useState(today);
+  const [recStatementBal, setRecStatementBal] = useState("");
+
+  const recAccount = accounts.find((a) => a.code === recAccountCode) ?? null;
+
+  const recLines = useMemo(() => {
+    if (!recAccount) return [];
+    return allLines
+      .filter((l) => l.account_id === recAccount.id && l.entry_date && l.entry_date <= recTo)
+      .sort((a, b) => (a.entry_date < b.entry_date ? -1 : a.entry_date > b.entry_date ? 1 : 0));
+  }, [allLines, recAccount, recTo]);
+
+  const recTotals = useMemo(() => {
+    const ledger = recLines.reduce((s, l) => s + Number(l.debit) - Number(l.credit), 0);
+    const reconciled = recLines
+      .filter((l) => l.reconciled_at)
+      .reduce((s, l) => s + Number(l.debit) - Number(l.credit), 0);
+    const statement = parseFloat(recStatementBal);
+    return {
+      ledger,
+      reconciled,
+      unreconciledCount: recLines.filter((l) => !l.reconciled_at).length,
+      statement: isNaN(statement) ? null : statement,
+      difference: isNaN(statement) ? null : statement - reconciled,
+    };
+  }, [recLines, recStatementBal]);
+
+  const toggleReconciled = useMutation({
+    mutationFn: async (line: LineWithMeta) => {
+      const { error } = await (supabase as any)
+        .from("journal_lines")
+        .update(line.reconciled_at
+          ? { reconciled_at: null, reconciled_by: null }
+          : { reconciled_at: new Date().toISOString(), reconciled_by: user?.id ?? null })
+        .eq("id", line.id);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["journal-all-lines"] }),
+    onError: (e: any) => toast({ title: "Could not update line", description: e.message, variant: "destructive" }),
+  });
+
+  const saveRemittance = useMutation({
+    mutationFn: async () => {
+      if (!remitTarget?.accountId) throw new Error("Liability account not found in the chart of accounts");
+      if (!bankAccountId) throw new Error("Bank account (1010) not found in the chart of accounts");
+      const amt = parseFloat(remitAmount) || 0;
+      if (amt <= 0) throw new Error("Enter the amount remitted");
+      if (amt > remitTarget.balance + 0.005) {
+        throw new Error(`Amount exceeds the outstanding balance of ${formatNairaCompact(remitTarget.balance)}`);
+      }
+
+      const memo = `Remittance — ${remitTarget.name}${remitRef.trim() ? ` (ref ${remitRef.trim()})` : ""}`;
+      const { data: entry, error: eErr } = await (supabase as any)
+        .from("journal_entries")
+        .insert({ entry_date: remitDate, memo, source_type: "remittance", created_by: user?.id })
+        .select("id").single();
+      if (eErr) throw eErr;
+
+      const { error: lErr } = await (supabase as any).from("journal_lines").insert([
+        { entry_id: entry.id, account_id: remitTarget.accountId, debit: amt, credit: 0, description: "Liability settled" },
+        { entry_id: entry.id, account_id: bankAccountId, debit: 0, credit: amt, description: remitRef.trim() || "Bank remittance" },
+      ]);
+      if (lErr) throw lErr;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["journal-all-lines"] });
+      qc.invalidateQueries({ queryKey: ["journal-entries"] });
+      toast({ title: "Remittance recorded", description: "The liability balance has been reduced." });
+      setRemitOpen(false); setRemitTarget(null); setRemitAmount(""); setRemitRef("");
+    },
+    onError: (e: any) => toast({ title: "Could not record remittance", description: e.message, variant: "destructive" }),
+  });
+
   return (
     <div className="space-y-6 p-6 max-w-5xl mx-auto">
       <div>
@@ -235,6 +426,9 @@ export default function Accounting() {
           <TabsTrigger value="trial-balance" className="gap-2"><Scale className="h-4 w-4" /> Trial Balance</TabsTrigger>
           <TabsTrigger value="income" className="gap-2"><TrendingUp className="h-4 w-4" /> Income Statement</TabsTrigger>
           <TabsTrigger value="balance-sheet" className="gap-2"><Landmark className="h-4 w-4" /> Balance Sheet</TabsTrigger>
+          <TabsTrigger value="remittances" className="gap-2"><Receipt className="h-4 w-4" /> Remittances</TabsTrigger>
+          <TabsTrigger value="bank-rec" className="gap-2"><Banknote className="h-4 w-4" /> Bank Rec</TabsTrigger>
+          <TabsTrigger value="books-check" className="gap-2"><CheckCircle2 className="h-4 w-4" /> Books Check</TabsTrigger>
           <TabsTrigger value="journal" className="gap-2"><BookOpen className="h-4 w-4" /> Journal</TabsTrigger>
           <TabsTrigger value="accounts" className="gap-2"><ListTree className="h-4 w-4" /> Chart of Accounts</TabsTrigger>
         </TabsList>
@@ -441,6 +635,233 @@ export default function Accounting() {
           </Card>
         </TabsContent>
 
+        {/* ── Statutory Remittances ── */}
+        <TabsContent value="remittances" className="space-y-4">
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Liabilities &amp; Remittance Register</CardTitle>
+              <CardDescription>
+                Supplier payables and amounts withheld or collected on behalf of government agencies,
+                straight from the ledger. Record each payment when it is made — the entry debits the
+                liability and credits Bank.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {tbLoading ? (
+                <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-16">Code</TableHead>
+                      <TableHead>Liability</TableHead>
+                      <TableHead>Remit to</TableHead>
+                      <TableHead>Deadline</TableHead>
+                      <TableHead className="text-right">Outstanding</TableHead>
+                      <TableHead className="w-28" />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {remittanceRows.map((r) => (
+                      <TableRow key={r.code}>
+                        <TableCell className="font-mono text-xs">{r.code}</TableCell>
+                        <TableCell className="font-medium">{r.name}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{r.agency}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground">{r.deadline}</TableCell>
+                        <TableCell className="text-right font-semibold">
+                          {r.balance > 0.005
+                            ? <span className="text-amber-600">{formatNairaCompact(r.balance)}</span>
+                            : <span className="text-muted-foreground">—</span>}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            size="sm" variant="outline" disabled={r.balance <= 0.005}
+                            onClick={() => {
+                              setRemitTarget(r);
+                              setRemitAmount(r.balance > 0 ? r.balance.toFixed(2) : "");
+                              setRemitDate(today);
+                              setRemitRef("");
+                              setRemitOpen(true);
+                            }}
+                          >
+                            Remit
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+              <p className="text-xs text-muted-foreground mt-3">
+                PAYE is due to the relevant State IRS by the 10th, VAT to FIRS by the 21st of the month
+                following the deduction; pension contributions must reach the PFAs within 7 working days of
+                salary payment. Late remittance attracts penalties and interest, and directors can be held
+                personally liable for unremitted PAYE/VAT.
+              </p>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ── Books Check ── */}
+        <TabsContent value="books-check" className="space-y-4">
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                <div>
+                  <CardTitle className="text-base">Books Check — Ledger vs Operational Reports</CardTitle>
+                  <CardDescription>
+                    The general ledger is the book of record; Finance / P&amp;L aggregate the raw tables.
+                    Differences beyond the known timing items below indicate drift worth investigating.
+                  </CardDescription>
+                </div>
+                <div className="flex items-end gap-2">
+                  <div className="space-y-1"><Label className="text-xs">From</Label><Input type="date" className="h-9 w-36" value={bcFrom} onChange={(e) => setBcFrom(e.target.value)} /></div>
+                  <div className="space-y-1"><Label className="text-xs">To</Label><Input type="date" className="h-9 w-36" value={bcTo} onChange={(e) => setBcTo(e.target.value)} /></div>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead />
+                    <TableHead className="text-right">General Ledger</TableHead>
+                    <TableHead className="text-right">Operational Reports</TableHead>
+                    <TableHead className="text-right">Difference</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  <TableRow>
+                    <TableCell className="font-medium">Revenue (net of VAT)</TableCell>
+                    <TableCell className="text-right tabular-nums">{formatNairaCompact(booksCheck.glRevenue)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{formatNairaCompact(booksCheck.opsRevenue)}</TableCell>
+                    <TableCell className={`text-right tabular-nums font-semibold ${Math.abs(booksCheck.revDelta) < 1 ? "text-green-600" : "text-amber-600"}`}>
+                      {Math.abs(booksCheck.revDelta) < 1 ? "✓ agrees" : formatNairaCompact(booksCheck.revDelta)}
+                    </TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell className="font-medium">Expenses &amp; payroll</TableCell>
+                    <TableCell className="text-right tabular-nums">{formatNairaCompact(booksCheck.glExpense)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{formatNairaCompact(booksCheck.opsCosts)}</TableCell>
+                    <TableCell className={`text-right tabular-nums font-semibold ${Math.abs(booksCheck.expDelta) < 1 ? "text-green-600" : "text-amber-600"}`}>
+                      {Math.abs(booksCheck.expDelta) < 1 ? "✓ agrees" : formatNairaCompact(booksCheck.expDelta)}
+                    </TableCell>
+                  </TableRow>
+                  <TableRow className="border-t-2 font-bold">
+                    <TableCell>Net profit</TableCell>
+                    <TableCell className="text-right tabular-nums">{formatNairaCompact(booksCheck.glNet)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{formatNairaCompact(booksCheck.opsNet)}</TableCell>
+                    <TableCell className={`text-right tabular-nums ${Math.abs(booksCheck.glNet - booksCheck.opsNet) < 1 ? "text-green-600" : "text-amber-600"}`}>
+                      {Math.abs(booksCheck.glNet - booksCheck.opsNet) < 1 ? "✓ agrees" : formatNairaCompact(booksCheck.glNet - booksCheck.opsNet)}
+                    </TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
+              <div className="text-xs text-muted-foreground mt-4 space-y-1">
+                <p className="font-medium text-foreground">Known, expected differences:</p>
+                <p>• COGS on tracked stock hits the ledger at invoice issue; operational reports carry purchase-typed expenses instead (timing/classification).</p>
+                <p>• Payroll: the ledger books gross pay + employer pension; the comparison uses the same gross figure, but legacy pre-statutory records may differ by their deduction treatment.</p>
+                <p>• Journal entries posted manually (or remittances) have no counterpart in the operational tables.</p>
+                <p>• Cancelled documents in a locked period may be excluded on one side only.</p>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ── Bank Reconciliation ── */}
+        <TabsContent value="bank-rec" className="space-y-4">
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                <div>
+                  <CardTitle className="text-base">Bank Reconciliation</CardTitle>
+                  <CardDescription>Tick each ledger line off against the bank/cash statement.</CardDescription>
+                </div>
+                <div className="flex items-end gap-2 flex-wrap">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Account</Label>
+                    <Select value={recAccountCode} onValueChange={setRecAccountCode}>
+                      <SelectTrigger className="h-9 w-36"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {accounts.filter((a) => a.code === "1000" || a.code === "1010").map((a) => (
+                          <SelectItem key={a.code} value={a.code}>
+                            <span className="font-mono text-xs mr-2">{a.code}</span>{a.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Up to</Label>
+                    <Input type="date" className="h-9 w-40" value={recTo} onChange={(e) => setRecTo(e.target.value)} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Statement balance (₦)</Label>
+                    <Input type="number" step="0.01" className="h-9 w-44" placeholder="From bank statement"
+                      value={recStatementBal} onChange={(e) => setRecStatementBal(e.target.value)} />
+                  </div>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="grid sm:grid-cols-4 gap-3 mb-4">
+                <div className="rounded-lg bg-muted p-3">
+                  <p className="text-xs text-muted-foreground">Ledger balance</p>
+                  <p className="font-bold">{formatNairaCompact(recTotals.ledger)}</p>
+                </div>
+                <div className="rounded-lg bg-muted p-3">
+                  <p className="text-xs text-muted-foreground">Reconciled balance</p>
+                  <p className="font-bold">{formatNairaCompact(recTotals.reconciled)}</p>
+                </div>
+                <div className="rounded-lg bg-muted p-3">
+                  <p className="text-xs text-muted-foreground">Unreconciled lines</p>
+                  <p className="font-bold">{recTotals.unreconciledCount}</p>
+                </div>
+                <div className={`rounded-lg p-3 ${recTotals.difference == null ? "bg-muted" : Math.abs(recTotals.difference) < 0.01 ? "bg-green-50 dark:bg-green-950/30" : "bg-red-50 dark:bg-red-950/30"}`}>
+                  <p className="text-xs text-muted-foreground">Statement vs reconciled</p>
+                  <p className={`font-bold ${recTotals.difference == null ? "" : Math.abs(recTotals.difference) < 0.01 ? "text-green-700 dark:text-green-400" : "text-red-700 dark:text-red-400"}`}>
+                    {recTotals.difference == null ? "—" : Math.abs(recTotals.difference) < 0.01 ? "Reconciled ✓" : formatNairaCompact(recTotals.difference)}
+                  </p>
+                </div>
+              </div>
+
+              {tbLoading ? (
+                <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+              ) : recLines.length === 0 ? (
+                <p className="py-8 text-center text-muted-foreground text-sm">No ledger activity on this account up to the selected date.</p>
+              ) : (
+                <div className="rounded-md border divide-y max-h-[28rem] overflow-y-auto">
+                  {recLines.map((l) => (
+                    <label key={l.id} className="flex items-center gap-3 px-3 py-2 text-sm cursor-pointer hover:bg-muted/40">
+                      <input
+                        type="checkbox"
+                        checked={!!l.reconciled_at}
+                        onChange={() => toggleReconciled.mutate(l)}
+                        disabled={toggleReconciled.isPending}
+                      />
+                      <span className="w-24 shrink-0 text-xs text-muted-foreground">{safeFormat(l.entry_date, "dd MMM yyyy")}</span>
+                      <span className="min-w-0 flex-1 truncate">
+                        {l.memo || l.description || "—"}
+                        {l.description && l.memo && <span className="text-muted-foreground"> · {l.description}</span>}
+                      </span>
+                      <span className="shrink-0 tabular-nums font-medium">
+                        {Number(l.debit) > 0
+                          ? <span className="text-emerald-600">+{formatNairaCompact(Number(l.debit))}</span>
+                          : <span className="text-destructive">−{formatNairaCompact(Number(l.credit))}</span>}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              )}
+              <p className="text-xs text-muted-foreground mt-3">
+                A clean reconciliation means the reconciled balance equals the bank statement balance and every
+                statement line has a matching ledger line. Unreconciled ledger lines are un-cleared items;
+                statement lines with no ledger match indicate unrecorded transactions.
+              </p>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
         {/* ── Journal ── */}
         <TabsContent value="journal" className="space-y-4">
           <div className="flex justify-between items-center">
@@ -524,6 +945,41 @@ export default function Accounting() {
           })}
         </TabsContent>
       </Tabs>
+
+      {/* ── Record Remittance dialog ── */}
+      <Dialog open={remitOpen} onOpenChange={(o) => { setRemitOpen(o); if (!o) setRemitTarget(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Record Remittance — {remitTarget?.name}</DialogTitle>
+            <DialogDescription>
+              Outstanding: {formatNairaCompact(remitTarget?.balance ?? 0)}. Posts Dr {remitTarget?.code} / Cr 1010 Bank.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label className="text-xs">Amount remitted (₦)</Label>
+                <Input type="number" min="0" step="0.01" className="h-9" value={remitAmount} onChange={(e) => setRemitAmount(e.target.value)} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Date paid</Label>
+                <Input type="date" className="h-9" value={remitDate} onChange={(e) => setRemitDate(e.target.value)} />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Receipt / reference number</Label>
+              <Input className="h-9" placeholder="e.g. FIRS receipt no., PFA schedule ref" value={remitRef} onChange={(e) => setRemitRef(e.target.value)} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRemitOpen(false)}>Cancel</Button>
+            <Button onClick={() => saveRemittance.mutate()} disabled={saveRemittance.isPending}>
+              {saveRemittance.isPending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+              Record Remittance
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* ── New Journal Entry dialog ── */}
       <Dialog open={entryOpen} onOpenChange={setEntryOpen}>

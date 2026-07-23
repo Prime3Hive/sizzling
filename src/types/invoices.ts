@@ -29,6 +29,8 @@ export interface Invoice {
   customer_email: string | null;
   customer_phone: string | null;
   customer_address: string | null;
+  /** Customer Tax Identification Number — required for FIRS-compliant B2B invoices */
+  customer_tin: string | null;
   event_name: string | null;
   event_date: string | null;
   event_venue: string | null;
@@ -85,6 +87,7 @@ export interface InvoiceFormData {
   customer_email: string;
   customer_phone: string;
   customer_address: string;
+  customer_tin: string;
   event_name: string;
   event_date: string;
   event_venue: string;

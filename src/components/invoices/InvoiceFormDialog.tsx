@@ -55,6 +55,7 @@ const blankForm = (type: InvoiceType): InvoiceFormData => ({
   customer_email: "",
   customer_phone: "",
   customer_address: "",
+  customer_tin: "",
   event_name: "",
   event_date: "",
   event_venue: "",
@@ -62,7 +63,7 @@ const blankForm = (type: InvoiceType): InvoiceFormData => ({
   issue_date: new Date().toISOString().split("T")[0],
   valid_until: "",
   discount_percent: "0",
-  tax_percent: "0",
+  tax_percent: "7.5", // statutory VAT rate (VAT Act, Finance Act 2019)
   service_charge_percent: "0",
   waiter_required: false,
   number_of_waiters: "",
@@ -132,6 +133,7 @@ export default function InvoiceFormDialog({ open, onOpenChange, editingInvoice, 
         customer_email: editingInvoice.customer_email ?? "",
         customer_phone: editingInvoice.customer_phone ?? "",
         customer_address: editingInvoice.customer_address ?? "",
+        customer_tin: editingInvoice.customer_tin ?? "",
         event_name: editingInvoice.event_name ?? "",
         event_date: editingInvoice.event_date ?? "",
         event_venue: editingInvoice.event_venue ?? "",
@@ -305,11 +307,14 @@ export default function InvoiceFormDialog({ open, onOpenChange, editingInvoice, 
         updated_by: user.id,
         quotation_number,
         invoice_type: selectedType,
-        status: "quotation" as const,
+        // Never demote an existing document: an issued invoice must stay an
+        // invoice (a DB trigger also enforces this — audit fix B1).
+        status: (editingInvoice ? editingInvoice.status : "quotation") as "quotation",
         customer_name: form.customer_name.trim(),
         customer_email: form.customer_email.trim() || null,
         customer_phone: form.customer_phone.trim() || null,
         customer_address: form.customer_address.trim() || null,
+        customer_tin: form.customer_tin.trim() || null,
         event_name: selectedType === "event" ? form.event_name.trim() || null : null,
         event_date: selectedType === "event" ? form.event_date || null : null,
         event_venue: selectedType === "event" ? form.event_venue.trim() || null : null,
@@ -529,6 +534,15 @@ export default function InvoiceFormDialog({ open, onOpenChange, editingInvoice, 
                     value={form.customer_address}
                     onChange={(e) => setField("customer_address", e.target.value)}
                     placeholder="Customer address"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="customer_tin">TIN <span className="text-muted-foreground text-xs">(corporate customers — FIRS)</span></Label>
+                  <Input
+                    id="customer_tin"
+                    value={form.customer_tin}
+                    onChange={(e) => setField("customer_tin", e.target.value)}
+                    placeholder="Tax Identification Number"
                   />
                 </div>
               </div>

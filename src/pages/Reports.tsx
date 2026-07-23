@@ -61,7 +61,7 @@ const Reports = () => {
     queryKey: ["rep-invoices", start, end],
     queryFn: async () => {
       const { data, error } = await supabase.from("invoices")
-        .select("total_amount, invoice_type, issue_date, status")
+        .select("total_amount, tax_amount, invoice_type, issue_date, status")
         .eq("status", "invoice").gte("issue_date", start).lte("issue_date", end);
       if (error) throw error; return data || [];
     },
@@ -70,7 +70,7 @@ const Reports = () => {
     queryKey: ["rep-sales", start, end],
     queryFn: async () => {
       const { data, error } = await supabase.from("sales")
-        .select("total_amount, sale_date, status").neq("status", "cancelled")
+        .select("total_amount, vat_amount, sale_date, status").neq("status", "cancelled")
         .gte("sale_date", start).lte("sale_date", end);
       if (error) throw error; return data || [];
     },
@@ -79,7 +79,9 @@ const Reports = () => {
     queryKey: ["rep-expenses", start, end],
     queryFn: async () => {
       const { data, error } = await supabase.from("expenses")
-        .select("amount, category, account_type, date").gte("date", start).lte("date", end);
+        .select("amount, category, account_type, date")
+        .eq("status", "approved")
+        .gte("date", start).lte("date", end);
       if (error) throw error; return data || [];
     },
   });
@@ -87,7 +89,7 @@ const Reports = () => {
     queryKey: ["rep-payroll", start, end],
     queryFn: async () => {
       const { data, error } = await supabase.from("payroll_records")
-        .select("net_pay, status, period_start").eq("status", "paid")
+        .select("net_pay, basic_salary, allowances, pension_employer, status, period_start").eq("status", "paid")
         .gte("period_start", start).lte("period_start", end);
       if (error) throw error; return data || [];
     },
@@ -121,17 +123,21 @@ const Reports = () => {
 
   // ── Derived ──
   const r = useMemo(() => {
-    const invoiceRevenue = invoices.reduce((s: number, i: any) => s + Number(i.total_amount), 0);
-    const eventRevenue = invoices.filter((i: any) => i.invoice_type === "event").reduce((s: number, i: any) => s + Number(i.total_amount), 0);
+    // Revenue net of VAT — the tax portion is a FIRS liability, not income
+    const invNet = (i: any) => Number(i.total_amount) - Number(i.tax_amount ?? 0);
+    const invoiceRevenue = invoices.reduce((s: number, i: any) => s + invNet(i), 0);
+    const eventRevenue = invoices.filter((i: any) => i.invoice_type === "event").reduce((s: number, i: any) => s + invNet(i), 0);
     const dailyInvoiceRevenue = invoiceRevenue - eventRevenue;
-    const salesRevenue = sales.reduce((s: number, x: any) => s + Number(x.total_amount), 0);
+    const salesRevenue = sales.reduce((s: number, x: any) => s + Number(x.total_amount) - Number(x.vat_amount ?? 0), 0);
     const grossRevenue = invoiceRevenue + salesRevenue;
 
     const cogs = expenses.filter((e: any) => (e.account_type || "COGS") === "COGS").reduce((s: number, e: any) => s + Number(e.amount), 0);
     const opex = expenses.filter((e: any) => e.account_type === "OpEX").reduce((s: number, e: any) => s + Number(e.amount), 0);
     const otherExp = expenses.filter((e: any) => e.account_type && e.account_type !== "COGS" && e.account_type !== "OpEX").reduce((s: number, e: any) => s + Number(e.amount), 0);
     const expenseTotal = expenses.reduce((s: number, e: any) => s + Number(e.amount), 0);
-    const payrollCost = payroll.reduce((s: number, p: any) => s + Number(p.net_pay), 0);
+    // Gross + employer pension — matches the general ledger's staff cost
+    const payrollCost = payroll.reduce(
+      (s: number, p: any) => s + Number(p.basic_salary ?? p.net_pay) + Number(p.allowances ?? 0) + Number(p.pension_employer ?? 0), 0);
 
     const grossProfit = grossRevenue - cogs;
     const totalCosts = expenseTotal + payrollCost;

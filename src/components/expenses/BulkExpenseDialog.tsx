@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Plus, Trash2, Layers, Loader2 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
+import { useRoles } from '@/hooks/useRoles';
 import { useToast } from '@/hooks/use-toast';
 import { formatNairaCompact } from '@/lib/currency';
 import { EXPENSE_CATEGORIES, ACCOUNT_TYPES, COST_CENTERS } from '@/lib/expenseConstants';
@@ -38,6 +39,7 @@ const blankRow = (): Row => ({
 
 export default function BulkExpenseDialog({ budgets, onDone }: Props) {
   const { user } = useAuth();
+  const { isAdmin } = useRoles();
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [rows, setRows] = useState<Row[]>([blankRow(), blankRow()]);
@@ -69,6 +71,7 @@ export default function BulkExpenseDialog({ budgets, onDone }: Props) {
         account_type: r.account_type || 'COGS',
         cost_center: r.cost_center || 'Daily Orders',
         created_by: user?.id,
+        status: isAdmin ? 'approved' : 'pending',
       }));
       const { error } = await supabase.from('expenses').insert(payload);
       if (error) throw error;

@@ -24,6 +24,8 @@ import { jsPDF } from 'jspdf';
 import { SALARY_PERIODS } from '@/lib/expenseConstants';
 import { exportPayrollRegisterPdf } from '@/lib/payrollPdf';
 import PayslipTemplate from '@/components/PayslipTemplate';
+import { Switch } from '@/components/ui/switch';
+import { computeStatutory, manualDeductions, type StatutoryResult } from '@/lib/payrollNigeria';
 
 interface StaffProfile {
   id: string;
@@ -51,6 +53,11 @@ interface PayrollRecord {
   basic_salary: number;
   allowances: number;
   deductions: number;
+  paye?: number;
+  pension_employee?: number;
+  pension_employer?: number;
+  nhf?: number;
+  other_deductions?: number;
   net_pay: number;
   payment_method: string | null;
   bank_name: string | null;
@@ -74,6 +81,13 @@ const Payroll = () => {
   const [selectedStaffId, setSelectedStaffId] = useState('');
   const [allowances, setAllowances] = useState(0);
   const [deductions, setDeductions] = useState(0);
+  // Statutory (PAYE / pension / NHF) auto-computation — NTA 2025 / PRA 2014
+  const [autoStatutory, setAutoStatutory] = useState(true);
+
+  const statFor = (basic: number, allow: number, other: number): StatutoryResult =>
+    autoStatutory
+      ? computeStatutory({ basic, allowances: allow, otherDeductions: other })
+      : manualDeductions(basic, allow, other);
   // Individual payslip → PDF (rendered off-screen via PayslipTemplate)
   const [payslipRecord, setPayslipRecord] = useState<PayrollRecord | null>(null);
   const payslipRef = useRef<HTMLDivElement>(null);
@@ -132,25 +146,36 @@ const Payroll = () => {
 
       const skippedCount = staffWithSalary.length - newStaff.length;
 
-      const records = newStaff.map(staff => ({
-        user_id: user.id,
-        staff_profile_id: staff.id,
-        staff_name: staff.full_name,
-        staff_id_number: `EMP-${staff.id.substring(0, 4).toUpperCase()}`,
-        department: staff.departments?.name || null,
-        position: staff.position,
-        salary_period: formData.salary_period,
-        period_start: formData.period_start,
-        period_end: formData.period_end,
-        basic_salary: staff.salary!,
-        allowances: formData.allowances,
-        deductions: formData.deductions,
-        net_pay: staff.salary! + formData.allowances - formData.deductions,
-        bank_name: staff.bank_name,
-        account_number: staff.account_number,
-        account_name: staff.account_name,
-        status: 'pending',
-      }));
+      // Statutory deductions (PAYE / pension / NHF) are computed per staff
+      // member from their own salary — the manual "deductions" input is only
+      // the non-statutory portion (loans, cooperative, etc.).
+      const records = newStaff.map(staff => {
+        const stat = statFor(staff.salary!, formData.allowances, formData.deductions);
+        return {
+          user_id: user.id,
+          staff_profile_id: staff.id,
+          staff_name: staff.full_name,
+          staff_id_number: `EMP-${staff.id.substring(0, 4).toUpperCase()}`,
+          department: staff.departments?.name || null,
+          position: staff.position,
+          salary_period: formData.salary_period,
+          period_start: formData.period_start,
+          period_end: formData.period_end,
+          basic_salary: staff.salary!,
+          allowances: formData.allowances,
+          deductions: stat.totalDeductions,
+          paye: stat.paye,
+          pension_employee: stat.pensionEmployee,
+          pension_employer: stat.pensionEmployer,
+          nhf: stat.nhf,
+          other_deductions: stat.otherDeductions,
+          net_pay: stat.netPay,
+          bank_name: staff.bank_name,
+          account_number: staff.account_number,
+          account_name: staff.account_name,
+          status: 'pending',
+        };
+      });
 
       const { error } = await supabase.from('payroll_records').insert(records);
       if (error) throw error;
@@ -193,7 +218,8 @@ const Payroll = () => {
         throw new Error(`Payroll for ${staff.full_name} already exists for this period (${formData.period_start} to ${formData.period_end}).`);
       }
 
-      const netPay = formData.basic_salary + formData.allowances - formData.deductions;
+      const stat = statFor(formData.basic_salary, formData.allowances, formData.deductions);
+      const netPay = stat.netPay;
       const { error } = await supabase.from('payroll_records').insert({
         user_id: user.id,
         staff_profile_id: staff.id,
@@ -206,7 +232,12 @@ const Payroll = () => {
         period_end: formData.period_end,
         basic_salary: formData.basic_salary,
         allowances: formData.allowances,
-        deductions: formData.deductions,
+        deductions: stat.totalDeductions,
+        paye: stat.paye,
+        pension_employee: stat.pensionEmployee,
+        pension_employer: stat.pensionEmployer,
+        nhf: stat.nhf,
+        other_deductions: stat.otherDeductions,
         net_pay: netPay,
         bank_name: staff.bank_name,
         account_number: staff.account_number,
@@ -220,7 +251,7 @@ const Payroll = () => {
         await supabase.from('notifications').insert({
           user_id: staff.linked_user_id,
           title: '💰 Payslip Ready',
-          message: `Your payslip for ${formData.period_start} – ${formData.period_end} has been generated. Basic: ₦${Number(formData.basic_salary).toLocaleString()}, Allowances: ₦${Number(formData.allowances).toLocaleString()}, Deductions: ₦${Number(formData.deductions).toLocaleString()}, Net Pay: ₦${Number(netPay).toLocaleString()}. View details in My Payslip.`,
+          message: `Your payslip for ${formData.period_start} – ${formData.period_end} has been generated. Basic: ₦${Number(formData.basic_salary).toLocaleString()}, Allowances: ₦${Number(formData.allowances).toLocaleString()}, Deductions: ₦${Number(stat.totalDeductions).toLocaleString()}, Net Pay: ₦${Number(netPay).toLocaleString()}. View details in My Payslip.`,
           type: 'payroll',
         });
       }
@@ -236,12 +267,27 @@ const Payroll = () => {
     onError: (error: any) => toast({ title: 'Error', description: error.message, variant: 'destructive' }),
   });
 
-  // Edit mutation
+  // Edit mutation — "deductions" from the form is the NON-statutory portion;
+  // statutory amounts are recomputed from the edited salary so the record
+  // stays internally consistent (records created without statutory keep none).
   const editMutation = useMutation({
-    mutationFn: async (data: { id: string; allowances: number; deductions: number; basic_salary: number; notes: string | null }) => {
-      const net_pay = data.basic_salary + data.allowances - data.deductions;
+    mutationFn: async (data: { id: string; allowances: number; other_deductions: number; basic_salary: number; notes: string | null; statutory: boolean }) => {
+      const stat = data.statutory
+        ? computeStatutory({ basic: data.basic_salary, allowances: data.allowances, otherDeductions: data.other_deductions })
+        : manualDeductions(data.basic_salary, data.allowances, data.other_deductions);
       const { error } = await supabase.from('payroll_records')
-        .update({ allowances: data.allowances, deductions: data.deductions, basic_salary: data.basic_salary, net_pay, notes: data.notes })
+        .update({
+          basic_salary: data.basic_salary,
+          allowances: data.allowances,
+          deductions: stat.totalDeductions,
+          paye: stat.paye,
+          pension_employee: stat.pensionEmployee,
+          pension_employer: stat.pensionEmployer,
+          nhf: stat.nhf,
+          other_deductions: stat.otherDeductions,
+          net_pay: stat.netPay,
+          notes: data.notes,
+        })
         .eq('id', data.id);
       if (error) throw error;
     },
@@ -271,34 +317,12 @@ const Payroll = () => {
       const record = payrollRecords.find(r => r.id === id);
       if (!record) throw new Error('Record not found');
 
+      // NOTE (audit fix A1): payroll is journalized by the DB trigger the
+      // moment status becomes 'paid' — no mirror expense row is written here.
+      // The old auto-expense caused every salary to be counted twice.
       const paidAt = new Date().toISOString();
       const { error } = await supabase.from('payroll_records').update({ status: 'paid', paid_at: paidAt }).eq('id', id);
       if (error) throw error;
-
-      // Auto-record salary as OpEX expense
-      const { data: budgets } = await supabase
-        .from('budgets')
-        .select('id')
-        .eq('user_id', user!.id)
-        .order('created_at', { ascending: false })
-        .limit(1);
-
-      if (!budgets || budgets.length === 0) {
-        throw new Error('No budget found. Please create a budget first before processing payroll.');
-      }
-
-      const { error: expError } = await supabase.from('expenses').insert({
-        amount: Number(record.net_pay),
-        description: `Salary payment — ${record.staff_name} (${format(new Date(record.period_start), 'dd MMM yyyy')} to ${format(new Date(record.period_end), 'dd MMM yyyy')})`,
-        category: 'Salaries & Wages',
-        date: record.period_end,
-        budget_id: budgets[0].id,
-        account_type: 'OpEX',
-        cost_center: 'Daily Orders',
-        payment_method: record.payment_method || null,
-        bank_account: record.bank_name || null,
-      });
-      if (expError) throw expError;
 
       // Send notification to the staff member if they have a linked account
       try {
@@ -323,9 +347,7 @@ const Payroll = () => {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['payroll-records'] });
-      queryClient.invalidateQueries({ queryKey: ['expenses'] });
-      queryClient.invalidateQueries({ queryKey: ['pl-expenses'] });
-      toast({ title: 'Success', description: 'Marked as paid & recorded as OpEX expense' });
+      toast({ title: 'Success', description: 'Marked as paid — journalized to the ledger automatically' });
     },
   });
 
@@ -343,23 +365,89 @@ const Payroll = () => {
   const pendingCount = filteredRecords.filter(r => r.status === 'pending').length;
 
   const exportToExcel = () => {
-    const headers = ['S/N', 'Staff ID', 'Staff Name', 'Department', 'Position', 'Salary Period', 'Period Start', 'Period End', 'Basic Salary', 'Allowances', 'Deductions', 'Net Pay', 'Bank Name', 'Account Number', 'Account Name', 'Status', 'Paid Date'];
+    const headers = ['S/N', 'Staff ID', 'Staff Name', 'Department', 'Position', 'Salary Period', 'Period Start', 'Period End', 'Basic Salary', 'Allowances', 'PAYE', 'Pension (8%)', 'NHF', 'Other Deductions', 'Total Deductions', 'Net Pay', 'Employer Pension (10%)', 'Bank Name', 'Account Number', 'Account Name', 'Status', 'Paid Date'];
     const rows = filteredRecords.map((r, i) => [
       i + 1, r.staff_id_number, r.staff_name, r.department, r.position, r.salary_period,
-      r.period_start, r.period_end, r.basic_salary, r.allowances, r.deductions, r.net_pay,
+      r.period_start, r.period_end, r.basic_salary, r.allowances,
+      r.paye ?? 0, r.pension_employee ?? 0, r.nhf ?? 0, r.other_deductions ?? r.deductions,
+      r.deductions, r.net_pay, r.pension_employer ?? 0,
       r.bank_name, r.account_number, r.account_name, r.status,
       r.paid_at ? format(new Date(r.paid_at), 'dd/MM/yyyy') : '',
     ]);
     rows.push(['', '', '', '', '', '', '', 'TOTAL', totalBasic,
       filteredRecords.reduce((s, r) => s + Number(r.allowances), 0),
+      filteredRecords.reduce((s, r) => s + Number(r.paye ?? 0), 0),
+      filteredRecords.reduce((s, r) => s + Number(r.pension_employee ?? 0), 0),
+      filteredRecords.reduce((s, r) => s + Number(r.nhf ?? 0), 0),
+      filteredRecords.reduce((s, r) => s + Number(r.other_deductions ?? r.deductions), 0),
       filteredRecords.reduce((s, r) => s + Number(r.deductions), 0),
-      totalNetPay, '', '', '', '', '']);
+      totalNetPay,
+      filteredRecords.reduce((s, r) => s + Number(r.pension_employer ?? 0), 0),
+      '', '', '', '', '']);
     const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
     ws['!cols'] = headers.map(() => ({ wch: 16 }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Payroll');
     const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
     saveAs(new Blob([wbout], { type: 'application/octet-stream' }), `Payroll_${format(new Date(), 'yyyy-MM-dd')}.xlsx`);
+  };
+
+  // Statutory filing schedules — one workbook, one sheet per agency, in the
+  // layout the State IRS / PFAs / FMBN expect for monthly remittance filings.
+  const exportStatutorySchedules = () => {
+    const rows = filteredRecords;
+    const gross = (r: PayrollRecord) => Number(r.basic_salary) + Number(r.allowances);
+
+    const payeSheet = XLSX.utils.aoa_to_sheet([
+      ['PAYE REMITTANCE SCHEDULE (State IRS — due 10th of following month)'],
+      ['S/N', 'Employee Name', 'Employee ID', 'Period Start', 'Period End', 'Gross Pay', 'Pension (8%)', 'NHF (2.5%)', 'Taxable Base', 'PAYE Deducted'],
+      ...rows.map((r, i) => [
+        i + 1, r.staff_name, r.staff_id_number, r.period_start, r.period_end,
+        gross(r), Number(r.pension_employee ?? 0), Number(r.nhf ?? 0),
+        gross(r) - Number(r.pension_employee ?? 0) - Number(r.nhf ?? 0),
+        Number(r.paye ?? 0),
+      ]),
+      ['', '', '', '', 'TOTAL',
+        rows.reduce((s, r) => s + gross(r), 0),
+        rows.reduce((s, r) => s + Number(r.pension_employee ?? 0), 0),
+        rows.reduce((s, r) => s + Number(r.nhf ?? 0), 0), '',
+        rows.reduce((s, r) => s + Number(r.paye ?? 0), 0)],
+    ]);
+
+    const pensionSheet = XLSX.utils.aoa_to_sheet([
+      ['PENSION CONTRIBUTION SCHEDULE (PFAs — due within 7 working days of payday)'],
+      ['S/N', 'Employee Name', 'Employee ID', 'Period Start', 'Period End', 'Pensionable Pay', 'Employee 8%', 'Employer 10%', 'Total Contribution'],
+      ...rows.map((r, i) => [
+        i + 1, r.staff_name, r.staff_id_number, r.period_start, r.period_end,
+        gross(r), Number(r.pension_employee ?? 0), Number(r.pension_employer ?? 0),
+        Number(r.pension_employee ?? 0) + Number(r.pension_employer ?? 0),
+      ]),
+      ['', '', '', '', 'TOTAL',
+        rows.reduce((s, r) => s + gross(r), 0),
+        rows.reduce((s, r) => s + Number(r.pension_employee ?? 0), 0),
+        rows.reduce((s, r) => s + Number(r.pension_employer ?? 0), 0),
+        rows.reduce((s, r) => s + Number(r.pension_employee ?? 0) + Number(r.pension_employer ?? 0), 0)],
+    ]);
+
+    const nhfSheet = XLSX.utils.aoa_to_sheet([
+      ['NHF CONTRIBUTION SCHEDULE (Federal Mortgage Bank of Nigeria — monthly)'],
+      ['S/N', 'Employee Name', 'Employee ID', 'Period Start', 'Period End', 'Basic Salary', 'NHF 2.5%'],
+      ...rows.map((r, i) => [
+        i + 1, r.staff_name, r.staff_id_number, r.period_start, r.period_end,
+        Number(r.basic_salary), Number(r.nhf ?? 0),
+      ]),
+      ['', '', '', '', 'TOTAL',
+        rows.reduce((s, r) => s + Number(r.basic_salary), 0),
+        rows.reduce((s, r) => s + Number(r.nhf ?? 0), 0)],
+    ]);
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, payeSheet, 'PAYE');
+    XLSX.utils.book_append_sheet(wb, pensionSheet, 'Pension');
+    XLSX.utils.book_append_sheet(wb, nhfSheet, 'NHF');
+    [payeSheet, pensionSheet, nhfSheet].forEach(ws => { ws['!cols'] = Array(10).fill({ wch: 16 }); });
+    const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    saveAs(new Blob([wbout], { type: 'application/octet-stream' }), `Statutory_Schedules_${format(new Date(), 'yyyy-MM-dd')}.xlsx`);
   };
 
   // Export the current (filtered) payroll list as a register PDF
@@ -482,6 +570,10 @@ const Payroll = () => {
           <Button variant="outline" onClick={exportToPdf} disabled={filteredRecords.length === 0}>
             <FileText className="h-4 w-4 mr-2" />Export PDF
           </Button>
+          <Button variant="outline" onClick={exportStatutorySchedules} disabled={filteredRecords.length === 0}
+            title="PAYE / Pension / NHF remittance schedules for filing">
+            <FileSpreadsheet className="h-4 w-4 mr-2" />Statutory Schedules
+          </Button>
           <Button variant="outline" disabled={filteredRecords.filter(r => r.status === 'pending').length === 0} onClick={() => {
             const rows = filteredRecords.filter(r => r.status === 'pending');
             const header = 'Staff Name,Staff ID,Department,Bank Name,Account Number,Account Name,Net Pay (NGN),Period\n';
@@ -553,8 +645,33 @@ const Payroll = () => {
                   )}
                   <div className="grid grid-cols-2 gap-4">
                     <div className="grid gap-2"><Label>Allowances (₦)</Label><Input type="number" min="0" step="0.01" value={allowances} onChange={e => setAllowances(parseFloat(e.target.value) || 0)} /></div>
-                    <div className="grid gap-2"><Label>Deductions (₦)</Label><Input type="number" min="0" step="0.01" value={deductions} onChange={e => setDeductions(parseFloat(e.target.value) || 0)} /></div>
+                    <div className="grid gap-2"><Label>Other Deductions (₦)</Label><Input type="number" min="0" step="0.01" value={deductions} onChange={e => setDeductions(parseFloat(e.target.value) || 0)} /></div>
                   </div>
+                  <div className="flex items-center justify-between rounded-md border p-3">
+                    <div>
+                      <Label htmlFor="auto_statutory" className="cursor-pointer">Statutory deductions (PAYE · Pension · NHF)</Label>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Auto-computed per staff — NTA 2025 PAYE bands, 8% pension, 2.5% NHF
+                      </p>
+                    </div>
+                    <Switch id="auto_statutory" checked={autoStatutory} onCheckedChange={setAutoStatutory} />
+                  </div>
+                  {selectedStaff && autoStatutory && (() => {
+                    const preview = computeStatutory({ basic: selectedStaff.salary || 0, allowances, otherDeductions: deductions });
+                    return (
+                      <div className="rounded-md bg-muted/50 p-3 text-xs space-y-1">
+                        <div className="flex justify-between"><span>Gross</span><span className="font-medium">{formatNairaCompact(preview.gross)}</span></div>
+                        <div className="flex justify-between text-destructive"><span>PAYE</span><span>−{formatNairaCompact(preview.paye)}</span></div>
+                        <div className="flex justify-between text-destructive"><span>Pension (8%)</span><span>−{formatNairaCompact(preview.pensionEmployee)}</span></div>
+                        <div className="flex justify-between text-destructive"><span>NHF (2.5%)</span><span>−{formatNairaCompact(preview.nhf)}</span></div>
+                        {preview.otherDeductions > 0 && (
+                          <div className="flex justify-between text-destructive"><span>Other</span><span>−{formatNairaCompact(preview.otherDeductions)}</span></div>
+                        )}
+                        <div className="flex justify-between border-t pt-1 font-semibold"><span>Net Pay</span><span>{formatNairaCompact(preview.netPay)}</span></div>
+                        <div className="flex justify-between text-muted-foreground"><span>Employer pension (10%)</span><span>{formatNairaCompact(preview.pensionEmployer)}</span></div>
+                      </div>
+                    );
+                  })()}
                 </div>
                 <DialogFooter>
                   <Button type="submit" disabled={generatePayrollMutation.isPending || generateSingleMutation.isPending}>
@@ -635,12 +752,17 @@ const Payroll = () => {
             <form onSubmit={(e) => {
               e.preventDefault();
               const fd = new FormData(e.currentTarget);
+              const hadStatutory =
+                Number(editRecord.paye ?? 0) > 0 ||
+                Number(editRecord.pension_employee ?? 0) > 0 ||
+                Number(editRecord.nhf ?? 0) > 0;
               editMutation.mutate({
                 id: editRecord.id,
                 basic_salary: parseFloat(fd.get('edit_basic') as string),
                 allowances: parseFloat(fd.get('edit_allowances') as string),
-                deductions: parseFloat(fd.get('edit_deductions') as string),
+                other_deductions: parseFloat(fd.get('edit_deductions') as string) || 0,
                 notes: (fd.get('edit_notes') as string) || null,
+                statutory: hadStatutory,
               });
             }}>
               <DialogHeader>
@@ -651,7 +773,13 @@ const Payroll = () => {
                 <div className="grid gap-2"><Label>Basic Salary (₦)</Label><Input name="edit_basic" type="number" step="0.01" defaultValue={editRecord.basic_salary} required /></div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="grid gap-2"><Label>Allowances (₦)</Label><Input name="edit_allowances" type="number" step="0.01" defaultValue={editRecord.allowances} /></div>
-                  <div className="grid gap-2"><Label>Deductions (₦)</Label><Input name="edit_deductions" type="number" step="0.01" defaultValue={editRecord.deductions} /></div>
+                  <div className="grid gap-2">
+                    <Label>Other Deductions (₦)</Label>
+                    <Input name="edit_deductions" type="number" step="0.01" defaultValue={editRecord.other_deductions ?? editRecord.deductions} />
+                    {(Number(editRecord.paye ?? 0) > 0 || Number(editRecord.pension_employee ?? 0) > 0) && (
+                      <p className="text-xs text-muted-foreground">PAYE, pension &amp; NHF are recomputed automatically from the edited salary.</p>
+                    )}
+                  </div>
                 </div>
                 <div className="grid gap-2"><Label>Notes</Label><Textarea name="edit_notes" defaultValue={editRecord.notes || ''} placeholder="Optional notes..." /></div>
               </div>

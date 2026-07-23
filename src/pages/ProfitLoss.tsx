@@ -129,7 +129,7 @@ const ProfitLoss = () => {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('sales')
-        .select('id, sale_date, sale_number, total_amount, sale_type, status, customer_name, notes')
+        .select('id, sale_date, sale_number, total_amount, vat_amount, sale_type, status, customer_name, notes')
         .gte('sale_date', yearStart)
         .lte('sale_date', yearEnd)
         .order('sale_date');
@@ -144,6 +144,7 @@ const ProfitLoss = () => {
       const { data, error } = await supabase
         .from('expenses')
         .select('id, date, amount, category, account_type, cost_center, description, payment_method, bank_account')
+        .eq('status', 'approved')
         .gte('date', yearStart)
         .lte('date', yearEnd)
         .order('date');
@@ -160,7 +161,7 @@ const ProfitLoss = () => {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('invoices')
-        .select('issue_date, total_amount, invoice_type, status')
+        .select('issue_date, total_amount, tax_amount, invoice_type, status')
         .eq('status', 'invoice')
         .gte('issue_date', yearStart)
         .lte('issue_date', yearEnd);
@@ -174,7 +175,7 @@ const ProfitLoss = () => {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('payroll_records')
-        .select('id, staff_name, net_pay, status, period_start, period_end, paid_at')
+        .select('id, staff_name, net_pay, basic_salary, allowances, pension_employer, status, period_start, period_end, paid_at')
         .eq('status', 'paid')
         .gte('period_start', yearStart)
         .lte('period_end', yearEnd);
@@ -194,21 +195,27 @@ const ProfitLoss = () => {
       const monthPayroll  = payrollRecords.filter(p => new Date(p.period_start).getMonth() === index);
       const monthInvoices = invoiceRevenueRows.filter(l => new Date(l.issue_date).getMonth() === index);
 
+      // Sales revenue net of VAT (vat_amount is 0 for exempt/legacy takings)
+      const saleNet = (s: { total_amount: number; vat_amount?: number | null }) =>
+        Number(s.total_amount) - Number((s as any).vat_amount ?? 0);
       const dailySales = monthSales
         .filter(s => (s.sale_type || 'daily') === 'daily')
-        .reduce((sum, s) => sum + Number(s.total_amount), 0);
+        .reduce((sum, s) => sum + saleNet(s), 0);
       const eventSales = monthSales
         .filter(s => s.sale_type === 'event')
-        .reduce((sum, s) => sum + Number(s.total_amount), 0);
+        .reduce((sum, s) => sum + saleNet(s), 0);
       // Invoice revenue split by invoice_type so it lands in the same Daily/Event
       // bucket as the COGS/OpEx tied to that cost centre — otherwise the segment
       // filter counts a segment's costs without its matching invoice revenue.
+      // Recognised NET of VAT: the tax portion is a FIRS liability, not income.
+      const invNet = (l: { total_amount: number; tax_amount?: number | null }) =>
+        Number(l.total_amount) - Number(l.tax_amount ?? 0);
       const dailyInvoiceRevenue = monthInvoices
         .filter(l => (l.invoice_type || 'daily_sales') !== 'event')
-        .reduce((sum, l) => sum + Number(l.total_amount), 0);
+        .reduce((sum, l) => sum + invNet(l), 0);
       const eventInvoiceRevenue = monthInvoices
         .filter(l => l.invoice_type === 'event')
-        .reduce((sum, l) => sum + Number(l.total_amount), 0);
+        .reduce((sum, l) => sum + invNet(l), 0);
       const invoiceRevenue = dailyInvoiceRevenue + eventInvoiceRevenue;
       const dailyRevenue = dailySales + dailyInvoiceRevenue;
       const eventRevenue = eventSales + eventInvoiceRevenue;
@@ -232,7 +239,9 @@ const ProfitLoss = () => {
       const eventOpEX = monthExpenses
         .filter(e => e.account_type === 'OpEX' && e.cost_center === 'Event Account')
         .reduce((sum, e) => sum + Number(e.amount), 0);
-      const payrollOpEX = monthPayroll.reduce((sum, p) => sum + Number(p.net_pay), 0);
+      // Gross + employer pension — the employer's true staff cost, matching the ledger
+      const payrollOpEX = monthPayroll.reduce(
+        (sum, p: any) => sum + Number(p.basic_salary ?? p.net_pay) + Number(p.allowances ?? 0) + Number(p.pension_employer ?? 0), 0);
       const totalOpEX = dailyOpEX + eventOpEX + payrollOpEX;
 
       // Payroll isn't attributable to a cost centre, so segment Net Profit

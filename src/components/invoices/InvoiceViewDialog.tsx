@@ -62,14 +62,15 @@ export default function InvoiceViewDialog({ invoice, open, onOpenChange, onEdit 
   const [recordingPayment, setRecordingPayment] = useState(false);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
 
-  // New-payment form
+  // New-payment form. `wht` is tax withheld at source by corporate/government
+  // customers (5%/10%) — it settles the receivable alongside the cash received.
   const [payForm, setPayForm] = useState({
-    amount: "", date: new Date().toISOString().split("T")[0], method: "bank_transfer", reference: "",
+    amount: "", wht: "", date: new Date().toISOString().split("T")[0], method: "bank_transfer", reference: "",
   });
 
   // Reset the new-payment form when the viewed invoice changes
   useEffect(() => {
-    setPayForm({ amount: "", date: new Date().toISOString().split("T")[0], method: "bank_transfer", reference: "" });
+    setPayForm({ amount: "", wht: "", date: new Date().toISOString().split("T")[0], method: "bank_transfer", reference: "" });
   }, [invoice?.id]);
 
   // Dated payment history for this invoice
@@ -79,7 +80,7 @@ export default function InvoiceViewDialog({ invoice, open, onOpenChange, onEdit 
     queryFn: async () => {
       const { data, error } = await (supabase as any)
         .from("invoice_payments")
-        .select("id, amount, payment_date, payment_method, reference")
+        .select("id, amount, wht_amount, payment_date, payment_method, reference")
         .eq("invoice_id", invoice!.id)
         .order("payment_date", { ascending: false });
       if (error) throw error;
@@ -197,12 +198,13 @@ export default function InvoiceViewDialog({ invoice, open, onOpenChange, onEdit 
   // into the finance ledger — independent of "Record in Finance".
   const recordPayment = async () => {
     const amt = parseFloat(payForm.amount) || 0;
+    const wht = parseFloat(payForm.wht) || 0;
     if (amt <= 0) {
       toast({ title: "Enter a valid amount", variant: "destructive" });
       return;
     }
-    if (amt > balanceDue + 0.005) {
-      toast({ title: "Amount exceeds balance due", description: `Balance due is ${formatNairaCompact(balanceDue)}.`, variant: "destructive" });
+    if (amt + wht > balanceDue + 0.005) {
+      toast({ title: "Amount exceeds balance due", description: `Cash + WHT must not exceed the balance due of ${formatNairaCompact(balanceDue)}.`, variant: "destructive" });
       return;
     }
     if (!payForm.date) {
@@ -211,9 +213,13 @@ export default function InvoiceViewDialog({ invoice, open, onOpenChange, onEdit 
     }
     setRecordingPayment(true);
     try {
+      // The Finance-Feed receipt row and the double-entry journal are both
+      // posted by DB triggers on invoice_payments (audit fix B7) — a single
+      // atomic insert here, nothing else to mirror from the browser.
       const { error: payErr } = await (supabase as any).from("invoice_payments").insert({
         invoice_id: invoice.id,
         amount: amt,
+        wht_amount: wht,
         payment_date: payForm.date,
         payment_method: payForm.method,
         reference: payForm.reference.trim() || null,
@@ -221,26 +227,10 @@ export default function InvoiceViewDialog({ invoice, open, onOpenChange, onEdit 
       });
       if (payErr) throw payErr;
 
-      // Mirror a dated receipt into the audit ledger (feeds Finance Feed + P&L cash).
-      // user_id is the acting user so RLS (auth.uid() = user_id) permits cross-user posting.
-      await supabase.from("finance_ledger").insert({
-        user_id: user?.id ?? invoice.user_id,
-        entry_date: payForm.date,
-        entry_type: "payment_received",
-        source_type: "invoice",
-        source_id: invoice.id,
-        description: `Payment received — ${invoice.invoice_number ?? invoice.quotation_number} (${invoice.customer_name})`,
-        amount: amt,
-        cost_center: invoice.invoice_type === "event" ? "Event Account" : "Daily Orders",
-        invoice_type: invoice.invoice_type,
-        reference_number: invoice.invoice_number ?? invoice.quotation_number,
-        recorded_by: user?.id ?? null,
-      });
-
       queryClient.invalidateQueries({ queryKey: ["invoices"] });
       queryClient.invalidateQueries({ queryKey: ["invoice-payments", invoice.id] });
       queryClient.invalidateQueries({ queryKey: ["finance-ledger"] });
-      setPayForm({ amount: "", date: new Date().toISOString().split("T")[0], method: "bank_transfer", reference: "" });
+      setPayForm({ amount: "", wht: "", date: new Date().toISOString().split("T")[0], method: "bank_transfer", reference: "" });
       toast({ title: "Payment recorded", description: `${formatNairaCompact(amt)} recorded.` });
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -620,7 +610,14 @@ export default function InvoiceViewDialog({ invoice, open, onOpenChange, onEdit 
                             <span className="text-xs text-muted-foreground truncate">· {p.reference}</span>
                           )}
                         </div>
-                        <span className="font-semibold shrink-0">{formatNairaCompact(Number(p.amount))}</span>
+                        <span className="font-semibold shrink-0">
+                          {formatNairaCompact(Number(p.amount))}
+                          {Number(p.wht_amount ?? 0) > 0 && (
+                            <span className="text-[10px] text-muted-foreground font-normal ml-1">
+                              +{formatNairaCompact(Number(p.wht_amount))} WHT
+                            </span>
+                          )}
+                        </span>
                       </div>
                     ))}
                   </div>
@@ -628,14 +625,25 @@ export default function InvoiceViewDialog({ invoice, open, onOpenChange, onEdit 
 
                 {/* Record a new payment (only while a balance remains) */}
                 {balanceDue > 0.005 ? (
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 items-end rounded-lg border bg-muted/20 p-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 items-end rounded-lg border bg-muted/20 p-3">
                     <div className="space-y-1">
-                      <Label className="text-xs">Amount (₦)</Label>
+                      <Label className="text-xs">Amount received (₦)</Label>
                       <Input
                         className="h-8 text-xs" type="number" min="0" step="0.01"
                         placeholder={String(balanceDue)}
                         value={payForm.amount}
                         onChange={(e) => setPayForm(f => ({ ...f, amount: e.target.value }))}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs" title="Withholding tax deducted at source by corporate/government customers — also settles the balance">
+                        WHT withheld (₦)
+                      </Label>
+                      <Input
+                        className="h-8 text-xs" type="number" min="0" step="0.01"
+                        placeholder="0"
+                        value={payForm.wht}
+                        onChange={(e) => setPayForm(f => ({ ...f, wht: e.target.value }))}
                       />
                     </div>
                     <div className="space-y-1">
@@ -667,7 +675,7 @@ export default function InvoiceViewDialog({ invoice, open, onOpenChange, onEdit 
                         onChange={(e) => setPayForm(f => ({ ...f, reference: e.target.value }))}
                       />
                     </div>
-                    <div className="col-span-2 sm:col-span-4">
+                    <div className="col-span-2 sm:col-span-5">
                       <Button size="sm" className="h-8 w-full sm:w-auto" onClick={recordPayment} disabled={recordingPayment}>
                         {recordingPayment ? "Recording…" : "Record Payment"}
                       </Button>

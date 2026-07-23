@@ -115,6 +115,7 @@ export default function InvoicePrintView({ invoice }: Props) {
           {invoice.customer_email   && <div style={s.valueLight}>{invoice.customer_email}</div>}
           {invoice.customer_phone   && <div style={s.valueLight}>{invoice.customer_phone}</div>}
           {invoice.customer_address && <div style={s.valueLight}>{invoice.customer_address}</div>}
+          {invoice.customer_tin     && <div style={s.valueLight}>TIN: {invoice.customer_tin}</div>}
         </div>
 
         {/* Dates */}

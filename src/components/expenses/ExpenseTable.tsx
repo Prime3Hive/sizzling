@@ -3,7 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Eye, Download, Plus, Pencil, Trash2 } from 'lucide-react';
+import { Eye, Download, Plus, Pencil, Trash2, Check, X } from 'lucide-react';
 import { format } from 'date-fns';
 import { formatNairaCompact } from '@/lib/currency';
 import { supabase } from '@/integrations/supabase/client';
@@ -22,6 +22,7 @@ interface Expense {
   cost_center: string | null;
   bank_account: string | null;
   payment_method: string | null;
+  status?: string;
   budgets: { title: string } | null;
 }
 
@@ -33,7 +34,15 @@ interface ExpenseTableProps {
   onAddExpense: () => void;
   onEdit?: (expense: Expense) => void;
   onDelete?: (id: string) => void;
+  /** Admin-only: approve / reject pending expenses (maker-checker). */
+  onSetStatus?: (id: string, status: 'approved' | 'rejected') => void;
 }
+
+const STATUS_BADGE: Record<string, string> = {
+  pending: 'bg-amber-500/10 text-amber-600 border-amber-500/20',
+  approved: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20',
+  rejected: 'bg-red-500/10 text-red-600 border-red-500/20',
+};
 
 const getCategoryColor = (category: string) => {
   const colors: Record<string, string> = {
@@ -46,7 +55,7 @@ const getCategoryColor = (category: string) => {
   return colors[category] || 'bg-muted text-muted-foreground';
 };
 
-const ExpenseTable = ({ expenses, totalCount, hasActiveFilters, onClearFilters, onAddExpense, onEdit, onDelete }: ExpenseTableProps) => {
+const ExpenseTable = ({ expenses, totalCount, hasActiveFilters, onClearFilters, onAddExpense, onEdit, onDelete, onSetStatus }: ExpenseTableProps) => {
   const { toast } = useToast();
 
   const viewReceipt = async (receiptPath: string) => {
@@ -106,6 +115,7 @@ const ExpenseTable = ({ expenses, totalCount, hasActiveFilters, onClearFilters, 
                   <TableHead className="w-[130px] min-w-[130px]">Category</TableHead>
                   <TableHead className="w-[120px] min-w-[120px]">Budget</TableHead>
                   <TableHead className="w-[110px] min-w-[110px] text-right">Amount</TableHead>
+                  <TableHead className="w-[100px] min-w-[100px] text-center">Status</TableHead>
                   <TableHead className="w-[100px] min-w-[100px] text-center">Receipt</TableHead>
                   <TableHead className="w-[90px] min-w-[90px] text-center">Actions</TableHead>
                 </TableRow>
@@ -125,6 +135,23 @@ const ExpenseTable = ({ expenses, totalCount, hasActiveFilters, onClearFilters, 
                     </TableCell>
                     <TableCell><span className="text-sm truncate block max-w-[120px]">{expense.budgets?.title || 'N/A'}</span></TableCell>
                     <TableCell className="text-right font-semibold whitespace-nowrap">{formatNairaCompact(expense.amount)}</TableCell>
+                    <TableCell className="text-center">
+                      <div className="flex items-center justify-center gap-1">
+                        <Badge variant="outline" className={`capitalize ${STATUS_BADGE[expense.status ?? 'approved']}`}>
+                          {expense.status ?? 'approved'}
+                        </Badge>
+                        {onSetStatus && (expense.status ?? 'approved') === 'pending' && (
+                          <>
+                            <Button variant="ghost" size="icon" className="h-7 w-7 text-emerald-600" title="Approve" onClick={() => onSetStatus(expense.id, 'approved')}>
+                              <Check className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" title="Reject" onClick={() => onSetStatus(expense.id, 'rejected')}>
+                              <X className="h-3.5 w-3.5" />
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    </TableCell>
                     <TableCell>
                       {expense.receipt_path ? (
                         <div className="flex gap-1 justify-center">

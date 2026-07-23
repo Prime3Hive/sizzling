@@ -205,6 +205,8 @@ export default function Inventory() {
         .insert({
           name: newSKU.name.trim(), category: newSKU.category, item_type: "non_sellable",
           uom: newSKU.unit_of_measure, price: newSKU.cost_per_unit,
+          // cost_price is the value used for inventory/COGS journals (IAS 2)
+          cost_price: newSKU.cost_per_unit,
           user_id: user!.id, created_by: user!.id,
         })
         .select("id").single();
@@ -237,6 +239,7 @@ export default function Inventory() {
         .update({
           name: editingSKU.name, category: editingSKU.category,
           uom: editingSKU.unit_of_measure, price: editingSKU.cost_per_unit,
+          cost_price: editingSKU.cost_per_unit,
         })
         .eq("sku_id", editingSKU.id);
       if (error) throw error;

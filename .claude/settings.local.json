@@ -43,7 +43,8 @@
       "Bash(git fetch *)",
       "Bash(echo \"exit=$?\")",
       "Bash(MSYS_NO_PATHCONV=1 git cat-file -e origin/main:.claude/settings.local.json)",
-      "Bash(MSYS_NO_PATHCONV=1 git show origin/main:.claude/settings.local.json)"
+      "Bash(MSYS_NO_PATHCONV=1 git show origin/main:.claude/settings.local.json)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" \"https://kqnqzyklwfrhtywimsjm.supabase.co/rest/v1/\" --max-time 15)"
     ]
   }
 }

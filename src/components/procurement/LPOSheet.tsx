@@ -162,6 +162,9 @@ function QuickCreateProductDialog({
         name: form.name.trim(),
         uom: form.uom || 'unit',
         price: form.price ? parseFloat(form.price) : 0,
+        // Procurement items: the entered price is what we pay — it is the cost
+        // used for inventory valuation and COGS.
+        cost_price: form.price ? parseFloat(form.price) : 0,
         item_type: form.item_type,
         category: 'Procurement',
         created_by: user?.id,
