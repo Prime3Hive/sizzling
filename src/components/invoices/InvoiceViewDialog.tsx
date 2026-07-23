@@ -19,7 +19,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  Printer, FileCheck, TrendingUp, Edit, XCircle, CheckCircle2, Users, Building2,
+  Printer, FileCheck, Edit, XCircle, CheckCircle2, Users, Building2,
   Download, Archive, ArchiveRestore, Loader2, Banknote,
 } from "lucide-react";
 import html2canvas from "html2canvas";
@@ -180,59 +180,9 @@ export default function InvoiceViewDialog({ invoice, open, onOpenChange, onEdit 
     },
   });
 
-  // Record in finance — stamps the flag AND writes to finance_ledger
-  const recordFinanceMutation = useMutation({
-    mutationFn: async () => {
-      if (!invoice) throw new Error("No invoice");
-
-      const now = new Date().toISOString();
-      const entryDate = invoice.converted_at
-        ? invoice.converted_at.split("T")[0]
-        : now.split("T")[0];
-
-      const { error } = await supabase
-        .from("invoices")
-        .update({
-          recorded_in_finance: true,
-          finance_recorded_at: now,
-          updated_by: user?.id ?? null,
-        })
-        .eq("id", invoice.id);
-      if (error) throw error;
-
-      // Revenue ledger entry. user_id is the acting user (RLS requires
-      // auth.uid() = user_id) so any permitted staff can post a colleague's invoice.
-      const { error: ledgerErr } = await supabase.from("finance_ledger").insert({
-        user_id: user?.id ?? invoice.user_id,
-        entry_date: entryDate,
-        entry_type: "revenue",
-        source_type: "invoice",
-        source_id: invoice.id,
-        description: `Invoice ${invoice.invoice_number ?? invoice.quotation_number} — ${invoice.customer_name}`,
-        amount: invoice.total_amount,
-        cost_center: invoice.invoice_type === "event" ? "Event Account" : "Daily Orders",
-        invoice_type: invoice.invoice_type,
-        reference_number: invoice.invoice_number ?? invoice.quotation_number,
-        recorded_by: user?.id ?? null,
-      });
-      if (ledgerErr) throw ledgerErr;
-
-      // Note: cash receipts are NOT written here. Each invoice payment records its
-      // own dated payment_received entry (via the Payments section), so posting to
-      // finance only recognises revenue and avoids double-counting cash.
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["invoices"] });
-      queryClient.invalidateQueries({ queryKey: ["finance-ledger"] });
-      toast({
-        title: "Recorded in Finance",
-        description: `${invoice?.invoice_number} has been posted to the finance ledger.`,
-      });
-    },
-    onError: (err: any) => {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
-    },
-  });
+  // Revenue is now posted to the finance ledger automatically by a DB trigger
+  // the moment an invoice's status becomes 'invoice' (see fn_ledger_post_invoice),
+  // so there is no manual "Record in Finance" step or flag to maintain here.
 
   if (!invoice) return null;
 
@@ -305,25 +255,28 @@ export default function InvoiceViewDialog({ invoice, open, onOpenChange, onEdit 
     setDownloadingPdf(true);
     try {
       const canvas = await html2canvas(el, {
-        scale: 2,
+        scale: 1.5,
         useCORS: true,
         logging: false,
         width: 794,
+        backgroundColor: "#ffffff",
       });
-      const imgData = canvas.toDataURL("image/png");
-      const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+      // JPEG at high quality is dramatically smaller than PNG for a
+      // mostly-white document, and the resulting PDF stays legible.
+      const imgData = canvas.toDataURL("image/jpeg", 0.92);
+      const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4", compress: true });
       const pageW  = pdf.internal.pageSize.getWidth();
       const pageH  = pdf.internal.pageSize.getHeight();
       const ratio  = pageW / canvas.width;
       const imgH   = canvas.height * ratio;
       let remaining = imgH;
       let offset    = 0;
-      pdf.addImage(imgData, "PNG", 0, offset, pageW, imgH);
+      pdf.addImage(imgData, "JPEG", 0, offset, pageW, imgH, undefined, "MEDIUM");
       remaining -= pageH;
       while (remaining > 0) {
         offset -= pageH;
         pdf.addPage();
-        pdf.addImage(imgData, "PNG", 0, offset, pageW, imgH);
+        pdf.addImage(imgData, "JPEG", 0, offset, pageW, imgH, undefined, "MEDIUM");
         remaining -= pageH;
       }
       pdf.save(`${displayNumber}.pdf`);
@@ -387,11 +340,6 @@ export default function InvoiceViewDialog({ invoice, open, onOpenChange, onEdit 
                 <Badge variant="outline" className={PAYMENT_BADGE[invoice.payment_status]}>
                   {PAYMENT_STATUS_LABELS[invoice.payment_status]}
                 </Badge>
-                {invoice.recorded_in_finance && (
-                  <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
-                    Posted to Finance
-                  </Badge>
-                )}
               </div>
             </div>
           </DialogHeader>
@@ -822,16 +770,6 @@ export default function InvoiceViewDialog({ invoice, open, onOpenChange, onEdit 
             )}
 
             {/* Invoice actions */}
-            {isInvoice && !invoice.recorded_in_finance && (
-              <Button
-                onClick={() => recordFinanceMutation.mutate()}
-                disabled={recordFinanceMutation.isPending}
-              >
-                <TrendingUp className="h-4 w-4 mr-1.5" />
-                {recordFinanceMutation.isPending ? "Recording…" : "Record in Finance"}
-              </Button>
-            )}
-
             {isInvoice && (
               <Button variant="outline" onClick={() => setShowCancelConfirm(true)}>
                 <XCircle className="h-4 w-4 mr-1.5" /> Cancel Invoice
