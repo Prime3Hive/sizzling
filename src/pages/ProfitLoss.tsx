@@ -43,7 +43,11 @@ interface MonthlyPL {
   monthIndex: number;
   dailySales: number;
   eventSales: number;
+  dailyInvoiceRevenue: number;
+  eventInvoiceRevenue: number;
   invoiceRevenue: number;
+  dailyRevenue: number;
+  eventRevenue: number;
   totalSales: number;
   dailyCOGS: number;
   eventCOGS: number;
@@ -196,8 +200,19 @@ const ProfitLoss = () => {
       const eventSales = monthSales
         .filter(s => s.sale_type === 'event')
         .reduce((sum, s) => sum + Number(s.total_amount), 0);
-      const invoiceRevenue = monthInvoices.reduce((sum, l) => sum + Number(l.total_amount), 0);
-      const totalSales = dailySales + eventSales + invoiceRevenue;
+      // Invoice revenue split by invoice_type so it lands in the same Daily/Event
+      // bucket as the COGS/OpEx tied to that cost centre — otherwise the segment
+      // filter counts a segment's costs without its matching invoice revenue.
+      const dailyInvoiceRevenue = monthInvoices
+        .filter(l => (l.invoice_type || 'daily_sales') !== 'event')
+        .reduce((sum, l) => sum + Number(l.total_amount), 0);
+      const eventInvoiceRevenue = monthInvoices
+        .filter(l => l.invoice_type === 'event')
+        .reduce((sum, l) => sum + Number(l.total_amount), 0);
+      const invoiceRevenue = dailyInvoiceRevenue + eventInvoiceRevenue;
+      const dailyRevenue = dailySales + dailyInvoiceRevenue;
+      const eventRevenue = eventSales + eventInvoiceRevenue;
+      const totalSales = dailyRevenue + eventRevenue;
 
       const dailyCOGS = monthExpenses
         .filter(e => (e.account_type || 'COGS') === 'COGS' && (e.cost_center || 'Daily Orders') !== 'Event Account')
@@ -207,8 +222,8 @@ const ProfitLoss = () => {
         .reduce((sum, e) => sum + Number(e.amount), 0);
       const totalCOGS = dailyCOGS + eventCOGS;
 
-      const dailyGrossProfit = dailySales - dailyCOGS;
-      const eventGrossProfit = eventSales - eventCOGS;
+      const dailyGrossProfit = dailyRevenue - dailyCOGS;
+      const eventGrossProfit = eventRevenue - eventCOGS;
       const totalGrossProfit = totalSales - totalCOGS;
 
       const dailyOpEX = monthExpenses
@@ -220,6 +235,8 @@ const ProfitLoss = () => {
       const payrollOpEX = monthPayroll.reduce((sum, p) => sum + Number(p.net_pay), 0);
       const totalOpEX = dailyOpEX + eventOpEX + payrollOpEX;
 
+      // Payroll isn't attributable to a cost centre, so segment Net Profit
+      // (Daily/Event) excludes it — only "All P&L" (totalOpEX) carries it.
       const dailyNetProfit = dailyGrossProfit - dailyOpEX;
       const eventNetProfit = eventGrossProfit - eventOpEX;
       const totalNetProfit = totalGrossProfit - totalOpEX;
@@ -227,7 +244,8 @@ const ProfitLoss = () => {
 
       return {
         month, monthIndex: index,
-        dailySales, eventSales, invoiceRevenue, totalSales,
+        dailySales, eventSales, dailyInvoiceRevenue, eventInvoiceRevenue,
+        invoiceRevenue, dailyRevenue, eventRevenue, totalSales,
         dailyCOGS, eventCOGS, totalCOGS,
         dailyGrossProfit, eventGrossProfit, totalGrossProfit,
         dailyOpEX, eventOpEX, payrollOpEX, totalOpEX,
@@ -240,7 +258,11 @@ const ProfitLoss = () => {
   const totals = useMemo(() => monthlyData.reduce((acc, m) => ({
     dailySales: acc.dailySales + m.dailySales,
     eventSales: acc.eventSales + m.eventSales,
+    dailyInvoiceRevenue: acc.dailyInvoiceRevenue + m.dailyInvoiceRevenue,
+    eventInvoiceRevenue: acc.eventInvoiceRevenue + m.eventInvoiceRevenue,
     invoiceRevenue: acc.invoiceRevenue + m.invoiceRevenue,
+    dailyRevenue: acc.dailyRevenue + m.dailyRevenue,
+    eventRevenue: acc.eventRevenue + m.eventRevenue,
     totalSales: acc.totalSales + m.totalSales,
     dailyCOGS: acc.dailyCOGS + m.dailyCOGS,
     eventCOGS: acc.eventCOGS + m.eventCOGS,
@@ -256,7 +278,8 @@ const ProfitLoss = () => {
     eventNetProfit: acc.eventNetProfit + m.eventNetProfit,
     totalNetProfit: acc.totalNetProfit + m.totalNetProfit,
   }), {
-    dailySales: 0, eventSales: 0, invoiceRevenue: 0, totalSales: 0,
+    dailySales: 0, eventSales: 0, dailyInvoiceRevenue: 0, eventInvoiceRevenue: 0,
+    invoiceRevenue: 0, dailyRevenue: 0, eventRevenue: 0, totalSales: 0,
     dailyCOGS: 0, eventCOGS: 0, totalCOGS: 0,
     dailyGrossProfit: 0, eventGrossProfit: 0, totalGrossProfit: 0,
     dailyOpEX: 0, eventOpEX: 0, payrollOpEX: 0, totalOpEX: 0,
@@ -280,13 +303,19 @@ const ProfitLoss = () => {
     ? expenses.filter(e => new Date(e.date).getMonth() === detailMonthIdx)
     : [];
 
-  const activeRevenue = plFilter === 'daily' ? totals.dailySales
-    : plFilter === 'event' ? totals.eventSales : totals.totalSales;
+  // Revenue includes each segment's matching invoice revenue (not just the
+  // `sales` table) so it reconciles with the COGS/OpEx and Net Profit below —
+  // previously "Daily"/"Event" dropped invoice revenue entirely, understating
+  // those segments relative to "All P&L". Payroll isn't cost-centre-attributable,
+  // so it's included in OpEx/Net Profit only for "All P&L", not per segment —
+  // kept consistent between the OpEx tile and the Net Profit tile below.
+  const activeRevenue = plFilter === 'daily' ? totals.dailyRevenue
+    : plFilter === 'event' ? totals.eventRevenue : totals.totalSales;
   const activeCOGS = plFilter === 'daily' ? totals.dailyCOGS
     : plFilter === 'event' ? totals.eventCOGS : totals.totalCOGS;
   const activeGP = plFilter === 'daily' ? totals.dailyGrossProfit
     : plFilter === 'event' ? totals.eventGrossProfit : totals.totalGrossProfit;
-  const activeOpEX = plFilter === 'daily' ? (totals.dailyOpEX + totals.payrollOpEX)
+  const activeOpEX = plFilter === 'daily' ? totals.dailyOpEX
     : plFilter === 'event' ? totals.eventOpEX : totals.totalOpEX;
   const activeNP = plFilter === 'daily' ? totals.dailyNetProfit
     : plFilter === 'event' ? totals.eventNetProfit : totals.totalNetProfit;
@@ -611,10 +640,10 @@ const ProfitLoss = () => {
             {plFilter === 'all' && (
               <div className="mt-2 space-y-0.5 text-xs text-muted-foreground">
                 <div className="flex justify-between">
-                  <span>Daily</span><span className="font-medium">{formatNairaCompact(totals.dailySales)}</span>
+                  <span>Daily</span><span className="font-medium">{formatNairaCompact(totals.dailyRevenue)}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span>Event</span><span className="font-medium">{formatNairaCompact(totals.eventSales)}</span>
+                  <span>Event</span><span className="font-medium">{formatNairaCompact(totals.eventRevenue)}</span>
                 </div>
               </div>
             )}
@@ -670,7 +699,9 @@ const ProfitLoss = () => {
           <div className="h-1 bg-amber-500" />
           <CardContent className="pt-4 pb-4">
             <div className="flex items-start justify-between mb-2">
-              <p className="text-xs text-muted-foreground uppercase tracking-wider font-medium">OpEX + Payroll</p>
+              <p className="text-xs text-muted-foreground uppercase tracking-wider font-medium">
+                {plFilter === 'all' ? 'OpEX + Payroll' : 'OpEX'}
+              </p>
               <div className="h-8 w-8 rounded-lg bg-amber-500/10 flex items-center justify-center">
                 <Users className="h-4 w-4 text-amber-600" />
               </div>
@@ -678,7 +709,7 @@ const ProfitLoss = () => {
             <p className="text-2xl font-bold tracking-tight">{formatNairaCompact(activeOpEX)}</p>
             {plFilter !== 'event' && (
               <div className="mt-2 text-xs text-muted-foreground flex justify-between">
-                <span>Payroll</span>
+                <span>{plFilter === 'all' ? 'incl. Payroll' : 'Payroll (company-wide, not in this total)'}</span>
                 <span className="font-medium">{formatNairaCompact(totals.payrollOpEX)}</span>
               </div>
             )}
@@ -904,6 +935,7 @@ const ProfitLoss = () => {
                 accent: 'bg-blue-500',
                 rows: [
                   { label: 'Sales', value: totals.dailySales, cost: false },
+                  { label: 'Invoice Revenue', value: totals.dailyInvoiceRevenue, cost: false },
                   { label: 'COGS', value: -totals.dailyCOGS, cost: true },
                   { label: 'Gross Profit', value: totals.dailyGrossProfit, sep: true },
                   { label: 'OpEX', value: -totals.dailyOpEX, cost: true },
@@ -915,6 +947,7 @@ const ProfitLoss = () => {
                 accent: 'bg-violet-500',
                 rows: [
                   { label: 'Sales', value: totals.eventSales, cost: false },
+                  { label: 'Invoice Revenue', value: totals.eventInvoiceRevenue, cost: false },
                   { label: 'COGS', value: -totals.eventCOGS, cost: true },
                   { label: 'Gross Profit', value: totals.eventGrossProfit, sep: true },
                   { label: 'OpEX', value: -totals.eventOpEX, cost: true },

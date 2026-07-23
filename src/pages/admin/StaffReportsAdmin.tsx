@@ -23,14 +23,9 @@ import {
 } from '@/lib/reports';
 import { formatNairaCompact } from '@/lib/currency';
 import ChecklistAdmin from '@/components/reports/ChecklistAdmin';
+import ReportDetailsDialog, { type StaffReportRecord } from '@/components/reports/ReportDetailsDialog';
 
-interface Report {
-  id: string; user_id: string; report_type: ReportType; report_date: string; submitted_at: string;
-  status: string; title: string | null; summary: string | null; amount: number | null;
-  payment_method: string | null; details: any; timeliness_score: number | null;
-  quality_score: number | null; performance_score: number | null; grade: string | null;
-  review_note: string | null; converted_ref: string | null;
-}
+type Report = StaffReportRecord;
 interface Assignment { id: string; user_id: string; report_type: ReportType; cadence: string; due_time: string | null; active: boolean; }
 interface Payable { id: string; supplier: string; description: string | null; category: string | null; amount: number; incurred_date: string; due_date: string | null; status: string; paid_at: string | null; }
 interface Profile { user_id: string; full_name: string; }
@@ -143,21 +138,9 @@ export default function StaffReportsAdmin() {
         convertedRef = saleId;
         status = 'converted';
 
-        // Mirror the recognised revenue into the finance ledger (the Finance Feed
-        // audit trail). source_id points at the sale so the feed row is clickable.
-        // P&L and the Finance KPIs read the sales table directly, so this is a
-        // display-only audit entry and does not double-count.
-        if (saleId) {
-          const { error: ledgerErr } = await supabase.from('finance_ledger').insert({
-            user_id: user!.id, entry_date: r.report_date, entry_type: 'revenue',
-            source_type: 'sale', source_id: saleId,
-            description: `Sales report — ${r.report_date}${r.payment_method ? ` (${r.payment_method})` : ''}`,
-            amount: r.amount ?? 0,
-            cost_center: saleType === 'event' ? 'Event Account' : 'Daily Orders',
-            reference_number: ref, recorded_by: user!.id,
-          });
-          if (ledgerErr) throw ledgerErr;
-        }
+        // The finance ledger's revenue entry is now posted automatically by a
+        // DB trigger on `sales` (see fn_ledger_post_sale), so no manual mirror
+        // is written here — doing so would create a duplicate Feed row.
       } else if (r.report_type === 'credit') {
         // Legacy reports stored a flat `supplier`; new ones carry item lines + an optional source.
         const items = describeCreditItems(r.details?.lines ?? []);
@@ -424,86 +407,40 @@ export default function StaffReportsAdmin() {
         </TabsContent>
       </Tabs>
 
-      {/* Review dialog */}
-      <Dialog open={!!review} onOpenChange={o => { if (!o) setReview(null); }}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
-          {review && (
-            <>
-              <DialogHeader>
-                <DialogTitle>{REPORT_TYPES[review.report_type]?.label}</DialogTitle>
-                <DialogDescription>By {nameOf(review.user_id)} · for {format(parseISO(review.report_date), 'dd MMM yyyy')} · submitted {format(parseISO(review.submitted_at), 'dd MMM, HH:mm')}</DialogDescription>
-              </DialogHeader>
-              <div className="space-y-3 py-1 text-sm">
-                <div className="flex flex-wrap gap-2">
-                  <Badge className={`border capitalize ${REPORT_STATUS_COLOR[review.status as keyof typeof REPORT_STATUS_COLOR] ?? ''}`}>{review.status}</Badge>
-                  <Badge variant="outline">Timeliness: {review.timeliness_score ?? '—'}</Badge>
-                  {review.grade && <Badge className={`border ${gradeColor(review.grade)}`}>Grade {review.grade}</Badge>}
-                </div>
-                {review.amount != null && <p>Amount: <span className="font-semibold">{formatNairaCompact(review.amount)}</span>{review.payment_method ? ` · ${review.payment_method}` : ''}</p>}
-                {Array.isArray(review.details?.lines) && review.details.lines.length > 0 && (
-                  <div className="rounded-lg border p-2 space-y-1">
-                    {review.details.lines.map((l: any, i: number) => (
-                      <div key={i} className="flex justify-between text-xs">
-                        <span>{l.category ?? l.item}{l.qty ? ` ×${l.qty}` : ''}</span>
-                        <span className="text-muted-foreground">
-                          {l.amount != null
-                            ? formatNairaCompact(l.amount)
-                            : l.prepared != null
-                              ? `prepared ${l.prepared} · served ${l.served ?? 0} · wasted ${l.wasted ?? 0}`
-                              : `counted ${l.counted ?? 0} · used ${l.used ?? 0}`}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {review.report_type === 'credit' && (review.details?.source || review.details?.supplier) && (
-                  <p>Bought from: <span className="font-medium">{review.details?.source ?? review.details?.supplier}</span>{review.details?.is_supplier ? ' · registered supplier' : ' · not a supplier'}</p>
-                )}
-                {review.report_type === 'operations' && review.details?.operations && (
-                  <div className="space-y-2">
-                    {OPERATIONS_FIELDS.map(f => (
-                      review.details.operations[f.key] ? (
-                        <div key={f.key} className="rounded-lg border p-2">
-                          <p className="text-xs font-medium text-muted-foreground">{f.label}</p>
-                          <p className="text-sm whitespace-pre-wrap mt-0.5">{review.details.operations[f.key]}</p>
-                        </div>
-                      ) : null
-                    ))}
-                  </div>
-                )}
-                {review.summary && <p className="text-muted-foreground">{review.summary}</p>}
-                {review.converted_ref && <p className="text-violet-600 text-xs">Already converted to a financial record.</p>}
-
-                {review.status === 'submitted' && (
-                  <div className="space-y-3 pt-2 border-t">
-                    <div className="space-y-2">
-                      <Label>Quality score (0–100, optional)</Label>
-                      <Input type="number" min="0" max="100" value={quality} onChange={e => setQuality(e.target.value)} placeholder="e.g. 85" />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Review note (optional)</Label>
-                      <Textarea rows={2} value={reviewNote} onChange={e => setReviewNote(e.target.value)} />
-                    </div>
-                    {REPORT_TYPES[review.report_type].convertsTo && (
-                      <p className="text-xs text-muted-foreground">Approving will create: {REPORT_TYPES[review.report_type].convertsTo}.</p>
-                    )}
-                  </div>
-                )}
-              </div>
-              {review.status === 'submitted' && (
-                <DialogFooter>
-                  <Button variant="outline" className="text-red-700 border-red-300 hover:bg-red-50" onClick={() => reject.mutate(review)} disabled={reject.isPending}>
-                    <XCircle className="h-4 w-4 mr-1" />Reject
-                  </Button>
-                  <Button onClick={() => approve.mutate(review)} disabled={approve.isPending}>
-                    {approve.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <CheckCircle2 className="h-4 w-4 mr-1" />}Approve
-                  </Button>
-                </DialogFooter>
-              )}
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
+      {/* Review dialog — the shared report details view, with grading + decision
+          controls attached while the report is still awaiting review. */}
+      <ReportDetailsDialog
+        report={review}
+        open={!!review}
+        onOpenChange={o => { if (!o) setReview(null); }}
+        staffName={review ? nameOf(review.user_id) : undefined}
+        footer={review?.status === 'submitted' ? (
+          <>
+            <Button size="sm" variant="outline" className="text-red-700 border-red-300 hover:bg-red-50" onClick={() => reject.mutate(review)} disabled={reject.isPending}>
+              <XCircle className="h-4 w-4 mr-1" />Reject
+            </Button>
+            <Button size="sm" onClick={() => approve.mutate(review)} disabled={approve.isPending}>
+              {approve.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <CheckCircle2 className="h-4 w-4 mr-1" />}Approve
+            </Button>
+          </>
+        ) : undefined}
+      >
+        {review?.status === 'submitted' && (
+          <div className="space-y-3 pt-3 border-t">
+            <div className="space-y-2">
+              <Label>Quality score (0–100, optional)</Label>
+              <Input type="number" min="0" max="100" value={quality} onChange={e => setQuality(e.target.value)} placeholder="e.g. 85" />
+            </div>
+            <div className="space-y-2">
+              <Label>Review note (optional)</Label>
+              <Textarea rows={2} value={reviewNote} onChange={e => setReviewNote(e.target.value)} />
+            </div>
+            {REPORT_TYPES[review.report_type].convertsTo && (
+              <p className="text-xs text-muted-foreground">Approving will create: {REPORT_TYPES[review.report_type].convertsTo}.</p>
+            )}
+          </div>
+        )}
+      </ReportDetailsDialog>
 
       {/* Assignment dialog */}
       <Dialog open={assignOpen} onOpenChange={setAssignOpen}>

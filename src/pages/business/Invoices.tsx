@@ -189,9 +189,6 @@ export default function Invoices() {
       cell: (inv) => (
         <div>
           <Badge variant="outline" className={`text-xs ${STATUS_BADGE[inv.status]}`}>{STATUS_LABELS[inv.status]}</Badge>
-          {inv.recorded_in_finance && (
-            <div className="mt-0.5"><Badge variant="outline" className="text-[9px] bg-blue-50 text-blue-600 border-blue-200">Finance</Badge></div>
-          )}
           {inv.archived && (
             <div className="mt-0.5"><Badge variant="outline" className="text-[9px] bg-muted text-muted-foreground border-muted-foreground/30">Archived</Badge></div>
           )}

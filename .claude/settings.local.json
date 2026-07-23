@@ -38,7 +38,12 @@
       "Bash(curl -s -X POST https://api.supabase.com/v1/projects/kqnqzyklwfrhtywimsjm/database/query -H 'Authorization: Bearer sbp_5aeff96e3a186be79a83214ad02fb1dcc32fe930' -H 'Content-Type: application/json' --data-binary '{\"query\": \"CREATE POLICY \\\\\"finance_ledger_insert\\\\\" ON public.finance_ledger FOR INSERT TO authenticated WITH CHECK \\(auth.uid\\(\\) = user_id\\); CREATE POLICY \\\\\"finance_ledger_select\\\\\" ON public.finance_ledger FOR SELECT TO authenticated USING \\(true\\); GRANT SELECT, INSERT ON public.finance_ledger TO authenticated\"}')",
       "Bash(findstr /i \"deploy\\\\|build\\\\|preview\\\\|script\")",
       "Bash(findstr \"scripts\\\\|build\\\\|deploy\\\\|preview\\\\|lovable\\\\|vercel\\\\|netlify\")",
-      "Bash(Find \"c:\\\\Users\\\\THEOPHILUS-SOLOMON\\\\Downloads\\\\Sizzling Portal\\\\Sizzling Portal\" -name \"*kpi*\" -o -name \"*migration*\")"
+      "Bash(Find \"c:\\\\Users\\\\THEOPHILUS-SOLOMON\\\\Downloads\\\\Sizzling Portal\\\\Sizzling Portal\" -name \"*kpi*\" -o -name \"*migration*\")",
+      "Bash(awk '/payments: {/,/^      }/' \"c:/Users/THEOPHILUS-SOLOMON/Downloads/Sizzling Portal/Sizzling Portal/src/integrations/supabase/types.ts\")",
+      "Bash(git fetch *)",
+      "Bash(echo \"exit=$?\")",
+      "Bash(MSYS_NO_PATHCONV=1 git cat-file -e origin/main:.claude/settings.local.json)",
+      "Bash(MSYS_NO_PATHCONV=1 git show origin/main:.claude/settings.local.json)"
     ]
   }
 }

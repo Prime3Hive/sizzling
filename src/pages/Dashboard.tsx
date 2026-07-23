@@ -99,7 +99,8 @@ const Dashboard = () => {
         .from('sales')
         .select('total_amount, sale_type, sale_date')
         .gte('sale_date', yearStart)
-        .lte('sale_date', yearEnd);
+        .lte('sale_date', yearEnd)
+        .neq('status', 'cancelled');
       if (error) throw error;
       return data || [];
     },

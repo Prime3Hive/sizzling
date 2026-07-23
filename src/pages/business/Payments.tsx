@@ -159,14 +159,16 @@ const Payments = () => {
     return matchesSearch && matchesStatus;
   });
 
-  const totalPayments = payments.reduce((sum, payment) => sum + payment.amount, 0);
-  const settledPayments = payments.filter(p => p.status === 'settled');
+  // "Total Payments" reflects actual cash collected, so it only counts completed
+  // payments — matching how Finance Overview and the Dashboard read this table.
+  const completedPayments = payments.filter(p => p.status === 'completed');
+  const totalPayments = completedPayments.reduce((sum, payment) => sum + payment.amount, 0);
   const pendingPayments = payments.filter(p => p.status === 'pending');
   const failedPayments = payments.filter(p => p.status === 'failed');
 
   const getStatusIcon = (status: string) => {
     switch (status) {
-      case 'settled':
+      case 'completed':
         return <CheckCircle className="h-4 w-4 text-green-500" />;
       case 'pending':
         return <Clock className="h-4 w-4 text-yellow-500" />;
@@ -194,7 +196,7 @@ const Payments = () => {
       cell: (p) => (
         <div className="flex items-center gap-2">
           {getStatusIcon(p.status)}
-          <Badge variant={p.status === 'settled' ? 'default' : p.status === 'pending' ? 'secondary' : 'destructive'}>{p.status}</Badge>
+          <Badge variant={p.status === 'completed' ? 'default' : p.status === 'pending' ? 'secondary' : 'destructive'}>{p.status}</Badge>
         </div>
       ),
     },
@@ -204,7 +206,7 @@ const Payments = () => {
         <div className="flex gap-2 md:justify-end">
           {p.status === 'pending' && (
             <>
-              <Button size="sm" variant="outline" onClick={() => updatePaymentStatus(p.id, 'settled')}>Mark Settled</Button>
+              <Button size="sm" variant="outline" onClick={() => updatePaymentStatus(p.id, 'completed')}>Mark Completed</Button>
               <Button size="sm" variant="outline" onClick={() => updatePaymentStatus(p.id, 'failed')}>Mark Failed</Button>
             </>
           )}
@@ -296,7 +298,7 @@ const Payments = () => {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="pending">Pending</SelectItem>
-                        <SelectItem value="settled">Settled</SelectItem>
+                        <SelectItem value="completed">Completed</SelectItem>
                         <SelectItem value="failed">Failed</SelectItem>
                       </SelectContent>
                     </Select>
@@ -338,11 +340,11 @@ const Payments = () => {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Settled</CardTitle>
+            <CardTitle className="text-sm font-medium">Completed</CardTitle>
             <CheckCircle className="h-4 w-4 text-green-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-green-600">{settledPayments.length}</div>
+            <div className="text-2xl font-bold text-green-600">{completedPayments.length}</div>
           </CardContent>
         </Card>
         <Card>
@@ -383,7 +385,7 @@ const Payments = () => {
           <SelectContent>
             <SelectItem value="all">All Status</SelectItem>
             <SelectItem value="pending">Pending</SelectItem>
-            <SelectItem value="settled">Settled</SelectItem>
+            <SelectItem value="completed">Completed</SelectItem>
             <SelectItem value="failed">Failed</SelectItem>
           </SelectContent>
         </Select>

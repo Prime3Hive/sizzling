@@ -14,24 +14,20 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import { Plus, Trash2, ClipboardList, FileText, Loader2 } from 'lucide-react';
+import { Plus, Trash2, ClipboardList, FileText, Loader2, Eye } from 'lucide-react';
 import {
   REPORT_TYPES, REPORT_STATUS_COLOR, gradeColor, computeTimeliness,
   gradeFromScore, summarizePerformance, OPERATIONS_FIELDS,
   type ReportType, type CreditLineKind, type OperationsDetails,
 } from '@/lib/reports';
+import ReportDetailsDialog, { type StaffReportRecord } from '@/components/reports/ReportDetailsDialog';
 import { formatNairaCompact } from '@/lib/currency';
 
 interface Assignment { id: string; report_type: ReportType; cadence: string; due_time: string | null; active: boolean; }
 interface Product { id: string; name: string; uom: string | null; price: number | null; }
 interface CreditLineForm { kind: CreditLineKind; product_id: string; item: string; qty: string; amount: string; }
 const emptyCreditLine = (): CreditLineForm => ({ kind: 'product', product_id: '', item: '', qty: '', amount: '' });
-interface Report {
-  id: string; report_type: ReportType; report_date: string; submitted_at: string;
-  status: string; title: string | null; amount: number | null; payment_method: string | null;
-  timeliness_score: number | null; quality_score: number | null; performance_score: number | null;
-  grade: string | null; review_note: string | null;
-}
+type Report = StaffReportRecord;
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -41,6 +37,7 @@ export default function MyReports() {
   const qc = useQueryClient();
 
   const [open, setOpen] = useState(false);
+  const [viewing, setViewing] = useState<Report | null>(null);
   const [type, setType] = useState<ReportType>('sales');
   const [form, setForm] = useState({ report_date: today(), title: '', summary: '', amount: '', payment_method: 'cash', sale_type: 'daily', source: '', is_supplier: false, due_date: '', misc_description: '', misc_amount: '', petty_description: '', petty_amount: '' });
   const [expLines, setExpLines] = useState<{ category: string; amount: string; description: string }[]>([{ category: '', amount: '', description: '' }]);
@@ -65,7 +62,7 @@ export default function MyReports() {
     queryKey: ['my-reports', user?.id],
     queryFn: async () => {
       const { data, error } = await supabase.from('staff_reports')
-        .select('id, report_type, report_date, submitted_at, status, title, amount, payment_method, timeliness_score, quality_score, performance_score, grade, review_note')
+        .select('id, user_id, report_type, report_date, submitted_at, status, title, summary, amount, payment_method, details, timeliness_score, quality_score, performance_score, grade, review_note, reviewed_at, converted_ref')
         .eq('user_id', user!.id).order('submitted_at', { ascending: false });
       if (error) throw error;
       return (data ?? []) as Report[];
@@ -279,11 +276,12 @@ export default function MyReports() {
                   <TableHead>Amount</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Grade</TableHead>
+                  <TableHead className="text-right">Action</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {reports.map(r => (
-                  <TableRow key={r.id}>
+                  <TableRow key={r.id} className="cursor-pointer" onClick={() => setViewing(r)}>
                     <TableCell className="font-medium">{REPORT_TYPES[r.report_type]?.label ?? r.report_type}</TableCell>
                     <TableCell className="text-sm">{format(parseISO(r.report_date), 'dd MMM yyyy')}</TableCell>
                     <TableCell className="text-sm text-muted-foreground">{format(parseISO(r.submitted_at), 'dd MMM, HH:mm')}</TableCell>
@@ -293,6 +291,11 @@ export default function MyReports() {
                       <Badge className={`text-xs border ${gradeColor(r.grade ?? '—')}`}>
                         {r.grade ?? '—'}{r.performance_score != null ? ` · ${r.performance_score}` : ''}
                       </Badge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button size="sm" variant="outline" onClick={e => { e.stopPropagation(); setViewing(r); }}>
+                        <Eye className="h-3.5 w-3.5 mr-1" />View
+                      </Button>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -516,6 +519,13 @@ export default function MyReports() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Report details — full view of a submitted report, including the review outcome */}
+      <ReportDetailsDialog
+        report={viewing}
+        open={!!viewing}
+        onOpenChange={o => { if (!o) setViewing(null); }}
+      />
     </div>
   );
 }
