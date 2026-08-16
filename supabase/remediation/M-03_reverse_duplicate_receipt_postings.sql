@@ -3,8 +3,8 @@
 --
 -- PRECONDITIONS, all of them:
 --   1. A full database backup has been taken and its restore tested.
---   2. 20260816120000_phase1_append_only_journal.sql has been applied
---      (this script depends on fn_reverse_entry).
+--   2. Both Phase 1 migrations have been applied — 20260816120000
+--      (fn_reverse_entry) and 20260816130000 (the cancellation columns).
 --   3. The Phase 1 application fix is deployed, so no NEW duplicates are being
 --      created while this runs.
 --   4. M-02 has been run and its section 4 total signed off by the finance lead.
@@ -67,19 +67,17 @@ END $$;
 
 -- ── Sever the link that caused it ────────────────────────────────────────────
 -- The expense rows themselves are NOT deleted — they are financial records and
--- some may carry notes or attachments. They are flagged and unlinked so they
--- cannot be mistaken for live purchase costs, and so that re-running M-02 shows
--- a clean list.
-ALTER TABLE public.expenses
-  ADD COLUMN IF NOT EXISTS voided_at     timestamptz,
-  ADD COLUMN IF NOT EXISTS voided_reason text;
-
+-- some may carry notes or attachments. They are cancelled, using the same
+-- columns the application uses, so they cannot be mistaken for live purchase
+-- costs and so that re-running M-02 shows a clean list.
+--
+-- Requires 20260816130000_phase1_no_delete_financial_records.sql.
 UPDATE public.expenses e
-SET voided_at = now(),
-    voided_reason = 'M-03: duplicate of a capitalised goods receipt; reversed, not a cost'
+SET cancelled_at = now(),
+    cancellation_reason = 'M-03: duplicate of a capitalised goods receipt; reversed, not a cost'
 FROM public.lpo_receipts r
 WHERE r.expense_id = e.id
-  AND e.voided_at IS NULL;
+  AND e.cancelled_at IS NULL;
 
 -- ── After ────────────────────────────────────────────────────────────────────
 DO $$

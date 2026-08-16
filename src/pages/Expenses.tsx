@@ -47,6 +47,7 @@ const Expenses = () => {
       const { data, error } = await supabase
         .from('expenses')
         .select('*, budgets(title)')
+        .is('cancelled_at', null)
         .order('date', { ascending: false })
         .order('created_at', { ascending: false });
       if (error) throw error;
@@ -95,15 +96,22 @@ const Expenses = () => {
     onError: (error: any) => toast({ title: 'Error', description: error.message, variant: 'destructive' }),
   });
 
+  // Expenses are cancelled, never deleted. The record and the reason stay on
+  // file, and the journal behind it is reversed rather than disappearing.
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from('expenses').delete().eq('id', id);
+      const reason = window.prompt('Why is this expense being cancelled?')?.trim();
+      if (!reason) throw new Error('A cancellation needs a reason. Nothing was changed.');
+      const { error } = await (supabase as any)
+        .from('expenses')
+        .update({ cancelled_at: new Date().toISOString(), cancellation_reason: reason })
+        .eq('id', id);
       if (error) throw error;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['expenses'] });
       queryClient.invalidateQueries({ queryKey: ['pl-expenses'] });
-      toast({ title: 'Expense deleted' });
+      toast({ title: 'Expense cancelled' });
     },
     onError: (error: any) => toast({ title: 'Error', description: error.message, variant: 'destructive' }),
   });
@@ -187,9 +195,9 @@ const Expenses = () => {
       <ConfirmDialog
         open={!!deleteId}
         onOpenChange={(open) => { if (!open) setDeleteId(null); }}
-        title="Delete expense?"
-        description="This expense will be permanently deleted. This action cannot be undone."
-        confirmLabel="Delete"
+        title="Cancel this expense?"
+        description="The expense stays on file, marked cancelled with your reason, and any journal posted against it is reversed. You will be asked why."
+        confirmLabel="Cancel expense"
         onConfirm={() => { if (deleteId) { deleteMutation.mutate(deleteId); setDeleteId(null); } }}
       />
     </div>

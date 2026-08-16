@@ -129,6 +129,7 @@ const ProfitLoss = () => {
       const { data, error } = await supabase
         .from('sales')
         .select('id, sale_date, sale_number, total_amount, vat_amount, sale_type, status, customer_name, notes')
+        .is('cancelled_at', null)
         .gte('sale_date', yearStart)
         .lte('sale_date', yearEnd)
         .order('sale_date');

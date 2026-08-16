@@ -105,7 +105,7 @@ const Payroll = () => {
   const { data: payrollRecords = [], isLoading } = useQuery({
     queryKey: ['payroll-records', periodFilter],
     queryFn: async () => {
-      let query = supabase.from('payroll_records').select('*').order('created_at', { ascending: false });
+      let query = supabase.from('payroll_records').select('*').is('cancelled_at', null).order('created_at', { ascending: false });
       if (periodFilter && periodFilter !== 'all') query = query.eq('salary_period', periodFilter);
       const { data, error } = await query;
       if (error) throw error;
@@ -297,15 +297,20 @@ const Payroll = () => {
     onError: (error: any) => toast({ title: 'Error', description: error.message, variant: 'destructive' }),
   });
 
-  // Delete mutation
+  // Cancellation, not deletion — a paid salary is a fact about someone's pay.
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from('payroll_records').delete().eq('id', id);
+      const reason = window.prompt('Why is this payroll record being cancelled?')?.trim();
+      if (!reason) throw new Error('A cancellation needs a reason. Nothing was changed.');
+      const { error } = await (supabase as any)
+        .from('payroll_records')
+        .update({ cancelled_at: new Date().toISOString(), cancellation_reason: reason })
+        .eq('id', id);
       if (error) throw error;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['payroll-records'] });
-      toast({ title: 'Deleted', description: 'Payroll record removed' });
+      toast({ title: 'Cancelled', description: 'Payroll record cancelled and its posting reversed' });
     },
     onError: (error: any) => toast({ title: 'Error', description: error.message, variant: 'destructive' }),
   });
@@ -546,8 +551,8 @@ const Payroll = () => {
             </AlertDialogTrigger>
             <AlertDialogContent>
               <AlertDialogHeader>
-                <AlertDialogTitle>Delete payroll record?</AlertDialogTitle>
-                <AlertDialogDescription>This will permanently delete the payroll record for {r.staff_name} ({format(new Date(r.period_start), 'dd MMM')} – {format(new Date(r.period_end), 'dd MMM yyyy')}).</AlertDialogDescription>
+                <AlertDialogTitle>Cancel payroll record?</AlertDialogTitle>
+                <AlertDialogDescription>This will cancel the payroll record for {r.staff_name} ({format(new Date(r.period_start), 'dd MMM')} – {format(new Date(r.period_end), 'dd MMM yyyy')}).</AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
                 <AlertDialogCancel>Cancel</AlertDialogCancel>

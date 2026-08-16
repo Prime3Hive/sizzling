@@ -348,7 +348,7 @@ const Dashboard = () => {
     queryKey: ['dash-mtd-expense-cats', monthStart, monthEnd],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from('expenses').select('amount, category')
+        .from('expenses').select('amount, category').is('cancelled_at', null)
         .eq('status', 'approved')
         .gte('date', monthStart).lte('date', monthEnd);
       if (error) throw error;

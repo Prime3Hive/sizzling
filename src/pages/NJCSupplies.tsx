@@ -39,6 +39,7 @@ const NJCSupplies = () => {
       const { data: supplyData, error } = await supabase
         .from("njc_supplies")
         .select("*")
+        .is("cancelled_at", null)
         .order("supply_date", { ascending: false });
       if (error) throw error;
 
@@ -195,14 +196,21 @@ const NJCSupplies = () => {
     },
   });
 
+  // This route could erase a settled invoice, payments and all, and the
+  // receivable behind it would simply cease to exist. Invoices are cancelled.
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from("njc_supplies").delete().eq("id", id);
+      const reason = window.prompt("Why is this invoice being cancelled?")?.trim();
+      if (!reason) throw new Error("A cancellation needs a reason. Nothing was changed.");
+      const { error } = await (supabase as any)
+        .from("njc_supplies")
+        .update({ cancelled_at: new Date().toISOString(), cancellation_reason: reason })
+        .eq("id", id);
       if (error) throw error;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["njc-supplies-full"] });
-      toast({ title: "Success", description: "Invoice deleted successfully" });
+      toast({ title: "Cancelled", description: "Invoice cancelled; the record is retained" });
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -313,7 +321,7 @@ const NJCSupplies = () => {
         <div className="flex gap-1.5 md:justify-end">
           <Button variant="ghost" size="sm" onClick={() => setViewingSupply(s)} title="View invoice"><Eye className="h-4 w-4" /></Button>
           <Button variant="outline" size="sm" onClick={() => handleEdit(s)} title="Edit invoice"><Edit className="h-4 w-4" /></Button>
-          <Button variant="destructive" size="sm" onClick={() => handleDelete(s.id)} title="Delete invoice"><Trash2 className="h-4 w-4" /></Button>
+          <Button variant="destructive" size="sm" onClick={() => handleDelete(s.id)} title="Cancel invoice"><Trash2 className="h-4 w-4" /></Button>
         </div>
       ),
     },
@@ -476,9 +484,9 @@ const NJCSupplies = () => {
       <ConfirmDialog
         open={pendingDeleteId !== null}
         onOpenChange={(open) => { if (!open) setPendingDeleteId(null); }}
-        title="Delete this invoice?"
-        description="This action cannot be undone."
-        confirmLabel="Delete"
+        title="Cancel this invoice?"
+        description="The invoice is retained with its payment history, marked cancelled against your reason. You will be asked why."
+        confirmLabel="Cancel invoice"
         onConfirm={confirmDelete}
       />
     </div>

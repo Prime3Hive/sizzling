@@ -155,11 +155,22 @@ const WeeklySalesEntry = ({ sales, selectedYear, onSaleAdded }: WeeklySalesEntry
     }
   };
 
+  // Posted revenue is cancelled, not deleted: the entry stays and its journal
+  // is reversed. Deleting it would remove income the books have already
+  // recognised, with nothing left to show it ever existed.
   const handleDeleteSale = async (id: string) => {
     try {
-      const { error } = await supabase.from('sales').delete().eq('id', id);
+      const reason = window.prompt('Why is this sales entry being cancelled?')?.trim();
+      if (!reason) {
+        toast({ title: 'A cancellation needs a reason', description: 'Nothing was changed.', variant: 'destructive' });
+        return;
+      }
+      const { error } = await supabase
+        .from('sales')
+        .update({ status: 'cancelled', cancelled_at: new Date().toISOString(), cancellation_reason: reason })
+        .eq('id', id);
       if (error) throw error;
-      toast({ title: 'Deleted', description: 'Sales entry removed' });
+      toast({ title: 'Cancelled', description: 'Sales entry cancelled and its posting reversed' });
       onSaleAdded();
     } catch (error: any) {
       toast({ title: 'Error', description: error.message, variant: 'destructive' });
@@ -399,9 +410,9 @@ const WeeklySalesEntry = ({ sales, selectedYear, onSaleAdded }: WeeklySalesEntry
                               </AlertDialogTrigger>
                               <AlertDialogContent>
                                 <AlertDialogHeader>
-                                  <AlertDialogTitle>Delete sales entry?</AlertDialogTitle>
+                                  <AlertDialogTitle>Cancel sales entry?</AlertDialogTitle>
                                   <AlertDialogDescription>
-                                    This will permanently delete "{s.customer_name || s.sale_number}" for{' '}
+                                    This will cancel "{s.customer_name || s.sale_number}" for{' '}
                                     {formatNairaCompact(Number(s.total_amount))}.
                                   </AlertDialogDescription>
                                 </AlertDialogHeader>
