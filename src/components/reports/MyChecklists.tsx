@@ -203,7 +203,7 @@ export default function MyChecklists() {
                 <DialogDescription>{active.template.description || 'Check off each item as you complete it.'}</DialogDescription>
               </DialogHeader>
               <div className="space-y-4 py-1">
-                <div className="grid grid-cols-2 gap-3 items-end">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:items-end">
                   <div className="space-y-2">
                     <Label>For date</Label>
                     <Input type="date" value={date} onChange={e => setDate(e.target.value)} />

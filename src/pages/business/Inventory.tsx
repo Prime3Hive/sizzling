@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,7 +22,7 @@ import { format } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useRoles } from "@/hooks/useRoles";
-import { toast } from "sonner";
+import { toast } from "@/hooks/use-toast";
 import { formatNairaCompact } from "@/lib/currency";
 import { INVENTORY_CATEGORIES, UNITS_OF_MEASURE, getCategoryColor, getCategoryLabel } from "@/lib/inventoryConstants";
 import { ResponsiveTable, type ResponsiveColumn } from "@/components/ui/responsive-table";
@@ -91,28 +92,29 @@ interface Movement {
 
 // ── Movement type presentation ──────────────────────────────────────────────────
 const MOVEMENT_META: Record<string, { label: string; cls: string }> = {
-  purchase:   { label: "Stock In",    cls: "bg-green-100 text-green-700 border-green-200" },
-  usage:      { label: "Usage",       cls: "bg-blue-100 text-blue-700 border-blue-200" },
-  sale:       { label: "Sale",        cls: "bg-indigo-100 text-indigo-700 border-indigo-200" },
-  adjustment: { label: "Adjustment",  cls: "bg-orange-100 text-orange-700 border-orange-200" },
-  stock_take: { label: "Stock Take",  cls: "bg-purple-100 text-purple-700 border-purple-200" },
+  purchase:   { label: "Stock In",    cls: "bg-green-100 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-300 dark:border-green-800" },
+  usage:      { label: "Usage",       cls: "bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-800" },
+  sale:       { label: "Sale",        cls: "bg-indigo-100 text-indigo-700 border-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-300 dark:border-indigo-800" },
+  adjustment: { label: "Adjustment",  cls: "bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-900/30 dark:text-orange-300 dark:border-orange-800" },
+  stock_take: { label: "Stock Take",  cls: "bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-900/30 dark:text-purple-300 dark:border-purple-800" },
 };
 const movementMeta = (t: string) =>
   MOVEMENT_META[t] ?? { label: t, cls: "bg-muted text-muted-foreground border-border" };
+
+// Stable empty-array fallbacks so derived values below don't get a fresh []
+// reference on every render while the query is loading (would otherwise
+// retrigger every useMemo that depends on them).
+const EMPTY_SKUS: SKU[] = [];
+const EMPTY_TRANSACTIONS: Transaction[] = [];
+const EMPTY_STOCK_TAKES: StockTake[] = [];
+const EMPTY_UNIT_CONVERSIONS: UnitConversion[] = [];
+const EMPTY_MOVEMENTS: Movement[] = [];
 
 export default function Inventory() {
   const { user } = useAuth();
   const { isAdmin } = useRoles();
   const navigate = useNavigate();
 
-  const [skus, setSKUs] = useState<SKU[]>([]);
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [stockTakes, setStockTakes] = useState<StockTake[]>([]);
-  const [unitConversions, setUnitConversions] = useState<UnitConversion[]>([]);
-  const [movements, setMovements] = useState<Movement[]>([]);
-  const [pendingRequests, setPendingRequests] = useState(0);
-
-  const [loading, setLoading] = useState(true);
   const [operationLoading, setOperationLoading] = useState(false);
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showConversionDialog, setShowConversionDialog] = useState(false);
@@ -132,15 +134,23 @@ export default function Inventory() {
   const [usageForm, setUsageForm] = useState({ sku_id: "", quantity: 0, notes: "" });
   const [newConversion, setNewConversion] = useState({ from_unit: "", to_unit: "", conversion_factor: 1 });
 
-  useEffect(() => {
-    if (user) fetchData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user]);
+  interface InventoryData {
+    skus: SKU[];
+    transactions: Transaction[];
+    stockTakes: StockTake[];
+    unitConversions: UnitConversion[];
+    movements: Movement[];
+    pendingRequests: number;
+  }
 
-  const fetchData = async () => {
-    try {
-      setLoading(true);
-
+  const {
+    data: inventoryData,
+    isLoading: loading,
+    refetch,
+  } = useQuery<InventoryData>({
+    queryKey: ["inventory-data", user?.id],
+    enabled: !!user,
+    queryFn: async () => {
       const [skusRes, txRes, takesRes, convRes, moveRes, reqRes] = await Promise.all([
         supabase.from("skus").select("*").order("name"),
         supabase.from("transactions").select("*, skus(name, unit_of_measure, category)")
@@ -155,17 +165,29 @@ export default function Inventory() {
       ]);
 
       if (skusRes.error) throw skusRes.error;
-      setSKUs((skusRes.data || []) as SKU[]);
-      setTransactions((txRes.data || []) as Transaction[]);
-      setStockTakes((takesRes.data || []) as StockTake[]);
-      setUnitConversions((convRes.data || []) as UnitConversion[]);
-      setMovements(((moveRes as any).data || []) as Movement[]);
-      setPendingRequests(reqRes.count ?? 0);
-    } catch (error) {
+      return {
+        skus: (skusRes.data || []) as SKU[],
+        transactions: (txRes.data || []) as Transaction[],
+        stockTakes: (takesRes.data || []) as StockTake[],
+        unitConversions: (convRes.data || []) as UnitConversion[],
+        movements: ((moveRes as any).data || []) as Movement[],
+        pendingRequests: reqRes.count ?? 0,
+      };
+    },
+  });
+
+  const skus = inventoryData?.skus ?? EMPTY_SKUS;
+  const transactions = inventoryData?.transactions ?? EMPTY_TRANSACTIONS;
+  const stockTakes = inventoryData?.stockTakes ?? EMPTY_STOCK_TAKES;
+  const unitConversions = inventoryData?.unitConversions ?? EMPTY_UNIT_CONVERSIONS;
+  const movements = inventoryData?.movements ?? EMPTY_MOVEMENTS;
+  const pendingRequests = inventoryData?.pendingRequests ?? 0;
+
+  const fetchData = async () => {
+    const { error } = await refetch();
+    if (error) {
       console.error("Error fetching data:", error);
-      toast.error("Failed to fetch inventory data");
-    } finally {
-      setLoading(false);
+      toast({ title: "Failed to fetch inventory data", variant: "destructive" });
     }
   };
 
@@ -198,7 +220,7 @@ export default function Inventory() {
   };
 
   const handleAddSKU = async () => {
-    if (!newSKU.name.trim()) { toast.error("Please enter an item name"); return; }
+    if (!newSKU.name.trim()) { toast({ title: "Please enter an item name", variant: "destructive" }); return; }
     try {
       const { data: product, error } = await (supabase as any)
         .from("products")
@@ -221,13 +243,13 @@ export default function Inventory() {
           });
         }
       }
-      toast.success("Item added successfully");
+      toast({ title: "Item added successfully" });
       setShowAddDialog(false);
       resetForm();
       fetchData();
     } catch (error) {
       console.error("Error adding item:", error);
-      toast.error("Failed to add item");
+      toast({ title: "Failed to add item", variant: "destructive" });
     }
   };
 
@@ -249,12 +271,12 @@ export default function Inventory() {
       if (delta !== 0) {
         await applyStockMovement(editingSKU.id, delta, "stock_take", "Adjustment from item edit");
       }
-      toast.success("Item updated successfully");
+      toast({ title: "Item updated successfully" });
       setEditingSKU(null);
       fetchData();
     } catch (error) {
       console.error("Error updating item:", error);
-      toast.error("Failed to update item");
+      toast({ title: "Failed to update item", variant: "destructive" });
     }
   };
 
@@ -262,17 +284,17 @@ export default function Inventory() {
     try {
       const { error } = await supabase.from("skus").update({ is_archived: archive }).eq("id", id);
       if (error) throw error;
-      toast.success(archive ? "Item archived" : "Item restored");
+      toast({ title: archive ? "Item archived" : "Item restored" });
       fetchData();
     } catch (error) {
       console.error("Error archiving SKU:", error);
-      toast.error("Failed to update item");
+      toast({ title: "Failed to update item", variant: "destructive" });
     }
   };
 
   const handlePurchase = async () => {
     if (!purchaseForm.sku_id || purchaseForm.quantity <= 0) {
-      toast.error("Please select an item and enter a valid quantity");
+      toast({ title: "Please select an item and enter a valid quantity", variant: "destructive" });
       return;
     }
     try {
@@ -285,12 +307,12 @@ export default function Inventory() {
         notes: purchaseForm.notes || "", user_id: user!.id, created_by: user!.id,
       });
       if (error) throw error;
-      toast.success("Purchase recorded successfully");
+      toast({ title: "Purchase recorded successfully" });
       setPurchaseForm({ sku_id: "", quantity: 0, unit_price: 0, notes: "" });
       fetchData();
     } catch (error) {
       console.error("Purchase operation failed:", error);
-      toast.error("Failed to record purchase");
+      toast({ title: "Failed to record purchase", variant: "destructive" });
     } finally {
       setOperationLoading(false);
     }
@@ -298,14 +320,14 @@ export default function Inventory() {
 
   const handleUsage = async () => {
     if (!usageForm.sku_id || usageForm.quantity <= 0) {
-      toast.error("Please select an item and enter a valid quantity");
+      toast({ title: "Please select an item and enter a valid quantity", variant: "destructive" });
       return;
     }
     try {
       setOperationLoading(true);
       const selectedSKU = skus.find(s => s.id === usageForm.sku_id);
-      if (!selectedSKU) { toast.error("Item not found"); return; }
-      if (usageForm.quantity > selectedSKU.stock_quantity) { toast.error("Insufficient stock for this usage"); return; }
+      if (!selectedSKU) { toast({ title: "Item not found", variant: "destructive" }); return; }
+      if (usageForm.quantity > selectedSKU.stock_quantity) { toast({ title: "Insufficient stock for this usage", variant: "destructive" }); return; }
 
       await applyStockMovement(usageForm.sku_id, -usageForm.quantity, "usage", usageForm.notes || "Usage/Consumption");
       const { error } = await supabase.from("transactions").insert({
@@ -315,12 +337,12 @@ export default function Inventory() {
         notes: usageForm.notes || "Usage/Consumption", user_id: user!.id, created_by: user!.id,
       });
       if (error) throw error;
-      toast.success("Usage recorded successfully");
+      toast({ title: "Usage recorded successfully" });
       setUsageForm({ sku_id: "", quantity: 0, notes: "" });
       fetchData();
     } catch (error) {
       console.error("Usage operation failed:", error);
-      toast.error("Failed to record usage");
+      toast({ title: "Failed to record usage", variant: "destructive" });
     } finally {
       setOperationLoading(false);
     }
@@ -328,18 +350,18 @@ export default function Inventory() {
 
   const handleAddConversion = async () => {
     if (!newConversion.from_unit || !newConversion.to_unit || newConversion.conversion_factor <= 0) {
-      toast.error("Please fill all fields with valid values");
+      toast({ title: "Please fill all fields with valid values", variant: "destructive" });
       return;
     }
     try {
       const { error } = await supabase.from("unit_conversions").insert({ ...newConversion, user_id: user!.id });
       if (error) throw error;
-      toast.success("Unit conversion added successfully");
+      toast({ title: "Unit conversion added successfully" });
       setNewConversion({ from_unit: "", to_unit: "", conversion_factor: 1 });
       fetchData();
     } catch (error) {
       console.error("Error adding conversion:", error);
-      toast.error("Failed to add unit conversion");
+      toast({ title: "Failed to add unit conversion", variant: "destructive" });
     }
   };
 
@@ -420,7 +442,7 @@ export default function Inventory() {
     a.download = `inventory-report-${format(new Date(), "yyyy-MM-dd")}.csv`;
     a.click();
     window.URL.revokeObjectURL(url);
-    toast.success(`Inventory report exported · ${skus.length} items · ${formatNairaCompact(totalValue)}`);
+    toast({ title: `Inventory report exported · ${skus.length} items · ${formatNairaCompact(totalValue)}` });
   };
 
   // ── Items table columns ──────────────────────────────────────────────────────
@@ -572,8 +594,8 @@ export default function Inventory() {
 
       {/* ── Main tabs ── */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-5">
-        <div className="-mx-1 overflow-x-auto px-1">
-          <TabsList className="w-max">
+        <div>
+          <TabsList>
             <TabsTrigger value="items" className="gap-1.5"><Package className="h-4 w-4" />Items</TabsTrigger>
             {isAdmin && <TabsTrigger value="purchase" className="gap-1.5"><ShoppingCart className="h-4 w-4" />Purchase</TabsTrigger>}
             {isAdmin && <TabsTrigger value="usage" className="gap-1.5"><TrendingDown className="h-4 w-4" />Usage</TabsTrigger>}
@@ -820,7 +842,7 @@ export default function Inventory() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-1.5">
                 <Label htmlFor="uom">Unit</Label>
                 <Select value={newSKU.unit_of_measure} onValueChange={(v) => setNewSKU({ ...newSKU, unit_of_measure: v })}>
@@ -836,7 +858,7 @@ export default function Inventory() {
                   onChange={(e) => setNewSKU({ ...newSKU, stock_quantity: Number(e.target.value) })} />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-1.5">
                 <Label htmlFor="reorder_level">Reorder Level</Label>
                 <Input id="reorder_level" type="number" value={newSKU.reorder_level}
@@ -870,7 +892,7 @@ export default function Inventory() {
                 <Label htmlFor="edit_name">Item Name</Label>
                 <Input id="edit_name" value={editingSKU.name} onChange={(e) => setEditingSKU({ ...editingSKU, name: e.target.value })} />
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <Label htmlFor="edit_category">Category</Label>
                   <Select value={editingSKU.category} onValueChange={(v) => setEditingSKU({ ...editingSKU, category: v })}>
@@ -890,7 +912,7 @@ export default function Inventory() {
                   </Select>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <Label htmlFor="edit_stock">Current Stock</Label>
                   <Input id="edit_stock" type="number" value={editingSKU.stock_quantity}

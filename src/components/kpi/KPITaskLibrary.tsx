@@ -369,11 +369,11 @@ export default function KPITaskLibrary() {
             <Badge variant="secondary" className="text-xs">
               {catTasks.length} task{catTasks.length !== 1 ? "s" : ""}
             </Badge>
-            <Button size="icon" variant="ghost" className="h-7 w-7"
+            <Button size="icon" variant="ghost" className="h-9 w-9 md:h-7 md:w-7"
               onClick={() => openEditCat(cat)}>
               <Pencil className="h-3.5 w-3.5" />
             </Button>
-            <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive"
+            <Button size="icon" variant="ghost" className="h-9 w-9 md:h-7 md:w-7 text-destructive"
               onClick={() => setDeleteCatId(cat.id)}>
               <Trash2 className="h-3.5 w-3.5" />
             </Button>
@@ -451,7 +451,7 @@ export default function KPITaskLibrary() {
                         <Badge variant="secondary" className="tabular-nums text-xs">{t.max_score}</Badge>
                       </td>
                       <td className="px-2 py-2.5 text-right">
-                        <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div className="flex items-center justify-end gap-1 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100">
                           <Button size="icon" variant="ghost" className="h-6 w-6"
                             onClick={() => openEditTask(t)}>
                             <Pencil className="h-3 w-3" />
@@ -591,7 +591,7 @@ export default function KPITaskLibrary() {
                 value={catForm.description}
                 onChange={e => setCatForm({ ...catForm, description: e.target.value })} />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="grid gap-1.5">
                 <Label>Colour</Label>
                 <div className="flex items-center gap-2">
@@ -653,7 +653,7 @@ export default function KPITaskLibrary() {
                 value={taskForm.description}
                 onChange={e => setTaskForm({ ...taskForm, description: e.target.value })} />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="grid gap-1.5">
                 <Label>Weight within category %</Label>
                 <Input

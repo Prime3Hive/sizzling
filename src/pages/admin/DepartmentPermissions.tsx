@@ -223,7 +223,7 @@ export default function DepartmentPermissions() {
           <ShieldCheck className="h-6 w-6 text-primary" />
         </div>
         <div>
-          <h1 className="text-3xl font-bold">Department Permissions</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold">Department Permissions</h1>
           <p className="text-muted-foreground text-sm mt-1">
             Control which modules each department can access. Changes save instantly and apply to new logins.
           </p>

@@ -136,7 +136,7 @@ const BirthdayCalendar = () => {
           <Cake className="h-6 w-6 text-pink-600" />
         </div>
         <div>
-          <h1 className="text-3xl font-bold">Birthday Calendar</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold">Birthday Calendar</h1>
           <p className="text-muted-foreground text-sm">Celebrate your colleagues on their special day</p>
         </div>
       </div>
@@ -188,7 +188,7 @@ const BirthdayCalendar = () => {
                   {MONTHS[month - 1]} {year}
                 </CardTitle>
                 <div className="flex gap-1">
-                  <Button variant="outline" size="icon" className="h-8 w-8" onClick={prevMonth}>
+                  <Button variant="outline" size="icon" className="h-9 w-9 md:h-8 md:w-8" onClick={prevMonth}>
                     <ChevronLeft className="h-4 w-4" />
                   </Button>
                   <Button
@@ -199,7 +199,7 @@ const BirthdayCalendar = () => {
                   >
                     Today
                   </Button>
-                  <Button variant="outline" size="icon" className="h-8 w-8" onClick={nextMonth}>
+                  <Button variant="outline" size="icon" className="h-9 w-9 md:h-8 md:w-8" onClick={nextMonth}>
                     <ChevronRight className="h-4 w-4" />
                   </Button>
                 </div>

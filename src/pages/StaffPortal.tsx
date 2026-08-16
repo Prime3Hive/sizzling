@@ -12,18 +12,20 @@ import { useSearchParams } from 'react-router-dom';
 const VALID_TABS = ['leave', 'complaints', 'messages', 'reports', 'checklists', 'performance', 'documents'];
 
 const StaffPortal = () => {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab');
-  const defaultTab = VALID_TABS.includes(tabParam || '') ? tabParam! : 'leave';
+  const activeTab = VALID_TABS.includes(tabParam || '') ? tabParam! : 'leave';
+  const handleTabChange = (tab: string) =>
+    setSearchParams(tab === 'leave' ? {} : { tab }, { replace: true });
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold bg-gradient-primary bg-clip-text text-transparent">Staff Portal</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold bg-gradient-primary bg-clip-text text-transparent">Staff Portal</h1>
         <p className="text-muted-foreground mt-1">Submit leave requests, log complaints, and communicate with management</p>
       </div>
 
-      <Tabs defaultValue={defaultTab} className="space-y-6">
+      <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-6">
         <TabsList className="bg-muted/50 p-1 flex-wrap h-auto gap-1">
           <TabsTrigger value="leave" className="data-[state=active]:bg-background data-[state=active]:shadow-card">
             <CalendarDays className="h-4 w-4 mr-2" />Leave Requests

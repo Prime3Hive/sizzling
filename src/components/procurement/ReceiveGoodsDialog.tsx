@@ -255,7 +255,7 @@ export default function ReceiveGoodsDialog({ lpo, open, onOpenChange, onSuccess 
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-3xl p-0 gap-0 flex flex-col max-h-[90vh]">
+      <DialogContent className="sm:max-w-3xl p-0 sm:p-0 gap-0 flex flex-col max-h-[90svh] overflow-hidden">
         {/* Header */}
         <div className="bg-gradient-to-r from-emerald-600 to-teal-600 p-5 shrink-0 rounded-t-lg">
           <DialogHeader>
@@ -277,7 +277,7 @@ export default function ReceiveGoodsDialog({ lpo, open, onOpenChange, onSuccess 
             <div className="p-5 space-y-5">
 
               {/* Receipt Details */}
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <Label>Received Date <span className="text-destructive">*</span></Label>
                   <Input

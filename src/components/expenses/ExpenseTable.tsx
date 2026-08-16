@@ -142,10 +142,10 @@ const ExpenseTable = ({ expenses, totalCount, hasActiveFilters, onClearFilters, 
                         </Badge>
                         {onSetStatus && (expense.status ?? 'approved') === 'pending' && (
                           <>
-                            <Button variant="ghost" size="icon" className="h-7 w-7 text-emerald-600" title="Approve" onClick={() => onSetStatus(expense.id, 'approved')}>
+                            <Button variant="ghost" size="icon" className="h-9 w-9 md:h-7 md:w-7 text-emerald-600" title="Approve" onClick={() => onSetStatus(expense.id, 'approved')}>
                               <Check className="h-3.5 w-3.5" />
                             </Button>
-                            <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" title="Reject" onClick={() => onSetStatus(expense.id, 'rejected')}>
+                            <Button variant="ghost" size="icon" className="h-9 w-9 md:h-7 md:w-7 text-destructive" title="Reject" onClick={() => onSetStatus(expense.id, 'rejected')}>
                               <X className="h-3.5 w-3.5" />
                             </Button>
                           </>
@@ -155,8 +155,8 @@ const ExpenseTable = ({ expenses, totalCount, hasActiveFilters, onClearFilters, 
                     <TableCell>
                       {expense.receipt_path ? (
                         <div className="flex gap-1 justify-center">
-                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => viewReceipt(expense.receipt_path!)}><Eye className="h-4 w-4" /></Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => downloadReceipt(expense.receipt_path!, expense.id)}><Download className="h-4 w-4" /></Button>
+                          <Button variant="ghost" size="icon" className="h-9 w-9 md:h-8 md:w-8" onClick={() => viewReceipt(expense.receipt_path!)}><Eye className="h-4 w-4" /></Button>
+                          <Button variant="ghost" size="icon" className="h-9 w-9 md:h-8 md:w-8" onClick={() => downloadReceipt(expense.receipt_path!, expense.id)}><Download className="h-4 w-4" /></Button>
                         </div>
                       ) : (
                         <span className="text-xs text-muted-foreground text-center block">—</span>
@@ -164,8 +164,8 @@ const ExpenseTable = ({ expenses, totalCount, hasActiveFilters, onClearFilters, 
                     </TableCell>
                     <TableCell>
                       <div className="flex gap-1 justify-center">
-                        {onEdit && <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-primary" onClick={() => onEdit(expense)}><Pencil className="h-3.5 w-3.5" /></Button>}
-                        {onDelete && <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => onDelete(expense.id)}><Trash2 className="h-3.5 w-3.5" /></Button>}
+                        {onEdit && <Button variant="ghost" size="icon" className="h-9 w-9 md:h-8 md:w-8 text-muted-foreground hover:text-primary" onClick={() => onEdit(expense)}><Pencil className="h-3.5 w-3.5" /></Button>}
+                        {onDelete && <Button variant="ghost" size="icon" className="h-9 w-9 md:h-8 md:w-8 text-muted-foreground hover:text-destructive" onClick={() => onDelete(expense.id)}><Trash2 className="h-3.5 w-3.5" /></Button>}
                       </div>
                     </TableCell>
                   </TableRow>

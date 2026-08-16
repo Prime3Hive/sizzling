@@ -44,7 +44,21 @@
       "Bash(echo \"exit=$?\")",
       "Bash(MSYS_NO_PATHCONV=1 git cat-file -e origin/main:.claude/settings.local.json)",
       "Bash(MSYS_NO_PATHCONV=1 git show origin/main:.claude/settings.local.json)",
-      "Bash(curl -s -o /dev/null -w \"%{http_code}\" \"https://kqnqzyklwfrhtywimsjm.supabase.co/rest/v1/\" --max-time 15)"
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" \"https://kqnqzyklwfrhtywimsjm.supabase.co/rest/v1/\" --max-time 15)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" --max-time 20 \"https://sizzling-32f8cekd3-primehivedigitalsolutions-5745s-projects.vercel.app\")",
+      "Bash(cat supabase/migrations/20260723100000_payroll_statutory_gl_fix.sql supabase/migrations/20260723101000_revenue_payment_integrity.sql supabase/migrations/20260723102000_period_locks_audit_log.sql supabase/migrations/20260723110000_phase2_wht_vat_expense_approval.sql supabase/migrations/20260723120000_phase3_inventory_costing_bankrec_tin.sql supabase/migrations/20260723130000_phase4_segregation_of_duties.sql)",
+      "Bash(xargs wc -l)",
+      "Bash(sort -k5 -n -r)",
+      "Bash(grep -n \"const \\\\[editingProfile\\\\|^  \\);$\\\\|^};\" src/pages/StaffProfiles.tsx)",
+      "Bash(grep -n \"useState\\\\|^import\\\\|^  \\);$\\\\|^}$\" src/components/staff/StaffDocuments.tsx)",
+      "Bash(grep -A 5 \"pages.business.Inventory.tsx$\" /tmp/lint_before.txt)",
+      "Bash(grep -A 10 \"pages.business.Inventory.tsx$\" /tmp/lint_before.txt)",
+      "Bash(sed 's/\\(.*//')",
+      "Bash(sed -E 's/.*[ .]\\([a-z_]+\\)$/\\\\1/i')",
+      "Bash(python /tmp/ext.py finance_ledger inventory_movements inventory_request_items invoice_items invoice_payments invoices journal_entries journal_lines)",
+      "Bash(python /tmp/ext.py kpi_categories kpi_periods kpi_staff_scores kpi_task_assignments kpi_task_templates lpo_items lpo_receipt_items lpo_receipts lpos)",
+      "Bash(python /tmp/ext.py payables report_assignments staff_reports subscribers user_permissions audit_log period_locks invoice_sequences)",
+      "Bash(grep -rnoE \"\\\\.from\\\\\\('\\(invoices|invoice_items|lpos|lpo_items|kpi_task_assignments|staff_reports|checklist_submissions|journal_lines|inventory_request_items|company_files|kpi_staff_scores|lpo_receipts\\)'\\\\\\)[^;]{0,160}\" src/)"
     ]
   }
 }

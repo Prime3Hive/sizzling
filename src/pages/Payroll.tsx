@@ -17,10 +17,8 @@ import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import { formatNairaCompact } from '@/lib/currency';
 import { format } from 'date-fns';
-import * as XLSX from 'xlsx';
-import { saveAs } from 'file-saver';
-import html2canvas from 'html2canvas';
-import { jsPDF } from 'jspdf';
+// Heavy export libs (xlsx, file-saver, html2canvas, jspdf) are dynamically
+// imported inside the export handlers so they don't bloat the page chunk.
 import { SALARY_PERIODS } from '@/lib/expenseConstants';
 import { exportPayrollRegisterPdf } from '@/lib/payrollPdf';
 import PayslipTemplate from '@/components/PayslipTemplate';
@@ -364,7 +362,8 @@ const Payroll = () => {
   const paidCount = filteredRecords.filter(r => r.status === 'paid').length;
   const pendingCount = filteredRecords.filter(r => r.status === 'pending').length;
 
-  const exportToExcel = () => {
+  const exportToExcel = async () => {
+    const [XLSX, { saveAs }] = await Promise.all([import('xlsx'), import('file-saver')]);
     const headers = ['S/N', 'Staff ID', 'Staff Name', 'Department', 'Position', 'Salary Period', 'Period Start', 'Period End', 'Basic Salary', 'Allowances', 'PAYE', 'Pension (8%)', 'NHF', 'Other Deductions', 'Total Deductions', 'Net Pay', 'Employer Pension (10%)', 'Bank Name', 'Account Number', 'Account Name', 'Status', 'Paid Date'];
     const rows = filteredRecords.map((r, i) => [
       i + 1, r.staff_id_number, r.staff_name, r.department, r.position, r.salary_period,
@@ -394,7 +393,8 @@ const Payroll = () => {
 
   // Statutory filing schedules — one workbook, one sheet per agency, in the
   // layout the State IRS / PFAs / FMBN expect for monthly remittance filings.
-  const exportStatutorySchedules = () => {
+  const exportStatutorySchedules = async () => {
+    const [XLSX, { saveAs }] = await Promise.all([import('xlsx'), import('file-saver')]);
     const rows = filteredRecords;
     const gross = (r: PayrollRecord) => Number(r.basic_salary) + Number(r.allowances);
 
@@ -472,7 +472,11 @@ const Payroll = () => {
       const el = payslipRef.current;
       if (!el || cancelled) return;
       try {
-        const canvas = await html2canvas(el, { scale: 2, useCORS: true, logging: false, backgroundColor: '#ffffff' });
+        const [{ captureElement, savePdf }, { jsPDF }] = await Promise.all([
+          import('@/lib/htmlToPdf'),
+          import('jspdf'),
+        ]);
+        const canvas = await captureElement(el, { scale: 2 });
         const imgData = canvas.toDataURL('image/png');
         // PayslipTemplate is A5-landscape (210mm × ~148mm)
         const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a5' });
@@ -480,7 +484,7 @@ const Payroll = () => {
         const imgH = (canvas.height / canvas.width) * pageW;
         pdf.addImage(imgData, 'PNG', 0, 0, pageW, imgH);
         const safeName = payslipRecord.staff_name.replace(/[^\w]+/g, '_');
-        pdf.save(`Payslip_${safeName}_${format(new Date(payslipRecord.period_end), 'yyyy-MM-dd')}.pdf`);
+        savePdf(pdf, `Payslip_${safeName}_${format(new Date(payslipRecord.period_end), 'yyyy-MM-dd')}.pdf`);
       } catch (err: any) {
         toast({ title: 'PDF failed', description: err?.message ?? 'Could not generate payslip', variant: 'destructive' });
       } finally {
@@ -574,7 +578,8 @@ const Payroll = () => {
             title="PAYE / Pension / NHF remittance schedules for filing">
             <FileSpreadsheet className="h-4 w-4 mr-2" />Statutory Schedules
           </Button>
-          <Button variant="outline" disabled={filteredRecords.filter(r => r.status === 'pending').length === 0} onClick={() => {
+          <Button variant="outline" disabled={filteredRecords.filter(r => r.status === 'pending').length === 0} onClick={async () => {
+            const { saveAs } = await import('file-saver');
             const rows = filteredRecords.filter(r => r.status === 'pending');
             const header = 'Staff Name,Staff ID,Department,Bank Name,Account Number,Account Name,Net Pay (NGN),Period\n';
             const csv = rows.map(r => [
@@ -633,7 +638,7 @@ const Payroll = () => {
                       <SelectContent>{SALARY_PERIODS.map(p => <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>)}</SelectContent>
                     </Select>
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="grid gap-2"><Label>Period Start</Label><Input name="period_start" type="date" required /></div>
                     <div className="grid gap-2"><Label>Period End</Label><Input name="period_end" type="date" required /></div>
                   </div>
@@ -643,7 +648,7 @@ const Payroll = () => {
                       <p><strong>Bank:</strong> {selectedStaff.bank_name || 'N/A'} — {selectedStaff.account_number || 'N/A'}</p>
                     </div>
                   )}
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="grid gap-2"><Label>Allowances (₦)</Label><Input type="number" min="0" step="0.01" value={allowances} onChange={e => setAllowances(parseFloat(e.target.value) || 0)} /></div>
                     <div className="grid gap-2"><Label>Other Deductions (₦)</Label><Input type="number" min="0" step="0.01" value={deductions} onChange={e => setDeductions(parseFloat(e.target.value) || 0)} /></div>
                   </div>
@@ -771,7 +776,7 @@ const Payroll = () => {
               </DialogHeader>
               <div className="grid gap-4 py-4">
                 <div className="grid gap-2"><Label>Basic Salary (₦)</Label><Input name="edit_basic" type="number" step="0.01" defaultValue={editRecord.basic_salary} required /></div>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="grid gap-2"><Label>Allowances (₦)</Label><Input name="edit_allowances" type="number" step="0.01" defaultValue={editRecord.allowances} /></div>
                   <div className="grid gap-2">
                     <Label>Other Deductions (₦)</Label>

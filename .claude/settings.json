@@ -1,11 +1,23 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(sed -i 's|DialogContent className=\"sm:max-w-3xl p-0 gap-0 flex flex-col max-h-\\\\[90vh\\\\]\"|DialogContent className=\"sm:max-w-3xl p-0 sm:p-0 gap-0 flex flex-col max-h-[90svh] overflow-hidden\"|' src/components/procurement/ReceiveGoodsDialog.tsx)",
+      "Bash(sed -i 's|DialogContent className=\"overflow-hidden p-0 shadow-lg\"|DialogContent className=\"overflow-hidden p-0 sm:p-0 shadow-lg\"|' src/components/ui/command.tsx)",
+      "Bash(sed -i 's|DialogContent className=\"max-w-\\\\[230mm\\\\] p-0 overflow-hidden\"|DialogContent className=\"max-w-[230mm] p-0 sm:p-0 overflow-hidden\"|' src/pages/MyPayslip.tsx)",
+      "Bash(sed -i 's|DialogContent className=\"max-w-3xl max-h-\\\\[92vh\\\\] flex flex-col p-0 gap-0\"|DialogContent className=\"max-w-3xl max-h-[92svh] flex flex-col p-0 sm:p-0 gap-0 overflow-hidden\"|' src/pages/StaffProfiles.tsx)",
+      "Bash(cp /tmp/mergecheck.mjs ./mergecheck.mjs)",
+      "Bash(node ./mergecheck.mjs)",
+      "Bash(rm -f ./mergecheck.mjs)",
+      "Bash(grep -n \"InvoicePrintView\\\\|^function \\\\|^const .* = \\(\\\\|=> {$\" src/components/invoices/InvoiceViewDialog.tsx)"
+    ]
+  },
   "mcpServers": {
     "supabase": {
       "type": "http",
       "url": "https://mcp.supabase.com",
       "auth": {
         "type": "bearer",
-        "token": "sbp_5aeff96e3a186be79a83214ad02fb1dcc32fe930" 
+        "token": "sbp_5aeff96e3a186be79a83214ad02fb1dcc32fe930"
       }
     }
   }

@@ -17,7 +17,11 @@ All colors MUST be HSL.
     --popover: 0 0% 100%;
     --popover-foreground: 220 13% 9%;
 
-    --primary: 280 100% 70%;
+    /* Lightness dropped from 70% to 55%: 70% gives ~3:1 contrast for white text
+       on primary buttons / primary-colored body text, failing WCAG AA (4.5:1).
+       55% clears AA while keeping the same hue. Decorative gradients below stay
+       at the brighter 70% since they don't carry text. */
+    --primary: 280 100% 55%;
     --primary-foreground: 0 0% 100%;
 
     --secondary: 25 95% 53%;
@@ -40,7 +44,7 @@ All colors MUST be HSL.
 
     --border: 220 13% 91%;
     --input: 220 13% 91%;
-    --ring: 280 100% 70%;
+    --ring: 280 100% 55%;
     
     /* Custom gradients */
     --gradient-primary: linear-gradient(135deg, hsl(280 100% 70%), hsl(25 95% 53%));
@@ -60,12 +64,12 @@ All colors MUST be HSL.
 
     --sidebar-background: 0 0% 99%;
     --sidebar-foreground: 220 13% 26%;
-    --sidebar-primary: 280 100% 70%;
+    --sidebar-primary: 280 100% 55%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 280 100% 70%;
+    --sidebar-accent: 280 100% 55%;
     --sidebar-accent-foreground: 0 0% 100%;
     --sidebar-border: 220 13% 93%;
-    --sidebar-ring: 280 100% 70%;
+    --sidebar-ring: 280 100% 55%;
   }
 
   .dark {
@@ -78,7 +82,7 @@ All colors MUST be HSL.
     --popover: 220 15% 9%;
     --popover-foreground: 0 0% 97%;
 
-    --primary: 280 100% 70%;
+    --primary: 280 100% 58%;
     --primary-foreground: 0 0% 98%;
 
     --secondary: 25 95% 53%;
@@ -101,7 +105,7 @@ All colors MUST be HSL.
 
     --border: 220 15% 16%;
     --input: 220 15% 16%;
-    --ring: 280 100% 70%;
+    --ring: 280 100% 58%;
     
     /* Custom gradients for dark mode */
     --gradient-primary: linear-gradient(135deg, hsl(280 100% 70%), hsl(25 95% 53%));
@@ -119,12 +123,12 @@ All colors MUST be HSL.
     
     --sidebar-background: 220 15% 7%;
     --sidebar-foreground: 220 14% 80%;
-    --sidebar-primary: 280 100% 70%;
+    --sidebar-primary: 280 100% 58%;
     --sidebar-primary-foreground: 0 0% 100%;
     --sidebar-accent: 220 15% 13%;
     --sidebar-accent-foreground: 220 14% 80%;
     --sidebar-border: 220 15% 14%;
-    --sidebar-ring: 280 100% 70%;
+    --sidebar-ring: 280 100% 58%;
   }
 }
 
@@ -133,14 +137,44 @@ All colors MUST be HSL.
     @apply border-border;
   }
 
+  html {
+    /* Kill the grey flash on tap and stop iOS from re-flowing text sizes when
+       the device is rotated. */
+    -webkit-tap-highlight-color: transparent;
+    -webkit-text-size-adjust: 100%;
+  }
+
   body {
     @apply bg-background text-foreground antialiased;
+    /* A single stray wide element used to make the whole page pan sideways.
+       Clip horizontally at the root; vertical scrolling is untouched. */
+    overflow-x: clip;
+  }
+
+  /* Long unbroken strings — emails, reference numbers, URLs — are the most
+     common cause of a card blowing past the viewport on a 360px screen. */
+  h1, h2, h3, h4, p, span, td, th, dd, dt, li, label {
+    overflow-wrap: break-word;
+  }
+
+  /* Media never exceeds its container. */
+  img, svg, video, canvas {
+    max-width: 100%;
   }
 }
 
 @layer utilities {
   .text-balance {
     text-wrap: balance;
+  }
+
+  /* Horizontal scrollers (filter rows, wide tables) without a visible bar. */
+  .scrollbar-none {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
   }
 }
 

@@ -193,7 +193,7 @@ function QuickCreateProductDialog({
             <Label>Item Name <span className="text-destructive">*</span></Label>
             <Input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Fresh Chicken" required />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label>Unit of Measure</Label>
               <Input value={form.uom} onChange={e => setForm(f => ({ ...f, uom: e.target.value }))} placeholder="kg, litre, unit…" />
@@ -689,7 +689,7 @@ export default function LPOSheet({ mode, lpo, templateLPO, sourceRequest, open, 
                         required
                       />
                     </div>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
                         <Label>Phone</Label>
                         <Input className="mt-1" value={form.supplier_phone} onChange={f('supplier_phone')} placeholder="+234…" disabled={!isEditable} />
@@ -711,7 +711,7 @@ export default function LPOSheet({ mode, lpo, templateLPO, sourceRequest, open, 
                 {/* ── Dates & Financial Settings ───────────────────────── */}
                 <section className="space-y-3">
                   <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Order Settings</h3>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <Label>Order Date <span className="text-destructive">*</span></Label>
                       <Input className="mt-1" type="date" value={form.order_date} onChange={f('order_date')} disabled={!isEditable} required />
@@ -721,7 +721,7 @@ export default function LPOSheet({ mode, lpo, templateLPO, sourceRequest, open, 
                       <Input className="mt-1" type="date" value={form.expected_delivery} onChange={f('expected_delivery')} disabled={!isEditable} />
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <Label>Account Type</Label>
                       <Select value={form.account_type} onValueChange={v => setForm(p => ({ ...p, account_type: v }))} disabled={!isEditable}>
@@ -741,7 +741,7 @@ export default function LPOSheet({ mode, lpo, templateLPO, sourceRequest, open, 
                       </Select>
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <Label>Expense Category</Label>
                       <Select value={form.expense_category} onValueChange={v => setForm(p => ({ ...p, expense_category: v }))} disabled={!isEditable}>
@@ -809,14 +809,14 @@ export default function LPOSheet({ mode, lpo, templateLPO, sourceRequest, open, 
                             )}
                           </div>
                           {isEditable && (
-                            <Button type="button" size="icon" variant="ghost" className="h-8 w-8 text-destructive hover:text-destructive shrink-0"
+                            <Button type="button" size="icon" variant="ghost" className="h-9 w-9 md:h-8 md:w-8 text-destructive hover:text-destructive shrink-0"
                               onClick={() => setLines(p => p.filter(l => l._key !== line._key))}>
                               <Trash2 className="h-3.5 w-3.5" />
                             </Button>
                           )}
                         </div>
 
-                        <div className="grid grid-cols-4 gap-2 ml-7">
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 ml-0 sm:ml-7">
                           <div>
                             <Label className="text-xs">Qty</Label>
                             <Input

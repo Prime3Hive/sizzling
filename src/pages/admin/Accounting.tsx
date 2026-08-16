@@ -415,7 +415,7 @@ export default function Accounting() {
   });
 
   return (
-    <div className="space-y-6 p-6 max-w-5xl mx-auto">
+    <div className="space-y-6 p-0 sm:p-4 md:p-6 max-w-5xl mx-auto">
       <div>
         <h1 className="text-2xl font-bold flex items-center gap-2"><Scale className="h-6 w-6" /> Accounting</h1>
         <p className="text-sm text-muted-foreground mt-1">Double-entry ledger, trial balance and chart of accounts.</p>
@@ -956,7 +956,7 @@ export default function Accounting() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1">
                 <Label className="text-xs">Amount remitted (₦)</Label>
                 <Input type="number" min="0" step="0.01" className="h-9" value={remitAmount} onChange={(e) => setRemitAmount(e.target.value)} />
@@ -989,7 +989,7 @@ export default function Accounting() {
             <DialogDescription>Every entry must balance — total debits equal total credits.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1">
                 <Label className="text-xs">Date</Label>
                 <Input type="date" className="h-9" value={entryDate} onChange={(e) => setEntryDate(e.target.value)} />
@@ -1023,7 +1023,7 @@ export default function Accounting() {
                     className="col-span-3 h-8 text-xs text-right" type="number" min="0" step="0.01" placeholder="Credit"
                     value={l.credit} onChange={(e) => { setLine(i, "credit", e.target.value); if (e.target.value) setLine(i, "debit", ""); }}
                   />
-                  <Button variant="ghost" size="icon" className="col-span-1 h-8 w-8 text-destructive" onClick={() => removeLine(i)} disabled={lines.length <= 2}>
+                  <Button variant="ghost" size="icon" className="col-span-1 h-9 w-9 md:h-8 md:w-8 text-destructive" onClick={() => removeLine(i)} disabled={lines.length <= 2}>
                     <Trash2 className="h-3.5 w-3.5" />
                   </Button>
                 </div>

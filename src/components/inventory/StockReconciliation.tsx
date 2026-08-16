@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ClipboardCheck, Save, CheckCircle, AlertTriangle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
-import { toast } from "sonner";
+import { toast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import { getCategoryColor, getCategoryLabel } from "@/lib/inventoryConstants";
 
@@ -160,12 +160,12 @@ export function StockReconciliation({ skus, stockTakes, onComplete }: StockRecon
         }
       }
 
-      toast.success('Stock reconciliation completed successfully');
+      toast({ title: 'Stock reconciliation completed successfully' });
       setShowReconciliationDialog(false);
       onComplete();
     } catch (error) {
       console.error('Error saving reconciliation:', error);
-      toast.error('Failed to save stock reconciliation');
+      toast({ title: 'Failed to save stock reconciliation', variant: "destructive" });
     } finally {
       setSaving(false);
     }

@@ -732,7 +732,7 @@ export default function InvoiceFormDialog({ open, onOpenChange, editingInvoice, 
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="h-8 w-8 text-destructive hover:text-destructive shrink-0"
+                        className="h-9 w-9 md:h-8 md:w-8 text-destructive hover:text-destructive shrink-0"
                         onClick={() => removeItem(idx)}
                         disabled={items.length === 1}
                       >
@@ -936,7 +936,7 @@ export default function InvoiceFormDialog({ open, onOpenChange, editingInvoice, 
 
             {/* Preview of selected account */}
             {selectedBankId && form.bank_name && (
-              <div className="rounded-lg border bg-muted/30 p-3 grid grid-cols-3 gap-3 text-sm">
+              <div className="rounded-lg border bg-muted/30 p-3 grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
                 <div>
                   <p className="text-xs text-muted-foreground mb-0.5">Bank</p>
                   <p className="font-semibold">{form.bank_name}</p>

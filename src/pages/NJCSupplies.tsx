@@ -17,6 +17,7 @@ import { formatNairaCompact } from "@/lib/currency";
 import NJCSupplyDialog, { defaultFormData } from "@/components/njc/NJCSupplyDialog";
 import NJCViewDialog from "@/components/njc/NJCViewDialog";
 import { exportToExcel, exportToWord, type NJCSupplyWithItems, type NJCSupplyItem } from "@/lib/njcExport";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 
 const NJCSupplies = () => {
   const { toast } = useToast();
@@ -29,6 +30,7 @@ const NJCSupplies = () => {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
 
   // Fetch supplies with their items
   const { data: supplies, isLoading } = useQuery({
@@ -237,11 +239,14 @@ const NJCSupplies = () => {
     }
   };
 
-  const handleDelete = (id: string) => {
-    if (confirm("Are you sure you want to delete this invoice?")) {
-      deleteMutation.mutate(id);
-      setSelectedIds((prev) => { const n = new Set(prev); n.delete(id); return n; });
-    }
+  const handleDelete = (id: string) => setPendingDeleteId(id);
+
+  const confirmDelete = () => {
+    const id = pendingDeleteId;
+    setPendingDeleteId(null);
+    if (!id) return;
+    deleteMutation.mutate(id);
+    setSelectedIds((prev) => { const n = new Set(prev); n.delete(id); return n; });
   };
 
   // Selection
@@ -319,7 +324,7 @@ const NJCSupplies = () => {
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
-          <h1 className="text-3xl font-bold flex items-center gap-2">
+          <h1 className="text-2xl sm:text-3xl font-bold flex items-center gap-2">
             <Package className="h-8 w-8" /> NJC Supplies
           </h1>
           <p className="text-muted-foreground mt-1">Manage NJC supply invoices with line items</p>
@@ -466,6 +471,15 @@ const NJCSupplies = () => {
         open={!!viewingSupply}
         onOpenChange={(v) => { if (!v) setViewingSupply(null); }}
         onEdit={(supply) => handleEdit(supply)}
+      />
+
+      <ConfirmDialog
+        open={pendingDeleteId !== null}
+        onOpenChange={(open) => { if (!open) setPendingDeleteId(null); }}
+        title="Delete this invoice?"
+        description="This action cannot be undone."
+        confirmLabel="Delete"
+        onConfirm={confirmDelete}
       />
     </div>
   );

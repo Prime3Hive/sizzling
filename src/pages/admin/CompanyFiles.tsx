@@ -366,7 +366,7 @@ export default function CompanyFiles() {
                   </div>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild onClick={e => e.stopPropagation()}>
-                      <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 -mr-1">
+                      <Button variant="ghost" size="icon" className="h-9 w-9 md:h-7 md:w-7 shrink-0 -mr-1">
                         <MoreHorizontal className="h-4 w-4" />
                       </Button>
                     </DropdownMenuTrigger>
@@ -491,11 +491,11 @@ export default function CompanyFiles() {
                                 {format(new Date(file.created_at), 'MMM d, yyyy')}
                               </p>
                             </div>
-                            <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <div className="flex gap-1 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100">
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="h-8 w-8"
+                                className="h-9 w-9 md:h-8 md:w-8"
                                 onClick={() => handleDownload(file)}
                                 title="Download"
                               >
@@ -504,7 +504,7 @@ export default function CompanyFiles() {
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
+                                className="h-9 w-9 md:h-8 md:w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
                                 onClick={() => setDeleteFileTarget(file)}
                                 title="Delete"
                               >

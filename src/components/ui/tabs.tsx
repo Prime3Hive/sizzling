@@ -12,7 +12,10 @@ const TabsList = React.forwardRef<
   <TabsPrimitive.List
     ref={ref}
     className={cn(
-      "inline-flex h-10 items-center justify-center rounded-md bg-muted p-1 text-muted-foreground",
+      // Wraps instead of forcing a fixed-height single row: a 5-tab list on a
+      // 375px screen used to push the whole page into horizontal scroll.
+      // max-w-full keeps the inline-flex box from exceeding its container.
+      "inline-flex h-auto min-h-10 max-w-full flex-wrap items-center justify-start gap-1 rounded-md bg-muted p-1 text-muted-foreground",
       className,
     )}
     {...props}
@@ -27,7 +30,9 @@ const TabsTrigger = React.forwardRef<
   <TabsPrimitive.Trigger
     ref={ref}
     className={cn(
-      "inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium ring-offset-background transition-all data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
+      // min-h-9 (36px) keeps every tab a comfortable touch target; px-2.5 on
+      // mobile fits more tabs per row before wrapping.
+      "inline-flex min-h-9 items-center justify-center whitespace-nowrap rounded-sm px-2.5 py-1.5 text-sm font-medium ring-offset-background transition-all data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 sm:px-3",
       className,
     )}
     {...props}

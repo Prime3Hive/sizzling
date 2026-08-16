@@ -1,18 +1,5 @@
-import * as XLSX from "xlsx";
-import { saveAs } from "file-saver";
-import {
-  Document,
-  Packer,
-  Paragraph,
-  Table as DocxTable,
-  TableRow as DocxTableRow,
-  TableCell as DocxTableCell,
-  TextRun,
-  AlignmentType,
-  WidthType,
-  BorderStyle,
-  HeadingLevel,
-} from "docx";
+// Export libraries (xlsx, docx, file-saver) are imported dynamically inside
+// each export function so their ~1MB of code never loads until first use.
 
 export interface NJCSupplyItem {
   id: string;
@@ -43,7 +30,8 @@ export interface NJCSupplyWithItems {
 const formatNaira = (amount: number) =>
   `₦${amount.toLocaleString("en-NG", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-export function exportToExcel(supplies: NJCSupplyWithItems[]) {
+export async function exportToExcel(supplies: NJCSupplyWithItems[]) {
+  const [XLSX, { saveAs }] = await Promise.all([import("xlsx"), import("file-saver")]);
   const wb = XLSX.utils.book_new();
 
   supplies.forEach((supply, idx) => {
@@ -89,6 +77,23 @@ export function exportToExcel(supplies: NJCSupplyWithItems[]) {
 }
 
 export async function exportToWord(supplies: NJCSupplyWithItems[]) {
+  const [
+    {
+      Document,
+      Packer,
+      Paragraph,
+      Table: DocxTable,
+      TableRow: DocxTableRow,
+      TableCell: DocxTableCell,
+      TextRun,
+      AlignmentType,
+      WidthType,
+      BorderStyle,
+      HeadingLevel,
+    },
+    { saveAs },
+  ] = await Promise.all([import("docx"), import("file-saver")]);
+
   const sections = supplies.map((supply) => {
     const headerRows = [
       new Paragraph({

@@ -258,7 +258,7 @@ const Payments = () => {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="grid gap-2">
                     <Label htmlFor="payment_method">Payment Method</Label>
                     <Select name="payment_method" required>
@@ -280,7 +280,7 @@ const Payments = () => {
                     <Input id="amount" name="amount" type="number" step="0.01" required />
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="grid gap-2">
                     <Label htmlFor="payment_date">Payment Date</Label>
                     <Input 
@@ -304,7 +304,7 @@ const Payments = () => {
                     </Select>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="grid gap-2">
                     <Label htmlFor="transaction_id">Transaction ID</Label>
                     <Input id="transaction_id" name="transaction_id" />

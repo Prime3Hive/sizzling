@@ -116,7 +116,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const roleBadgeColor: Record<string, string> = {
     admin: 'bg-destructive/10 text-destructive border-destructive/20',
     manager: 'bg-primary/10 text-primary border-primary/20',
-    hr: 'bg-purple-100 text-purple-700 border-purple-200',
+    hr: 'bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-900/30 dark:text-purple-300 dark:border-purple-800',
     employee: 'bg-success/10 text-success border-success/20',
     pending: 'bg-warning/10 text-warning border-warning/20',
   };
@@ -151,6 +151,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     || location.pathname === '/business/analytics';
 
   const isStaffRequestsActive = location.pathname === '/staff-portal';
+  const isStaffPortalTab = (tab: string) =>
+    location.pathname === '/staff-portal' &&
+    new URLSearchParams(location.search).get('tab') === tab;
 
   const SidebarUserHeader = () => (
     <SidebarHeader className="border-b border-border/60 pb-3">
@@ -280,7 +283,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                         </SidebarMenuSubButton>
                       </SidebarMenuSubItem>
                       <SidebarMenuSubItem>
-                        <SidebarMenuSubButton asChild isActive={location.search.includes('tab=reports')}>
+                        <SidebarMenuSubButton asChild isActive={isStaffPortalTab('reports')}>
                           <Link to="/staff-portal?tab=reports"><ClipboardList className="h-3 w-3" /><span>My Reports</span></Link>
                         </SidebarMenuSubButton>
                       </SidebarMenuSubItem>
@@ -290,7 +293,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                         </SidebarMenuSubButton>
                       </SidebarMenuSubItem>
                       <SidebarMenuSubItem>
-                        <SidebarMenuSubButton asChild isActive={location.search.includes('tab=documents')}>
+                        <SidebarMenuSubButton asChild isActive={isStaffPortalTab('documents')}>
                           <Link to="/staff-portal?tab=documents"><FolderOpen className="h-3 w-3" /><span>My Documents</span></Link>
                         </SidebarMenuSubButton>
                       </SidebarMenuSubItem>
@@ -580,13 +583,13 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             </SidebarMenuItem>
 
             <SidebarMenuItem>
-              <SidebarMenuButton asChild isActive={location.search.includes('tab=reports')}>
+              <SidebarMenuButton asChild isActive={isStaffPortalTab('reports')}>
                 <Link to="/staff-portal?tab=reports"><ClipboardList className="h-4 w-4" />My Reports</Link>
               </SidebarMenuButton>
             </SidebarMenuItem>
 
             <SidebarMenuItem>
-              <SidebarMenuButton asChild isActive={location.search.includes('tab=documents')}>
+              <SidebarMenuButton asChild isActive={isStaffPortalTab('documents')}>
                 <Link to="/staff-portal?tab=documents"><FolderOpen className="h-4 w-4" />My Documents</Link>
               </SidebarMenuButton>
             </SidebarMenuItem>

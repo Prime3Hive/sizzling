@@ -13,6 +13,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ResponsiveTable, type ResponsiveColumn } from "@/components/ui/responsive-table";
+import { usePagination } from "@/hooks/usePagination";
+import { TablePagination } from "@/components/ui/table-pagination";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
@@ -182,7 +184,8 @@ export default function InventoryRequests() {
           skus(name, unit_of_measure, category),
           inventory_request_items(id, sku_id, requested_quantity, fulfilled_quantity, note, kind, item_name, amount, skus(name, unit_of_measure, category))
         `)
-        .order("created_at", { ascending: false });
+        .order("created_at", { ascending: false })
+        .limit(500);
 
       if (!canManage) q = q.eq("user_id", user!.id);
 
@@ -951,6 +954,7 @@ function RequestsTable({
   onView: (id: string) => void;
   actions?: (row: InventoryRequest) => React.ReactNode;
 }) {
+  const pagination = usePagination(rows, 20);
   const columns: ResponsiveColumn<InventoryRequest>[] = [
     {
       key: "items", header: "Items", primary: true,
@@ -1030,10 +1034,19 @@ function RequestsTable({
           <div className="px-3 md:px-0">
             <ResponsiveTable
               columns={columns}
-              data={rows}
+              data={pagination.pageData}
               rowKey={(r) => r.id}
               onRowClick={(r) => onView(r.id)}
             />
+            <div className="px-1 pb-3">
+              <TablePagination
+                page={pagination.page}
+                pageCount={pagination.pageCount}
+                total={pagination.total}
+                pageSize={pagination.pageSize}
+                onPageChange={pagination.setPage}
+              />
+            </div>
           </div>
         )}
       </CardContent>

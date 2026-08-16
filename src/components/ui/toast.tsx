@@ -14,7 +14,13 @@ const ToastViewport = React.forwardRef<
   <ToastPrimitives.Viewport
     ref={ref}
     className={cn(
-      "fixed top-0 z-[100] flex max-h-screen w-full flex-col-reverse p-4 sm:bottom-0 sm:right-0 sm:top-auto sm:flex-col md:max-w-[420px]",
+      // pointer-events-none is load-bearing on mobile. Below sm this viewport is
+      // pinned full-width to top-0 at z-[100], directly over the app header, and
+      // its p-4 gives it ~32px of height even with zero toasts — which sat on top
+      // of the sidebar trigger and swallowed every tap, making navigation
+      // impossible on a phone. Individual toasts re-enable pointer events via
+      // `pointer-events-auto` in toastVariants, so they stay interactive.
+      "pointer-events-none fixed top-0 z-[100] flex max-h-screen w-full flex-col-reverse p-4 sm:bottom-0 sm:right-0 sm:top-auto sm:flex-col md:max-w-[420px]",
       className,
     )}
     {...props}

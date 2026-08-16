@@ -50,8 +50,8 @@ export default defineConfig(({ mode }) => ({
         },
       },
     },
-    // vendor-export (jsPDF + xlsx + html2canvas + docx) is intentionally large.
-    // True fix is dynamic import() at call sites — tracked as future work.
+    // vendor-export (jsPDF + xlsx + html2canvas + docx) is large but only
+    // fetched on demand — every call site uses dynamic import().
     chunkSizeWarningLimit: 1400,
   },
 }));

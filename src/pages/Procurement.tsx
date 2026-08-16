@@ -301,7 +301,7 @@ export default function Procurement() {
       cell: (lpo) => (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" className="h-8 w-8 max-md:w-full max-md:border max-md:rounded-md">
+            <Button variant="ghost" size="icon" className="h-9 w-9 md:h-8 md:w-8 max-md:w-full max-md:border max-md:rounded-md">
               <MoreHorizontal className="h-4 w-4" />
               <span className="md:hidden ml-2">Actions</span>
             </Button>

@@ -1,4 +1,5 @@
 import { useRef, useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
@@ -22,8 +23,6 @@ import {
   Printer, FileCheck, Edit, XCircle, CheckCircle2, Users, Building2,
   Download, Archive, ArchiveRestore, Loader2, Banknote,
 } from "lucide-react";
-import html2canvas from "html2canvas";
-import { jsPDF } from "jspdf";
 import { format } from "date-fns";
 import { formatNairaCompact } from "@/lib/currency";
 import {
@@ -244,13 +243,13 @@ export default function InvoiceViewDialog({ invoice, open, onOpenChange, onEdit 
     if (!el) return;
     setDownloadingPdf(true);
     try {
-      const canvas = await html2canvas(el, {
-        scale: 1.5,
-        useCORS: true,
-        logging: false,
-        width: 794,
-        backgroundColor: "#ffffff",
-      });
+      const [{ captureElement, savePdf }, { jsPDF }] = await Promise.all([
+        import("@/lib/htmlToPdf"),
+        import("jspdf"),
+      ]);
+      // width is pinned to the A4 pixel width the template is authored at, so
+      // the capture is identical on a phone and on a desktop.
+      const canvas = await captureElement(el, { scale: 1.5, width: 794 });
       // JPEG at high quality is dramatically smaller than PNG for a
       // mostly-white document, and the resulting PDF stays legible.
       const imgData = canvas.toDataURL("image/jpeg", 0.92);
@@ -269,7 +268,7 @@ export default function InvoiceViewDialog({ invoice, open, onOpenChange, onEdit 
         pdf.addImage(imgData, "JPEG", 0, offset, pageW, imgH, undefined, "MEDIUM");
         remaining -= pageH;
       }
-      pdf.save(`${displayNumber}.pdf`);
+      savePdf(pdf, `${displayNumber}.pdf`);
     } catch (err: any) {
       toast({ title: "PDF generation failed", description: err.message, variant: "destructive" });
     } finally {
@@ -281,7 +280,16 @@ export default function InvoiceViewDialog({ invoice, open, onOpenChange, onEdit 
     const el = printRef.current;
     if (!el) return;
     const w = window.open("", "_blank");
-    if (!w) return;
+    // Mobile browsers block popups aggressively; failing silently made the
+    // Print button look broken. Tell the user what happened.
+    if (!w) {
+      toast({
+        title: "Couldn't open the print view",
+        description: "Your browser blocked the popup. Allow popups for this site, or use Download PDF.",
+        variant: "destructive",
+      });
+      return;
+    }
     w.document.write(`
       <!DOCTYPE html>
       <html>
@@ -552,7 +560,7 @@ export default function InvoiceViewDialog({ invoice, open, onOpenChange, onEdit 
                     Payment Account
                   </h3>
                 </div>
-                <div className="rounded-lg border bg-muted/20 p-3 text-sm grid grid-cols-3 gap-3">
+                <div className="rounded-lg border bg-muted/20 p-3 text-sm grid grid-cols-1 sm:grid-cols-3 gap-3">
                   {invoice.bank_name && (
                     <div>
                       <p className="text-xs text-muted-foreground mb-0.5">Bank</p>
@@ -716,12 +724,25 @@ export default function InvoiceViewDialog({ invoice, open, onOpenChange, onEdit 
             )}
           </section>
 
-          {/* Off-screen print template — must be visible for html2canvas */}
-          <div style={{ position: "absolute", left: "-9999px", top: 0, width: 794, pointerEvents: "none" }}>
-            <div ref={printRef}>
-              <InvoicePrintView invoice={invoice} />
-            </div>
-          </div>
+          {/* Off-screen print template — must be laid out (not display:none) for
+              html2canvas to measure it.
+
+              Portalled to <body> on purpose: DialogContent is both
+              `transform: translate(-50%,-50%)` and `overflow-y: auto`, and
+              html2canvas cannot reliably capture a node whose ancestor is
+              transformed or clipping it — which is why the export came back
+              blank. At body level the template has a clean containing block. */}
+          {createPortal(
+            <div
+              aria-hidden
+              style={{ position: "absolute", left: "-9999px", top: 0, width: 794, pointerEvents: "none" }}
+            >
+              <div ref={printRef}>
+                <InvoicePrintView invoice={invoice} />
+              </div>
+            </div>,
+            document.body,
+          )}
 
           <DialogFooter className="gap-2 flex-wrap">
             {/* Always: print */}

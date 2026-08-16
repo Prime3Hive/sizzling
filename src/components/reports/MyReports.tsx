@@ -314,7 +314,7 @@ export default function MyReports() {
           </DialogHeader>
 
           <div className="space-y-4 py-1">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-2">
                 <Label>Report type</Label>
                 <Select value={type} onValueChange={v => setType(v as ReportType)}>
@@ -329,7 +329,7 @@ export default function MyReports() {
             </div>
 
             {type === 'sales' && (
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-2">
                   <Label>Amount (₦)</Label>
                   <Input type="number" min="0" step="0.01" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} />
@@ -448,7 +448,7 @@ export default function MyReports() {
                   </Button>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-2"><Label>Bought from (optional)</Label><Input placeholder="Supplier / person / shop" value={form.source} onChange={e => setForm(f => ({ ...f, source: e.target.value }))} /></div>
                   <div className="space-y-2"><Label>Due date (optional)</Label><Input type="date" value={form.due_date} onChange={e => setForm(f => ({ ...f, due_date: e.target.value }))} /></div>
                 </div>

@@ -1,6 +1,6 @@
 import React, { lazy as reactLazy, Suspense } from "react";
+import { ThemeProvider } from "next-themes";
 import { Toaster } from "@/components/ui/toaster";
-import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
@@ -111,13 +111,13 @@ const BusinessRoute = ({ children }: { children: React.ReactNode }) => {
 };
 
 const App = () => (
-  <QueryClientProvider client={queryClient}>
+  <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+    <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <AuthProvider>
         <SessionTimeoutWarning />
         <RoleProvider>
           <Toaster />
-          <Sonner />
           <BrowserRouter>
             <Suspense fallback={<PageLoader />}>
             <Routes>
@@ -291,7 +291,8 @@ const App = () => (
         </RoleProvider>
       </AuthProvider>
     </TooltipProvider>
-  </QueryClientProvider>
+    </QueryClientProvider>
+  </ThemeProvider>
 );
 
 const SentryApp = Sentry.withErrorBoundary(App, {

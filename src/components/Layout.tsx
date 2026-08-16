@@ -4,6 +4,7 @@ import { SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar';
 import { AppSidebar } from '@/components/AppSidebar';
 import { useAuth } from '@/hooks/useAuth';
 import NotificationBell from '@/components/NotificationBell';
+import ThemeToggle from '@/components/ThemeToggle';
 import { useBirthdayNotifications } from '@/hooks/useBirthdayNotifications';
 
 const Layout = () => {
@@ -34,21 +35,31 @@ const Layout = () => {
                     className="w-full h-full object-contain rounded-md"
                   />
                 </div>
-                <span className="hidden sm:block text-base font-bold bg-gradient-primary bg-clip-text text-transparent truncate">
-                  Sizzling Spices Portal
+                {/* Short label on phones so the header isn't just two icons
+                    floating against empty space; full name from sm up. */}
+                <span className="min-w-0 truncate text-sm sm:text-base font-bold bg-gradient-primary bg-clip-text text-transparent">
+                  <span className="sm:hidden">Sizzling Spices</span>
+                  <span className="hidden sm:inline">Sizzling Spices Portal</span>
                 </span>
               </div>
 
-              {/* Right: notifications only — sign-out lives in sidebar footer */}
+              {/* Right: theme + notifications — sign-out lives in sidebar footer */}
               <div className="flex items-center gap-1 shrink-0">
+                <ThemeToggle />
                 <NotificationBell />
               </div>
             </div>
           </header>
 
           {/* ── Page content ── */}
-          <main className="flex-1 px-3 py-4 sm:px-5 sm:py-6 md:px-8 md:py-8 w-full max-w-screen-2xl mx-auto">
+          {/* min-w-0 lets wide children (tables, chart scrollers) shrink to the
+              column instead of widening it rather than widening the page. */}
+          <main className="flex-1 min-w-0 w-full max-w-screen-2xl mx-auto px-3 py-4 sm:px-5 sm:py-6 md:px-8 md:py-8">
             <Outlet />
+            {/* Additive spacer for the home-indicator / gesture bar. Kept as its
+                own element so it stacks with the responsive py-* above instead
+                of competing with it in the cascade. */}
+            <div aria-hidden className="h-[env(safe-area-inset-bottom,0px)]" />
           </main>
         </div>
       </div>

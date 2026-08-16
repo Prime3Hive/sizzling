@@ -433,7 +433,7 @@ export default function KPIAssignTasks() {
                   {task.status === "pending" && (
                     <Button
                       size="icon" variant="ghost"
-                      className="h-8 w-8 text-destructive opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+                      className="h-9 w-9 md:h-8 md:w-8 text-destructive transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 flex-shrink-0"
                       onClick={() => remove.mutate(task.id)}>
                       <Trash2 className="h-3.5 w-3.5" />
                     </Button>
@@ -472,7 +472,7 @@ export default function KPIAssignTasks() {
             </div>
 
             {/* ── Review Period + Staff ── */}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="grid gap-1.5">
                 <Label>Review Period *</Label>
                 <Select value={form.period_id} onValueChange={(v) => setForm({ ...form, period_id: v })}>
@@ -649,7 +649,7 @@ export default function KPIAssignTasks() {
                 <Input placeholder="e.g. ≥ 95% across all departments"
                   value={form.target_value} onChange={(e) => setForm({ ...form, target_value: e.target.value })} />
               </div>
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="grid gap-1.5">
                   <Label>Weight %</Label>
                   <Input type="number" min={0} max={100}

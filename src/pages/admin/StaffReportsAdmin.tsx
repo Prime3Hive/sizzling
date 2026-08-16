@@ -481,7 +481,7 @@ export default function StaffReportsAdmin() {
                 <SelectContent>{profiles.map(p => <SelectItem key={p.user_id} value={p.user_id}>{p.full_name}</SelectItem>)}</SelectContent>
               </Select>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-2">
                 <Label>Report type</Label>
                 <Select value={assignForm.report_type} onValueChange={v => setAssignForm(f => ({ ...f, report_type: v as ReportType }))}>

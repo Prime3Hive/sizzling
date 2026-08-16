@@ -1,14 +1,12 @@
-import html2canvas from 'html2canvas';
-import jsPDF from 'jspdf';
-
 export const exportStaffProfilePDF = async (profileElement: HTMLElement, staffName: string) => {
   try {
-    const canvas = await html2canvas(profileElement, {
-      backgroundColor: '#ffffff',
-      scale: 2,
-      useCORS: true,
-      logging: false,
-    });
+    const [{ captureElement }, { default: jsPDF }] = await Promise.all([
+      import('./htmlToPdf'),
+      import('jspdf'),
+    ]);
+    // captureElement pins the layout window and scroll offset and clamps the
+    // scale to the platform canvas limit, so this behaves the same on a phone.
+    const canvas = await captureElement(profileElement, { scale: 2 });
 
     const imgData = canvas.toDataURL('image/png');
     const pdf = new jsPDF({
@@ -35,10 +33,17 @@ export const exportStaffProfilePDF = async (profileElement: HTMLElement, staffNa
       heightLeft -= pdfHeight;
     }
 
-    pdf.save(`staff-profile-${staffName.replace(/\s+/g, '-').toLowerCase()}.pdf`);
+    const { savePdf } = await import('./htmlToPdf');
+    savePdf(pdf, `staff-profile-${staffName.replace(/\s+/g, '-').toLowerCase()}.pdf`);
   } catch (error) {
     console.error('Error generating staff profile PDF:', error);
-    throw new Error('Failed to generate staff profile PDF');
+    // Surface the real reason (e.g. canvas too large on this device) instead of
+    // flattening every failure into the same opaque message.
+    throw new Error(
+      error instanceof Error && error.message
+        ? error.message
+        : 'Failed to generate staff profile PDF',
+    );
   }
 };
 

@@ -63,8 +63,12 @@ interface StaffProfile {
 const MyProfile = () => {
   const { user } = useAuth();
   const { toast } = useToast();
-  const [searchParams] = useSearchParams();
-  const defaultTab = searchParams.get('tab') || 'profile';
+  const [searchParams, setSearchParams] = useSearchParams();
+  const VALID_TABS = ['profile', 'leave', 'complaints', 'messages'];
+  const tabParam = searchParams.get('tab');
+  const activeTab = VALID_TABS.includes(tabParam || '') ? tabParam! : 'profile';
+  const handleTabChange = (tab: string) =>
+    setSearchParams(tab === 'profile' ? {} : { tab }, { replace: true });
   const [profile, setProfile] = useState<StaffProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -194,13 +198,13 @@ const MyProfile = () => {
   return (
     <div className="space-y-6 max-w-5xl mx-auto">
       <div>
-        <h1 className="text-3xl font-bold flex items-center gap-2">
+        <h1 className="text-2xl sm:text-3xl font-bold flex items-center gap-2">
           <User className="h-8 w-8" /> My Profile
         </h1>
         <p className="text-muted-foreground mt-1">View your profile and submit requests to management</p>
       </div>
 
-      <Tabs defaultValue={defaultTab} className="space-y-6">
+      <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-6">
         <TabsList className="bg-muted/50 p-1">
           <TabsTrigger value="profile" className="data-[state=active]:bg-background data-[state=active]:shadow-card">
             <User className="h-4 w-4 mr-2" />My Profile
@@ -234,7 +238,7 @@ const MyProfile = () => {
       <Card>
         <CardHeader><CardTitle>Personal Information</CardTitle></CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label>Phone Number</Label>
               <Input value={form.phone_number} onChange={e => setForm({ ...form, phone_number: e.target.value })} />

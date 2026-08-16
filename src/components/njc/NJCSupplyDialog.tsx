@@ -188,7 +188,7 @@ export default function NJCSupplyDialog({
                         </TableCell>
                         <TableCell>
                           {form.items.length > 1 && (
-                            <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => removeItem(idx)}>
+                            <Button type="button" variant="ghost" size="icon" className="h-9 w-9 md:h-7 md:w-7" onClick={() => removeItem(idx)}>
                               <Trash2 className="h-3 w-3" />
                             </Button>
                           )}

@@ -13,6 +13,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 
 interface BudgetItem {
   id: string;
@@ -57,6 +58,7 @@ const Budgets = () => {
   const [isDetailDialogOpen, setIsDetailDialogOpen] = useState(false);
   const [selectedBudget, setSelectedBudget] = useState<BudgetWithDetails | null>(null);
   const [editingBudget, setEditingBudget] = useState<Budget | null>(null);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
 
   // Filters
   const [searchQuery, setSearchQuery] = useState('');
@@ -200,11 +202,15 @@ const Budgets = () => {
     setIsDialogOpen(true);
   };
 
-  const handleDelete = async (budgetId: string, e: React.MouseEvent) => {
+  const handleDelete = (budgetId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm('Are you sure you want to delete this budget? This will also delete all associated expenses.')) {
-      return;
-    }
+    setPendingDeleteId(budgetId);
+  };
+
+  const confirmDelete = async () => {
+    const budgetId = pendingDeleteId;
+    setPendingDeleteId(null);
+    if (!budgetId) return;
 
     try {
       const { error } = await supabase
@@ -378,7 +384,7 @@ const Budgets = () => {
                 </Select>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="startDate">Start Date</Label>
                   <Input
@@ -576,7 +582,7 @@ const Budgets = () => {
 
               <div className="space-y-6">
                 {/* Budget vs Spent Summary */}
-                <div className="grid grid-cols-3 gap-4 p-4 bg-muted/50 rounded-lg">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-4 bg-muted/50 rounded-lg">
                   <div className="text-center">
                     <p className="text-xs text-muted-foreground uppercase tracking-wide">Initial Budget</p>
                     <p className="text-2xl font-bold text-foreground">{formatCurrency(selectedBudget.total_budget)}</p>
@@ -702,6 +708,15 @@ const Budgets = () => {
           )}
         </DialogContent>
       </Dialog>
+
+      <ConfirmDialog
+        open={pendingDeleteId !== null}
+        onOpenChange={(open) => { if (!open) setPendingDeleteId(null); }}
+        title="Delete this budget?"
+        description="This will also delete all associated expenses. This action cannot be undone."
+        confirmLabel="Delete"
+        onConfirm={confirmDelete}
+      />
     </div>
   );
 };

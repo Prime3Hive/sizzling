@@ -358,7 +358,7 @@ export default function ChecklistAdmin({ profiles, nameOf }: { profiles: Profile
                 <SelectContent>{profiles.map(p => <SelectItem key={p.user_id} value={p.user_id}>{p.full_name}</SelectItem>)}</SelectContent>
               </Select>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-2">
                 <Label>Cadence</Label>
                 <Select value={assignForm.cadence} onValueChange={v => setAssignForm(f => ({ ...f, cadence: v }))}>

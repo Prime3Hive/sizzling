@@ -87,7 +87,7 @@ export default function Contact() {
           <div className="w-16 h-16 mx-auto mb-3 rounded-2xl bg-white/15 backdrop-blur flex items-center justify-center p-2">
             <img src="/favicon.png" alt="Sizzling Spices" className="w-full h-full object-contain" />
           </div>
-          <h1 className="text-3xl font-bold tracking-tight">Sizzling Spices</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Sizzling Spices</h1>
           <p className="text-white/90 mt-1">Delectable finger foods, spices and more.</p>
         </div>
       </header>

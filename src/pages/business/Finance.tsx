@@ -27,6 +27,8 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer,
 } from "recharts";
+import { usePagination } from "@/hooks/usePagination";
+import { TablePagination } from "@/components/ui/table-pagination";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -463,6 +465,7 @@ export default function Finance() {
       return data ?? [];
     },
   });
+  const ledgerPagination = usePagination(periodLedger, 25);
 
   // ── Unpaid legacy sales → receivables (F-4) ───────────────────────────────────
   // Outstanding per sale = billed − completed payments collected to date.
@@ -658,12 +661,12 @@ export default function Finance() {
           </p>
         </div>
         <div className="flex items-center gap-1 rounded-lg border bg-muted/30 p-1">
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={prevPeriod}>
+          <Button variant="ghost" size="icon" className="h-9 w-9 md:h-7 md:w-7" onClick={prevPeriod}>
             <ChevronLeft className="h-4 w-4" />
           </Button>
           <span className="px-3 text-sm font-medium min-w-32 text-center">{periodLabel}</span>
           <Button
-            variant="ghost" size="icon" className="h-7 w-7" onClick={nextPeriod}
+            variant="ghost" size="icon" className="h-9 w-9 md:h-7 md:w-7" onClick={nextPeriod}
             disabled={format(subMonths(periodDate, -1), "yyyy-MM") > format(today, "yyyy-MM")}
           >
             <ChevronRight className="h-4 w-4" />
@@ -1196,7 +1199,7 @@ export default function Finance() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {periodLedger.map(entry => (
+                      {ledgerPagination.pageData.map(entry => (
                         <TableRow
                           key={entry.id}
                           className="cursor-pointer hover:bg-muted/40"
@@ -1225,6 +1228,15 @@ export default function Finance() {
                       ))}
                     </TableBody>
                   </Table>
+                  <div className="px-4 pb-2">
+                    <TablePagination
+                      page={ledgerPagination.page}
+                      pageCount={ledgerPagination.pageCount}
+                      total={ledgerPagination.total}
+                      pageSize={ledgerPagination.pageSize}
+                      onPageChange={ledgerPagination.setPage}
+                    />
+                  </div>
                 </div>
               )}
             </CardContent>

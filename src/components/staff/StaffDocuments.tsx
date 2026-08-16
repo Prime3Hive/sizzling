@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Upload, FileText, Trash2, Download, Eye, File, Image, FileSpreadsheet } from "lucide-react";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 
 interface StaffDocument {
   id: string;
@@ -52,6 +53,7 @@ const StaffDocuments = ({ staffProfileId, staffName }: StaffDocumentsProps) => {
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [description, setDescription] = useState("");
+  const [pendingDelete, setPendingDelete] = useState<StaffDocument | null>(null);
 
   useEffect(() => {
     fetchDocuments();
@@ -117,8 +119,12 @@ const StaffDocuments = ({ staffProfileId, staffName }: StaffDocumentsProps) => {
     }
   };
 
-  const handleDelete = async (doc: StaffDocument) => {
-    if (!confirm(`Delete "${doc.file_name}"?`)) return;
+  const handleDelete = (doc: StaffDocument) => setPendingDelete(doc);
+
+  const confirmDelete = async () => {
+    const doc = pendingDelete;
+    setPendingDelete(null);
+    if (!doc) return;
 
     try {
       const { error: storageError } = await supabase.storage
@@ -267,6 +273,15 @@ const StaffDocuments = ({ staffProfileId, staffName }: StaffDocumentsProps) => {
             ))}
           </div>
         )}
+
+        <ConfirmDialog
+          open={pendingDelete !== null}
+          onOpenChange={(open) => { if (!open) setPendingDelete(null); }}
+          title={`Delete "${pendingDelete?.file_name ?? ""}"?`}
+          description="The file will be permanently removed."
+          confirmLabel="Delete"
+          onConfirm={confirmDelete}
+        />
       </DialogContent>
     </Dialog>
   );

@@ -31,9 +31,8 @@ import {
   ResponsiveContainer, Area, AreaChart, ComposedChart,
   Bar, Line, PieChart, Pie, Cell, ReferenceLine,
 } from 'recharts';
-import * as XLSX from 'xlsx';
-import { saveAs } from 'file-saver';
-import jsPDF from 'jspdf';
+// Heavy export libs (xlsx, file-saver, jspdf) are dynamically imported inside
+// the export handlers so they don't bloat the page chunk.
 import MonthlyExpenseLedger from '@/components/profitloss/MonthlyExpenseLedger';
 import WeeklySalesEntry from '@/components/profitloss/WeeklySalesEntry';
 import { MONTHS } from '@/lib/expenseConstants';
@@ -347,7 +346,8 @@ const ProfitLoss = () => {
   ].filter(d => d.value > 0);
 
   // ── Exports ────────────────────────────────────────────────────────────────
-  const exportToExcel = () => {
+  const exportToExcel = async () => {
+    const [XLSX, { saveAs }] = await Promise.all([import('xlsx'), import('file-saver')]);
     const headers = [
       'MONTH', 'DAILY SALES', 'EVENT SALES', 'INVOICE REVENUE', 'TOTAL SALES',
       'DAILY COGS', 'EVENT COGS', 'TOTAL COGS',
@@ -373,7 +373,8 @@ const ProfitLoss = () => {
     saveAs(new Blob([wbout], { type: 'application/octet-stream' }), `PL_Dashboard_${selectedYear}.xlsx`);
   };
 
-  const exportToCSV = () => {
+  const exportToCSV = async () => {
+    const { saveAs } = await import('file-saver');
     const headers = ['Month', 'Revenue', 'COGS', 'Gross Profit', 'OpEX', 'Payroll', 'Net Profit', 'Margin'];
     const rows = monthlyData.map(m => [
       m.month, m.totalSales, m.totalCOGS, m.totalGrossProfit,
@@ -389,7 +390,8 @@ const ProfitLoss = () => {
     saveAs(new Blob([csv], { type: 'text/csv;charset=utf-8;' }), `PL_Dashboard_${selectedYear}.csv`);
   };
 
-  const exportToPDF = () => {
+  const exportToPDF = async () => {
+    const { jsPDF } = await import('jspdf');
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
     const W = doc.internal.pageSize.getWidth();
     const margin = 14;
@@ -567,7 +569,7 @@ const ProfitLoss = () => {
       {/* ── Header ──────────────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-3xl font-bold bg-gradient-primary bg-clip-text text-transparent">
+          <h1 className="text-2xl sm:text-3xl font-bold bg-gradient-primary bg-clip-text text-transparent">
             Profit & Loss
           </h1>
           <p className="text-muted-foreground mt-0.5">
@@ -826,7 +828,7 @@ const ProfitLoss = () => {
                     />
                   </div>
                   {tableSearch && (
-                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setTableSearch('')}>
+                    <Button variant="ghost" size="icon" className="h-9 w-9 md:h-8 md:w-8" onClick={() => setTableSearch('')}>
                       <X className="h-3.5 w-3.5" />
                     </Button>
                   )}

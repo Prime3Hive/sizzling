@@ -36,6 +36,7 @@ import StaffKPIPanel from "@/components/staff-profiles/StaffKPIPanel";
 import { formatNairaCompact } from "@/lib/currency";
 import { exportStaffProfilePDF, printStaffProfile } from "@/lib/staffProfileExport";
 import StaffProfilePrintable from "@/components/StaffProfilePrintable";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -248,7 +249,7 @@ function ProfileSheet({
             <div className="flex gap-1">
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button variant="ghost" size="icon" className="h-8 w-8 text-white hover:bg-white/20" onClick={() => onEdit(profile)}>
+                  <Button variant="ghost" size="icon" className="h-9 w-9 md:h-8 md:w-8 text-white hover:bg-white/20" onClick={() => onEdit(profile)}>
                     <Pencil className="h-4 w-4" />
                   </Button>
                 </TooltipTrigger>
@@ -256,7 +257,7 @@ function ProfileSheet({
               </Tooltip>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button variant="ghost" size="icon" className="h-8 w-8 text-white hover:bg-white/20" onClick={() => onExport(profile)}>
+                  <Button variant="ghost" size="icon" className="h-9 w-9 md:h-8 md:w-8 text-white hover:bg-white/20" onClick={() => onExport(profile)}>
                     <Download className="h-4 w-4" />
                   </Button>
                 </TooltipTrigger>
@@ -264,7 +265,7 @@ function ProfileSheet({
               </Tooltip>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button variant="ghost" size="icon" className="h-8 w-8 text-white hover:bg-white/20" onClick={() => onPrint(profile)}>
+                  <Button variant="ghost" size="icon" className="h-9 w-9 md:h-8 md:w-8 text-white hover:bg-white/20" onClick={() => onPrint(profile)}>
                     <Printer className="h-4 w-4" />
                   </Button>
                 </TooltipTrigger>
@@ -511,14 +512,14 @@ function StaffCard({
         <StaffDocuments staffProfileId={profile.id} staffName={profile.full_name} />
 
         {(isAdmin || isHR) && (
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => onEdit(profile)} title="Edit">
+          <Button variant="ghost" size="icon" className="h-9 w-9 md:h-7 md:w-7" onClick={() => onEdit(profile)} title="Edit">
             <Pencil className="h-3.5 w-3.5" />
           </Button>
         )}
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" className="h-7 w-7">
+            <Button variant="ghost" size="icon" className="h-9 w-9 md:h-7 md:w-7">
               <MoreHorizontal className="h-3.5 w-3.5" />
             </Button>
           </DropdownMenuTrigger>
@@ -575,27 +576,34 @@ function StaffListRow({
         </AvatarFallback>
       </Avatar>
 
-      <div className="flex-1 min-w-0 grid grid-cols-4 gap-3 items-center">
+      {/* Four equal columns only work once there's room for them; below md the
+          same fields stack under the name so nothing is squeezed to ~60px. */}
+      <div className="flex-1 min-w-0 md:grid md:grid-cols-4 md:gap-3 md:items-center">
         <div className="min-w-0">
           <p className="font-semibold text-sm truncate">{profile.full_name}</p>
           <p className="text-xs text-muted-foreground truncate">{profile.email_address}</p>
         </div>
-        <Badge variant="outline" className={`text-[10px] px-2 py-0 w-fit ${posStyle}`}>
+        <Badge variant="outline" className={`mt-1.5 md:mt-0 text-[10px] px-2 py-0 w-fit ${posStyle}`}>
           {posLabel(profile.position)}
         </Badge>
-        <p className="text-xs text-muted-foreground truncate">{profile.departments?.name ?? "—"}</p>
-        <p className="text-xs text-muted-foreground">{profile.phone_number ?? "—"}</p>
+        <p className="mt-1 md:mt-0 text-xs text-muted-foreground truncate">{profile.departments?.name ?? "—"}</p>
+        <p className="text-xs text-muted-foreground truncate">{profile.phone_number ?? "—"}</p>
       </div>
 
-      <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
+      {/* Touch devices have no hover, so the row actions were unreachable on a
+          phone — always visible below md, hover-revealed on pointer devices. */}
+      <div
+        className="flex shrink-0 gap-1 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100"
+        onClick={e => e.stopPropagation()}
+      >
         {(isAdmin || isHR) && (
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => onEdit(profile)}>
+          <Button variant="ghost" size="icon" className="h-9 w-9 md:h-7 md:w-7" onClick={() => onEdit(profile)}>
             <Pencil className="h-3.5 w-3.5" />
           </Button>
         )}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" className="h-7 w-7">
+            <Button variant="ghost" size="icon" className="h-9 w-9 md:h-7 md:w-7">
               <MoreHorizontal className="h-3.5 w-3.5" />
             </Button>
           </DropdownMenuTrigger>
@@ -674,6 +682,7 @@ const StaffProfiles = () => {
   const [loading, setLoading]             = useState(true);
   const [isDialogOpen, setIsDialogOpen]   = useState(false);
   const [editingProfile, setEditingProfile] = useState<StaffProfile | null>(null);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [selectedProfile, setSelectedProfile] = useState<StaffProfile | null>(null);
   const [passportFile, setPassportFile]   = useState<File | null>(null);
   const [exportingProfile, setExportingProfile] = useState<StaffProfile | null>(null);
@@ -815,8 +824,12 @@ const StaffProfiles = () => {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm("Delete this staff profile? This cannot be undone.")) return;
+  const handleDelete = (id: string) => setPendingDeleteId(id);
+
+  const confirmDelete = async () => {
+    const id = pendingDeleteId;
+    setPendingDeleteId(null);
+    if (!id) return;
     const { error } = await supabase.from("staff_profiles").delete().eq("id", id);
     if (error) toast({ title: "Error", description: error.message, variant: "destructive" });
     else { toast({ title: "Profile deleted" }); fetchStaffProfiles(); }
@@ -891,7 +904,7 @@ const StaffProfiles = () => {
 
   if (rolesLoading || loading) {
     return (
-      <div className="space-y-6 p-6">
+      <div className="space-y-6 p-0 sm:p-4 md:p-6">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           {[1,2,3,4].map(i => <div key={i} className="h-20 rounded-xl bg-muted animate-pulse" />)}
         </div>
@@ -1093,7 +1106,7 @@ const StaffProfiles = () => {
 
       {/* ── Add / Edit Dialog ── */}
       <Dialog open={isDialogOpen} onOpenChange={open => { setIsDialogOpen(open); if (!open) resetForm(); }}>
-        <DialogContent className="max-w-3xl max-h-[92vh] flex flex-col p-0 gap-0">
+        <DialogContent className="max-w-3xl max-h-[92svh] flex flex-col p-0 sm:p-0 gap-0 overflow-hidden">
           <DialogHeader className="px-6 pt-6 pb-4 border-b shrink-0">
             <DialogTitle className="text-xl">
               {editingProfile ? `Edit — ${editingProfile.full_name}` : "New Staff Profile"}
@@ -1106,7 +1119,7 @@ const StaffProfiles = () => {
           <form onSubmit={handleSubmit} className="flex flex-col flex-1 overflow-hidden">
             <ScrollArea className="flex-1 px-6">
               <Tabs defaultValue="personal" className="pt-4">
-                <TabsList className="mb-6 grid grid-cols-4 w-full">
+                <TabsList className="mb-6 grid grid-cols-2 sm:grid-cols-4 w-full">
                   <TabsTrigger value="personal"   className="gap-1.5 text-xs"><User className="h-3.5 w-3.5" />Personal</TabsTrigger>
                   <TabsTrigger value="employment" className="gap-1.5 text-xs"><Briefcase className="h-3.5 w-3.5" />Employment</TabsTrigger>
                   <TabsTrigger value="banking"    className="gap-1.5 text-xs"><CreditCard className="h-3.5 w-3.5" />Banking</TabsTrigger>
@@ -1115,7 +1128,7 @@ const StaffProfiles = () => {
 
                 {/* ── Personal ── */}
                 <TabsContent value="personal" className="space-y-4 pb-6">
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <FormField id="full_name" label="Full Name" required>
                       <Input id="full_name" value={formData.full_name} onChange={e => f("full_name", e.target.value)} required />
                     </FormField>
@@ -1154,7 +1167,7 @@ const StaffProfiles = () => {
                       <Input id="lga" value={formData.lga} onChange={e => f("lga", e.target.value)} />
                     </FormField>
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <FormField id="residential_address" label="Residential Address">
                       <Textarea id="residential_address" value={formData.residential_address} onChange={e => f("residential_address", e.target.value)} rows={2} />
                     </FormField>
@@ -1210,7 +1223,7 @@ const StaffProfiles = () => {
 
                 {/* ── Banking ── */}
                 <TabsContent value="banking" className="space-y-4 pb-6">
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <FormField id="bank_name" label="Bank Name">
                       <Input id="bank_name" value={formData.bank_name} onChange={e => f("bank_name", e.target.value)} placeholder="e.g. First Bank" />
                     </FormField>
@@ -1218,7 +1231,7 @@ const StaffProfiles = () => {
                       <Input id="account_number" value={formData.account_number} onChange={e => f("account_number", e.target.value)} maxLength={10} placeholder="10 digits" />
                     </FormField>
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <FormField id="account_name" label="Account Name">
                       <Input id="account_name" value={formData.account_name} onChange={e => f("account_name", e.target.value)} />
                     </FormField>
@@ -1259,6 +1272,15 @@ const StaffProfiles = () => {
           </form>
         </DialogContent>
       </Dialog>
+
+      <ConfirmDialog
+        open={pendingDeleteId !== null}
+        onOpenChange={(open) => { if (!open) setPendingDeleteId(null); }}
+        title="Delete this staff profile?"
+        description="This cannot be undone."
+        confirmLabel="Delete"
+        onConfirm={confirmDelete}
+      />
     </div>
   );
 };

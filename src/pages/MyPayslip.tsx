@@ -125,7 +125,7 @@ const MyPayslip = () => {
           <Wallet className="h-6 w-6 text-orange-600" />
         </div>
         <div>
-          <h1 className="text-3xl font-bold">My Payslips</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold">My Payslips</h1>
           <p className="text-muted-foreground text-sm">
             {staffProfile.full_name} · {(staffProfile as any).departments?.name || "—"} · {staffProfile.position?.replace(/_/g, " ")}
           </p>
@@ -229,7 +229,7 @@ const MyPayslip = () => {
 
       {/* Payslip Detail Dialog */}
       <Dialog open={!!selected} onOpenChange={(o) => { if (!o) setSelected(null); }}>
-        <DialogContent className="max-w-[230mm] p-0 overflow-hidden">
+        <DialogContent className="max-w-[230mm] p-0 sm:p-0 overflow-hidden">
           <div className="flex items-center justify-between px-6 py-3 border-b bg-muted/30">
             <p className="font-semibold text-sm">Payslip — {selected?.staff_name}</p>
             <Button variant="outline" size="sm" onClick={handlePrint}>

@@ -1,4 +1,4 @@
-import { jsPDF } from "jspdf";
+import type { jsPDF } from "jspdf";
 import { format } from "date-fns";
 
 /** Minimal shape needed to render a payroll register row. */
@@ -67,10 +67,11 @@ export interface PayrollPdfOptions {
  * Render a payroll register (one row per record) to a paginated A4-landscape PDF
  * and trigger a download. Works for the full list or any filtered subset.
  */
-export function exportPayrollRegisterPdf(
+export async function exportPayrollRegisterPdf(
   records: PayrollPdfRecord[],
   opts: PayrollPdfOptions = {},
-): void {
+): Promise<void> {
+  const { jsPDF } = await import("jspdf");
   const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
