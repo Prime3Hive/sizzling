@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
@@ -12,7 +12,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -46,22 +45,11 @@ export default function ReceiveGoodsDialog({ lpo, open, onOpenChange, onSuccess 
 
   const [receivedDate, setReceivedDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [notes, setNotes] = useState('');
-  const [budgetId, setBudgetId] = useState('');
   const [lines, setLines] = useState<ReceiveLine[]>([]);
   const [saving, setSaving] = useState(false);
 
-  const { data: budgets = [] } = useQuery({
-    queryKey: ['budgets-for-receive'],
-    queryFn: async () => {
-      const { data } = await supabase.from('budgets').select('id, title').order('title');
-      return data ?? [];
-    },
-    staleTime: 5 * 60_000,
-  });
-
   useEffect(() => {
     if (!lpo || !open) return;
-    setBudgetId(lpo.budget_id ?? '');
     setReceivedDate(format(new Date(), 'yyyy-MM-dd'));
     setNotes('');
 
@@ -107,11 +95,6 @@ export default function ReceiveGoodsDialog({ lpo, open, onOpenChange, onSuccess 
       toast({ title: 'No quantities entered', variant: 'destructive' });
       return;
     }
-    if (!budgetId) {
-      toast({ title: 'Please select a budget for the expense record', variant: 'destructive' });
-      return;
-    }
-
     setSaving(true);
     try {
       // 1. Create GRN header
@@ -162,27 +145,26 @@ export default function ReceiveGoodsDialog({ lpo, open, onOpenChange, onSuccess 
         .eq('id', lpo.id);
       if (lpoErr) throw lpoErr;
 
-      // 5. Create expense record at actual received value
-      const expenseDescription = `Purchase receipt ${receiptNumber} — ${lpo.supplier_name} (${lpo.lpo_number})`;
-      const { data: expense, error: expErr } = await supabase.from('expenses').insert({
-        amount: totalReceiving,
-        description: expenseDescription,
-        category: lpo.expense_category ?? 'Raw Materials',
-        date: receivedDate,
-        budget_id: budgetId,
-        account_type: lpo.account_type ?? 'COGS',
-        cost_center: lpo.cost_center ?? 'Daily Orders',
-        payment_method: lpo.payment_method ?? null,
-      }).select('id').single();
-      if (expErr) throw expErr;
+      // 5. Receiving goods posts NO expense.
+      //
+      //    Receiving stock is not a cost — it swaps one asset for a liability.
+      //    The journal is raised in the database by fn_capitalize_receipt_item:
+      //
+      //        Dr 1200 Inventory        (qty received x unit cost)
+      //        Cr 2000 Accounts Payable
+      //
+      //    Cost reaches the P&L later, when the stock is issued and consumed
+      //    (Dr 5000 COGS / Cr 1200 Inventory), and the payable is cleared later
+      //    still by an explicit supplier payment (Dr 2000 / Cr 1010 Bank).
+      //
+      //    This function previously inserted an `expenses` row here. That row
+      //    tripped the expense auto-poster, which posted a second, unwanted
+      //    journal — Dr 5000 COGS / Cr 1010 Bank — against a receipt that had
+      //    already been capitalised and had not been paid for. Every goods
+      //    receipt therefore hit the P&L and the bank twice over. Do not
+      //    reinstate it: one business event posts exactly one journal entry.
 
-      // 6. Link expense to GRN
-      await (supabase as any)
-        .from('lpo_receipts')
-        .update({ expense_id: expense.id })
-        .eq('id', receipt.id);
-
-      // 7. Update SKU stock quantities and record transactions for every received line
+      // 6. Update SKU stock quantities and record transactions for every received line
       for (const line of activeLines) {
         if (!line.sku_id) continue;
 
@@ -210,7 +192,7 @@ export default function ReceiveGoodsDialog({ lpo, open, onOpenChange, onSuccess 
         });
       }
 
-      // 8. If this LPO was raised from an inventory request and is now fully received,
+      // 7. If this LPO was raised from an inventory request and is now fully received,
       //    automatically mark that request as fulfilled.
       if (lpo.inventory_request_id && fullyReceived) {
         const totalQtyReceived = activeLines.reduce((s, l) => s + l.qty_receiving, 0);
@@ -229,14 +211,14 @@ export default function ReceiveGoodsDialog({ lpo, open, onOpenChange, onSuccess 
 
       toast({
         title: 'Goods received',
-        description: `${receiptNumber} · ₦${totalReceiving.toLocaleString('en-NG', { minimumFractionDigits: 2 })} added to expenses`,
+        description: `${receiptNumber} · ₦${totalReceiving.toLocaleString('en-NG', { minimumFractionDigits: 2 })} capitalised to inventory, owed to ${lpo.supplier_name}`,
       });
 
       qc.invalidateQueries({ queryKey: ['lpos'] });
-      qc.invalidateQueries({ queryKey: ['expenses'] });
-      qc.invalidateQueries({ queryKey: ['pl-expenses'] });
       qc.invalidateQueries({ queryKey: ['inv-req-skus'] });
       qc.invalidateQueries({ queryKey: ['skus'] });
+      qc.invalidateQueries({ queryKey: ['journal-all-lines'] });
+      qc.invalidateQueries({ queryKey: ['journal-entries'] });
 
       onSuccess();
       onOpenChange(false);
@@ -286,20 +268,6 @@ export default function ReceiveGoodsDialog({ lpo, open, onOpenChange, onSuccess 
                     onChange={e => setReceivedDate(e.target.value)}
                     required
                   />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Charge to Budget <span className="text-destructive">*</span></Label>
-                  <Select value={budgetId || '__none'} onValueChange={v => setBudgetId(v === '__none' ? '' : v)}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select budget…" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__none">— Select —</SelectItem>
-                      {budgets.map((b: any) => (
-                        <SelectItem key={b.id} value={b.id}>{b.title}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
                 </div>
               </div>
 

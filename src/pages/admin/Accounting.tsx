@@ -72,16 +72,33 @@ export default function Accounting() {
     },
   });
 
-  // All posted lines (with account + date) — the three statements derive from this
+  // All posted lines (with account + date) — the three statements derive from this.
+  //
+  // Fetched by page until the ledger is exhausted. This previously asked for
+  // .limit(10000) in a single call, which is not a safety net but a silent
+  // truncation: PostgREST returns the first N rows and reports no error, so
+  // once the ledger passed N lines the statements were computed from an
+  // arbitrary subset of the journal. Debits and credits balance over the whole
+  // ledger, never over a slice of it, so the trial balance drifted further out
+  // of balance with every entry posted. A partial ledger must fail loudly
+  // rather than render a plausible wrong number.
   const { data: allLines = [], isLoading: tbLoading } = useQuery<LineWithMeta[]>({
     queryKey: ["journal-all-lines"],
     queryFn: async () => {
-      const { data, error } = await (supabase as any)
-        .from("journal_lines")
-        .select("id, entry_id, account_id, debit, credit, description, reconciled_at, journal_entries!inner(entry_date, memo), chart_of_accounts(code, name, type, normal_balance)")
-        .limit(10000);
-      if (error) throw error;
-      return (data ?? []).map((r: any) => ({ ...r, entry_date: r.journal_entries?.entry_date, memo: r.journal_entries?.memo }));
+      const PAGE = 1000;
+      const out: any[] = [];
+      for (let from = 0; ; from += PAGE) {
+        const { data, error } = await (supabase as any)
+          .from("journal_lines")
+          .select("id, entry_id, account_id, debit, credit, description, reconciled_at, journal_entries!inner(entry_date, memo), chart_of_accounts(code, name, type, normal_balance)")
+          .order("id", { ascending: true })
+          .range(from, from + PAGE - 1);
+        if (error) throw error;
+        const page = data ?? [];
+        out.push(...page);
+        if (page.length < PAGE) break;
+      }
+      return out.map((r: any) => ({ ...r, entry_date: r.journal_entries?.entry_date, memo: r.journal_entries?.memo }));
     },
   });
 
@@ -99,38 +116,74 @@ export default function Accounting() {
     },
   });
 
-  // Aggregate lines into per-account {debit, credit}, with an optional date window
+  // Aggregate lines into per-account {debit, credit}, with an optional date window.
+  //
+  // Seeded from the chart of accounts so that every account is represented,
+  // then movement is added on top. An account that was posted to but nets to
+  // nil still carries movement and must still appear — Accounts Payable is the
+  // case that matters here: every goods receipt credits it and every supplier
+  // payment debits it, so it routinely nets to zero and used to vanish from
+  // both statements while carrying real traffic.
+  //
+  // A line whose account no longer resolves is counted, not skipped. Dropping
+  // it would quietly unbalance the statements, which is the failure this whole
+  // exercise exists to stop.
   const aggregate = (from: string | null, to: string) => {
-    const byAccount: Record<string, { account: any; debit: number; credit: number }> = {};
+    const byAccount: Record<string, { account: any; debit: number; credit: number; moved: boolean }> = {};
+    for (const a of accounts) {
+      byAccount[a.id] = { account: a, debit: 0, credit: 0, moved: false };
+    }
+
+    let orphanDebit = 0, orphanCredit = 0, orphanLines = 0;
+
     for (const l of allLines) {
-      const acc = l.chart_of_accounts;
-      if (!acc || !l.entry_date) continue;
+      if (!l.entry_date) continue;
       if (l.entry_date > to) continue;
       if (from && l.entry_date < from) continue;
-      const key = l.account_id;
-      if (!byAccount[key]) byAccount[key] = { account: acc, debit: 0, credit: 0 };
-      byAccount[key].debit += Number(l.debit);
-      byAccount[key].credit += Number(l.credit);
+
+      const debit = Number(l.debit) || 0;
+      const credit = Number(l.credit) || 0;
+      const slot = byAccount[l.account_id];
+
+      if (!slot) {
+        orphanLines += 1;
+        orphanDebit += debit;
+        orphanCredit += credit;
+        continue;
+      }
+
+      slot.debit += debit;
+      slot.credit += credit;
+      if (debit > 0 || credit > 0) slot.moved = true;
     }
-    return byAccount;
+
+    return { byAccount, orphans: { lines: orphanLines, debit: orphanDebit, credit: orphanCredit } };
   };
 
   // ── Trial balance (as of date) ──
   const trialBalance = useMemo(() => {
-    const byAccount = aggregate(null, asOf);
+    const { byAccount, orphans } = aggregate(null, asOf);
     const rows = Object.values(byAccount).map((r) => {
       const net = r.debit - r.credit;
       return { ...r, balanceDebit: net > 0 ? net : 0, balanceCredit: net < 0 ? -net : 0 };
-    }).filter((r) => r.balanceDebit > 0.005 || r.balanceCredit > 0.005);
+    })
+      // An account earns its row by having been posted to, not by closing on a
+      // number. Filtering on the closing balance alone hides every account that
+      // nets to nil over the period, which is exactly how a live Accounts
+      // Payable account disappeared off the face of the trial balance.
+      .filter((r) => r.moved || r.balanceDebit > 0.005 || r.balanceCredit > 0.005);
     rows.sort((a, b) => a.account.code.localeCompare(b.account.code));
-    const totalDebit = rows.reduce((s, r) => s + r.balanceDebit, 0);
-    const totalCredit = rows.reduce((s, r) => s + r.balanceCredit, 0);
-    return { rows, totalDebit, totalCredit, balanced: Math.abs(totalDebit - totalCredit) < 0.01 };
-  }, [allLines, asOf]);
+    const totalDebit = rows.reduce((s, r) => s + r.balanceDebit, 0) + orphans.debit;
+    const totalCredit = rows.reduce((s, r) => s + r.balanceCredit, 0) + orphans.credit;
+    return {
+      rows, orphans, totalDebit, totalCredit,
+      balanced: Math.abs(totalDebit - totalCredit) < 0.01,
+    };
+  }, [allLines, accounts, asOf]);
 
   // ── Income statement (period) ──
   const incomeStatement = useMemo(() => {
-    const byAccount = aggregate(isFrom, isTo);
+    const { byAccount } = aggregate(isFrom, isTo);
     const income: any[] = [], expense: any[] = [];
     for (const r of Object.values(byAccount)) {
       if (r.account.type === "income") {
@@ -146,11 +199,11 @@ export default function Accounting() {
     const totalIncome = income.reduce((s, r) => s + r.balance, 0);
     const totalExpense = expense.reduce((s, r) => s + r.balance, 0);
     return { income, expense, totalIncome, totalExpense, netIncome: totalIncome - totalExpense };
-  }, [allLines, isFrom, isTo]);
+  }, [allLines, accounts, isFrom, isTo]);
 
   // ── Balance sheet (as of date) ──
   const balanceSheet = useMemo(() => {
-    const byAccount = aggregate(null, bsAsOf);
+    const { byAccount } = aggregate(null, bsAsOf);
     const assets: any[] = [], liabilities: any[] = [], equity: any[] = [];
     let incomeToDate = 0, expenseToDate = 0;
     for (const r of Object.values(byAccount)) {
@@ -182,7 +235,7 @@ export default function Accounting() {
       totalAssets, totalLiabilities, totalEquity, totalLiabEquity,
       balanced: Math.abs(totalAssets - totalLiabEquity) < 0.01,
     };
-  }, [allLines, bsAsOf]);
+  }, [allLines, accounts, bsAsOf]);
 
   // ── New entry helpers ──
   const lineTotals = useMemo(() => {
@@ -238,7 +291,7 @@ export default function Accounting() {
   // Outstanding balance per statutory liability account (2100 VAT, 2300 PAYE,
   // 2310 Pension, 2320 NHF, 2340 Other) as of today, straight from the ledger.
   const remittanceRows = useMemo(() => {
-    const byAccount = aggregate(null, today);
+    const { byAccount } = aggregate(null, today);
     return REMITTANCE_ACCOUNTS.map((meta) => {
       const entry = Object.entries(byAccount).find(([, r]) => (r.account as any)?.code === meta.code);
       const accountId = entry?.[0] ?? accounts.find((a) => a.code === meta.code)?.id ?? null;
@@ -314,7 +367,7 @@ export default function Accounting() {
   });
 
   const booksCheck = useMemo(() => {
-    const byAccount = aggregate(bcFrom, bcTo);
+    const { byAccount } = aggregate(bcFrom, bcTo);
     let glRevenue = 0, glExpense = 0;
     for (const r of Object.values(byAccount)) {
       if ((r.account as any).type === "income") glRevenue += r.credit - r.debit;
