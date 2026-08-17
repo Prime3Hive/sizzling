@@ -1,4 +1,17 @@
 // Centralized expense categories and constants used across Expenses, P/L, and Ledger
+//
+// ⚠ DEPRECATED for expense capture. Categories, cost centres and expense
+// accounts are now controlled tables read through src/hooks/useExpenseReference:
+//   EXPENSE_CATEGORIES → public.expense_categories
+//   COST_CENTERS       → public.cost_centres
+//   ACCOUNT_TYPES      → public.chart_of_accounts, via EXPENSE_ACCOUNTS in
+//                        src/lib/expenseConfig.ts. The two-value COGS/OpEX
+//                        control is gone: it left Rent (5200) and Utilities
+//                        (5300) unreachable from the form.
+//
+// These arrays remain only for src/components/procurement/LPOSheet.tsx, which
+// belongs to the procure-to-pay work governed by FIX-INSTRUCTIONS.md. Do not
+// add new expense-capture uses.
 
 export const EXPENSE_CATEGORIES = [
   'Raw Materials',
