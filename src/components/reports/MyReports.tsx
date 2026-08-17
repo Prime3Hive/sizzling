@@ -21,6 +21,12 @@ import {
   type ReportType, type CreditLineKind, type OperationsDetails,
 } from '@/lib/reports';
 import ReportDetailsDialog, { type StaffReportRecord } from '@/components/reports/ReportDetailsDialog';
+import StaffExpenseClaim, {
+  emptyDraft, loadDraft, clearDraft, type ClaimDraft,
+} from '@/components/expenses/StaffExpenseClaim';
+import { parseMoney, isMoneyError, formatMinor } from '@/lib/money';
+import { useExpenseCategories } from '@/hooks/useExpenseReference';
+import { MoneyInput } from '@/components/ui/money-input';
 import { formatNairaCompact } from '@/lib/currency';
 
 interface Assignment { id: string; report_type: ReportType; cadence: string; due_time: string | null; active: boolean; }
@@ -40,7 +46,10 @@ export default function MyReports() {
   const [viewing, setViewing] = useState<Report | null>(null);
   const [type, setType] = useState<ReportType>('sales');
   const [form, setForm] = useState({ report_date: today(), title: '', summary: '', amount: '', payment_method: 'cash', sale_type: 'daily', source: '', is_supplier: false, due_date: '', misc_description: '', misc_amount: '', petty_description: '', petty_amount: '' });
-  const [expLines, setExpLines] = useState<{ category: string; amount: string; description: string }[]>([{ category: '', amount: '', description: '' }]);
+  // The expense report is a structured claim now, not free text (§6.1).
+  const [claim, setClaim] = useState<ClaimDraft>(emptyDraft);
+  const [claimValid, setClaimValid] = useState(false);
+  const [claimOutstanding, setClaimOutstanding] = useState<string[]>([]);
   const [invLines, setInvLines] = useState<{ item: string; counted: string; used: string }[]>([{ item: '', counted: '', used: '' }]);
   const [creditLines, setCreditLines] = useState<CreditLineForm[]>([emptyCreditLine()]);
   const [kitchenLines, setKitchenLines] = useState<{ item: string; prepared: string; served: string; wasted: string }[]>([{ item: '', prepared: '', served: '', wasted: '' }]);
@@ -84,40 +93,98 @@ export default function MyReports() {
   const typeOptions = (assignedTypes.length ? assignedTypes : (Object.keys(REPORT_TYPES) as ReportType[]));
 
   const summary = useMemo(() => summarizePerformance(reports), [reports]);
+  const { data: categories = [] } = useExpenseCategories();
 
   const resetForm = () => {
     setForm({ report_date: today(), title: '', summary: '', amount: '', payment_method: 'cash', sale_type: 'daily', source: '', is_supplier: false, due_date: '', misc_description: '', misc_amount: '', petty_description: '', petty_amount: '' });
-    setExpLines([{ category: '', amount: '', description: '' }]);
+    setClaim(emptyDraft());
+    setClaimValid(false);
+    setClaimOutstanding([]);
     setInvLines([{ item: '', counted: '', used: '' }]);
     setCreditLines([emptyCreditLine()]);
     setKitchenLines([{ item: '', prepared: '', served: '', wasted: '' }]);
     setOpsForm({ key_activities: '', challenges: '', observations: '', suggestions: '' });
   };
 
-  const openNew = () => { setType(typeOptions[0] ?? 'sales'); resetForm(); setOpen(true); };
+  /** Parse a credit line amount, naming the item in any error. */
+  const creditMinorOf = (raw: string, item: string): number => {
+    if (!raw.trim()) return 0;
+    const parsed = parseMoney(raw, { label: `amount for ${item || 'this item'}` });
+    if (isMoneyError(parsed)) throw new Error(parsed.error);
+    return Number(parsed.minor);
+  };
+
+  const openNew = () => {
+    const first = typeOptions[0] ?? 'sales';
+    setType(first);
+    resetForm();
+    // A claim abandoned mid-market is picked back up rather than lost (§6.2).
+    const saved = loadDraft(user?.id, today());
+    if (saved && saved.lines.length > 0) {
+      setClaim(saved);
+      toast({
+        title: 'Draft restored',
+        description: `${saved.lines.length} line${saved.lines.length === 1 ? '' : 's'} you had not submitted. Re-attach any receipts.`,
+      });
+    }
+    setOpen(true);
+  };
 
   const submit = useMutation({
     mutationFn: async () => {
       const assignment = assignments.find(a => a.report_type === type);
       let amount: number | null = null;
+      let amountMinor: number | null = null;
       const details: Record<string, unknown> = {};
 
       if (type === 'sales') {
-        amount = parseFloat(form.amount) || 0;
-        if (amount <= 0) throw new Error('Enter the sales amount');
+        // Same parser as every money field — parseFloat on a raw string is
+        // what stored 922,340 as 922.34.
+        const salesParsed = parseMoney(form.amount, { label: 'sales amount' });
+        if (isMoneyError(salesParsed)) throw new Error(salesParsed.error);
+        amountMinor = Number(salesParsed.minor);
+        amount = amountMinor / 100;
         details.payment_method = form.payment_method;
         details.sale_type = form.sale_type;
       } else if (type === 'expense') {
-        const lines = expLines
-          .map(l => ({ category: l.category.trim(), amount: parseFloat(l.amount) || 0, description: l.description.trim() }))
-          .filter(l => l.category && l.amount > 0);
-        const miscAmt = parseFloat(form.misc_amount) || 0;
-        if (miscAmt > 0) lines.push({ category: 'Miscellaneous', amount: miscAmt, description: form.misc_description.trim() });
-        const pettyAmt = parseFloat(form.petty_amount) || 0;
-        if (pettyAmt > 0) lines.push({ category: 'Petty Cash', amount: pettyAmt, description: form.petty_description.trim() });
-        if (lines.length === 0) throw new Error('Add at least one expense line (or a miscellaneous / petty cash amount)');
-        amount = lines.reduce((s, l) => s + l.amount, 0);
+        // Amounts come from parseMoney, never parseFloat, and each line keeps
+        // its own category id so the approver is not mapping free text.
+        if (claim.lines.length === 0) throw new Error('Add at least one expense line');
+        if (!claimValid) throw new Error(claimOutstanding[0] ?? 'Some lines are incomplete');
+
+        const lines = claim.lines.map(l => {
+          const parsed = parseMoney(l.amount);
+          if (isMoneyError(parsed)) throw new Error(`"${l.description}": ${parsed.error}`);
+          return {
+            category_id: l.categoryId,
+            category: categories.find(c => c.id === l.categoryId)?.name ?? 'Miscellaneous',
+            amount_minor: Number(parsed.minor),
+            // Kept for anything still reading the old shape.
+            amount: Number(parsed.minor) / 100,
+            description: l.description,
+            receipt_name: l.receiptName,
+          };
+        });
+
+        const totalMinor = lines.reduce((t, l) => t + l.amount_minor, 0);
+
+        const statedRaw = claim.statedTotal.trim();
+        if (statedRaw) {
+          const statedParsed = parseMoney(statedRaw, { allowZero: true, label: 'total' });
+          if (isMoneyError(statedParsed)) throw new Error(statedParsed.error);
+          if (Number(statedParsed.minor) !== totalMinor) {
+            throw new Error(
+              `The lines total ${formatMinor(BigInt(totalMinor))} but you stated ${formatMinor(statedParsed.minor)}. Reconcile them before submitting.`,
+            );
+          }
+          details.stated_total_minor = Number(statedParsed.minor);
+        }
+
+        amountMinor = totalMinor;
+        amount = totalMinor / 100;
         details.lines = lines;
+        details.total_minor = totalMinor;
+        if (claim.notes.trim()) details.notes = claim.notes.trim();
       } else if (type === 'credit') {
         const lines = creditLines
           .map(l => {
@@ -129,12 +196,14 @@ export default function MyReports() {
               product_id: l.kind === 'product' && l.product_id ? l.product_id : null,
               item,
               qty: parseFloat(l.qty) || null,
-              amount: parseFloat(l.amount) || 0,
+              amount_minor: creditMinorOf(l.amount, item),
+              amount: creditMinorOf(l.amount, item) / 100,
             };
           })
-          .filter(l => l.item && l.amount > 0);
+          .filter(l => l.item && l.amount_minor > 0);
         if (lines.length === 0) throw new Error('Add at least one item bought on credit');
-        amount = lines.reduce((s, l) => s + l.amount, 0);
+        amountMinor = lines.reduce((t, l) => t + l.amount_minor, 0);
+        amount = amountMinor / 100;
         details.lines = lines;
         details.source = form.source.trim() || null;
         details.is_supplier = form.is_supplier;
@@ -172,6 +241,7 @@ export default function MyReports() {
         title: form.title || `${REPORT_TYPES[type].label} — ${form.report_date}`,
         summary: form.summary || null,
         amount,
+        amount_minor: amountMinor,
         payment_method: type === 'sales' ? form.payment_method : null,
         details,
         timeliness_score: timeliness,
@@ -183,6 +253,7 @@ export default function MyReports() {
     },
     onSuccess: () => {
       toast({ title: 'Report submitted', description: 'Your report has been sent for review.' });
+      clearDraft(user?.id, form.report_date);
       setOpen(false);
       resetForm();
       qc.invalidateQueries({ queryKey: ['my-reports'] });
@@ -331,8 +402,12 @@ export default function MyReports() {
             {type === 'sales' && (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-2">
-                  <Label>Amount (₦)</Label>
-                  <Input type="number" min="0" step="0.01" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} />
+                  <Label htmlFor="sales-amount">Amount (₦)</Label>
+                  <MoneyInput
+                    id="sales-amount"
+                    value={form.amount}
+                    onChange={v => setForm(f => ({ ...f, amount: v }))}
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label>Payment method</Label>
@@ -358,33 +433,16 @@ export default function MyReports() {
             )}
 
             {type === 'expense' && (
-              <>
-                <div className="space-y-2">
-                  <Label>Expense lines</Label>
-                  {expLines.map((l, i) => (
-                    <div key={i} className="flex gap-2">
-                      <Input className="flex-1" placeholder="Category" value={l.category} onChange={e => setExpLines(p => p.map((x, idx) => idx === i ? { ...x, category: e.target.value } : x))} />
-                      <Input className="w-28" type="number" min="0" placeholder="Amount" value={l.amount} onChange={e => setExpLines(p => p.map((x, idx) => idx === i ? { ...x, amount: e.target.value } : x))} />
-                      <Button type="button" variant="ghost" size="icon" className="text-destructive shrink-0" onClick={() => setExpLines(p => p.length > 1 ? p.filter((_, idx) => idx !== i) : p)}><Trash2 className="h-4 w-4" /></Button>
-                    </div>
-                  ))}
-                  <Button type="button" variant="outline" size="sm" onClick={() => setExpLines(p => [...p, { category: '', amount: '', description: '' }])}><Plus className="h-3.5 w-3.5 mr-1" />Add line</Button>
-                </div>
-
-                <div className="space-y-2 rounded-lg border p-2">
-                  <Label>Miscellaneous</Label>
-                  <p className="text-xs text-muted-foreground">List small uncategorised expenses here; their total is added to the report.</p>
-                  <Textarea rows={2} placeholder="e.g. fuel ₦2,000; bottled water ₦500; parking ₦300" value={form.misc_description} onChange={e => setForm(f => ({ ...f, misc_description: e.target.value }))} />
-                  <Input type="number" min="0" step="0.01" placeholder="Total amount (₦)" value={form.misc_amount} onChange={e => setForm(f => ({ ...f, misc_amount: e.target.value }))} />
-                </div>
-
-                <div className="space-y-2 rounded-lg border p-2">
-                  <Label>Petty cash</Label>
-                  <p className="text-xs text-muted-foreground">Cash spent from the petty cash float.</p>
-                  <Textarea rows={2} placeholder="What the petty cash was spent on" value={form.petty_description} onChange={e => setForm(f => ({ ...f, petty_description: e.target.value }))} />
-                  <Input type="number" min="0" step="0.01" placeholder="Amount (₦)" value={form.petty_amount} onChange={e => setForm(f => ({ ...f, petty_amount: e.target.value }))} />
-                </div>
-              </>
+              <StaffExpenseClaim
+                userId={user?.id}
+                reportDate={form.report_date}
+                draft={claim}
+                onChange={setClaim}
+                onValidityChange={(valid, outstanding) => {
+                  setClaimValid(valid);
+                  setClaimOutstanding(outstanding);
+                }}
+              />
             )}
 
             {type === 'credit' && (
@@ -438,7 +496,14 @@ export default function MyReports() {
                         </div>
                         <div className="flex gap-2">
                           <Input className="w-24" type="number" min="0" placeholder="Qty" value={l.qty} onChange={e => update({ qty: e.target.value })} />
-                          <Input className="flex-1" type="number" min="0" step="0.01" placeholder="Amount (₦)" value={l.amount} onChange={e => update({ amount: e.target.value })} />
+                          <div className="flex-1">
+                            <MoneyInput
+                              aria-label="Amount"
+                              value={l.amount}
+                              onChange={v => update({ amount: v })}
+                              showPreview={false}
+                            />
+                          </div>
                         </div>
                       </div>
                     );
@@ -511,9 +576,22 @@ export default function MyReports() {
             <div className="space-y-2"><Label>Notes / summary (optional)</Label><Textarea rows={2} value={form.summary} onChange={e => setForm(f => ({ ...f, summary: e.target.value }))} /></div>
           </div>
 
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button onClick={() => submit.mutate()} disabled={submit.isPending}>
+          <DialogFooter className="flex-col sm:flex-row gap-2">
+            {type === 'expense' && claimOutstanding.length > 0 && (
+              <div className="sm:mr-auto text-xs text-amber-600 text-left" role="status">
+                <p className="font-medium">Before you can submit:</p>
+                <ul className="list-disc pl-4">
+                  {claimOutstanding.slice(0, 3).map((o, i) => <li key={i}>{o}</li>)}
+                  {claimOutstanding.length > 3 && <li>and {claimOutstanding.length - 3} more</li>}
+                </ul>
+              </div>
+            )}
+            <Button variant="outline" className="h-11" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button
+              className="h-11"
+              onClick={() => submit.mutate()}
+              disabled={submit.isPending || (type === 'expense' && !claimValid)}
+            >
               {submit.isPending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}Submit
             </Button>
           </DialogFooter>

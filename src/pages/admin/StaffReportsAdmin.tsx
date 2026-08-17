@@ -22,6 +22,8 @@ import {
   type ReportType,
 } from '@/lib/reports';
 import { formatNairaCompact } from '@/lib/currency';
+import { nairaToMinor } from '@/lib/money';
+import { checkExpenseClaim } from '@/lib/expenseValidation';
 import ChecklistAdmin from '@/components/reports/ChecklistAdmin';
 import ReportDetailsDialog, { type StaffReportRecord } from '@/components/reports/ReportDetailsDialog';
 
@@ -109,15 +111,59 @@ export default function StaffReportsAdmin() {
       let status: 'approved' | 'converted' = 'approved';
 
       if (r.report_type === 'expense') {
-        const lines: { category: string; amount: number; description: string }[] = r.details?.lines ?? [];
-        const rows = (lines.length ? lines : [{ category: 'General', amount: r.amount ?? 0, description: r.title ?? '' }])
-          .filter(l => (l.amount ?? 0) > 0)
-          .map(l => ({
-            amount: l.amount, description: l.description || r.title || 'Staff expense report',
-            category: l.category || 'General', date: r.report_date, budget_id: null,
-            account_type: 'COGS', cost_center: 'Daily Orders', created_by: user!.id,
-          }));
-        const { data, error } = await supabase.from('expenses').insert(rows).select('id');
+        // The approver may not be the submitter. The database enforces this
+        // too; this is the message a human can act on.
+        if (r.user_id === user!.id) {
+          throw new Error('You cannot approve an expense report you submitted yourself.');
+        }
+
+        const lines: {
+          category: string; category_id?: string | null;
+          amount?: number; amount_minor?: number; description: string;
+        }[] = r.details?.lines ?? [];
+
+        if (lines.length === 0) {
+          throw new Error('This report has no expense lines. Reject it and ask for them to be entered.');
+        }
+
+        // Amounts are already kobo on new reports; older ones carry only the
+        // naira value, so convert rather than re-parsing a formatted string.
+        const withMinor = lines
+          .map(l => ({ ...l, minor: l.amount_minor ?? Number(nairaToMinor(l.amount ?? 0)) }))
+          .filter(l => l.minor > 0);
+
+        const stated = r.details?.stated_total_minor ?? null;
+        const check = checkExpenseClaim({
+          lines: withMinor.map(l => ({ amount_minor: BigInt(l.minor) })),
+          statedTotalMinor: stated === null ? null : BigInt(stated),
+          submittedBy: r.user_id,
+          approvedBy: user!.id,
+        });
+        if (check.errors.length > 0) throw new Error(check.errors[0].message);
+
+        const rows = withMinor.map(l => ({
+          amount_minor: l.minor,
+          description: l.description || r.title || 'Staff expense report',
+          category: l.category || 'Miscellaneous',
+          category_id: l.category_id ?? null,
+          date: r.report_date,
+          budget_id: null,
+          account_type: 'COGS',
+          cost_center: 'Daily Orders',
+          payment_method: 'Cash',
+          payee_name: nameOf(r.user_id),
+          // Identity carried THROUGH the approval boundary: the staff member
+          // stays the submitter, the approver is recorded separately. That
+          // link used to be lost here.
+          submitted_by: r.user_id,
+          submitted_at: r.submitted_at,
+          created_by: user!.id,
+          approved_by: user!.id,
+          approved_at: new Date().toISOString(),
+          status: 'approved',
+        }));
+
+        const { data, error } = await supabase.from('expenses').insert(rows as any).select('id');
         if (error) throw error;
         convertedRef = data?.[0]?.id ?? null;
         status = 'converted';
@@ -151,22 +197,31 @@ export default function StaffReportsAdmin() {
         // Accrual basis (audit fix A7): the cost is recognised when incurred,
         // not when the supplier is eventually paid — so the expense record is
         // created NOW, dated to the report date, alongside the payable.
+        const creditMinor = (r as any).amount_minor ?? Number(nairaToMinor(r.amount ?? 0));
         const { data: exp, error: expErr } = await supabase.from('expenses').insert({
-          amount: r.amount ?? 0,
+          amount_minor: creditMinor,
           description: `Credit purchase — ${supplier}${items ? `: ${items}` : ''}`,
           category: 'Credit Purchase',
           date: r.report_date,
           budget_id: null,
           account_type: 'COGS',
           cost_center: 'Daily Orders',
+          // Bought on credit, so the journal credits 2000 Accounts Payable
+          // rather than Bank.
+          payment_method: 'Credit',
+          payee_name: supplier,
+          submitted_by: r.user_id,
+          submitted_at: r.submitted_at,
           created_by: user!.id,
-        }).select('id').single();
+          approved_by: user!.id,
+          approved_at: new Date().toISOString(),
+        } as any).select('id').single();
         if (expErr) throw expErr;
 
         const { data, error } = await supabase.from('payables').insert({
           supplier,
           description: items || r.title || null, category: 'Credit Purchase',
-          amount: r.amount ?? 0, incurred_date: r.report_date,
+          amount_minor: creditMinor, incurred_date: r.report_date,
           due_date: r.details?.due_date ?? null, status: 'unpaid',
           expense_id: exp!.id,
           source_report_id: r.id, created_by: user!.id,
@@ -243,14 +298,23 @@ export default function StaffReportsAdmin() {
       // would double-count the cost.
       // Legacy payables created before that change have no linked expense yet,
       // so record one, dated to the incurred date (the correct P&L period).
+      // Settling a payable moves money; it does not incur a new cost. The
+      // journal Dr 2000 / Cr Cash|Bank is posted by fn_post_payable_settlement
+      // on this update, so nothing is written to `expenses` for the payment.
+      //
+      // Legacy payables created before the accrual fix have no linked expense,
+      // meaning the cost was never recognised at all. Record it, dated to when
+      // it was incurred, marked as on credit so it credits Accounts Payable —
+      // which the settlement below then clears.
       let expenseId = p.expense_id ?? null;
       if (!expenseId) {
         const { data: exp, error: expErr } = await supabase.from('expenses').insert({
-          amount: p.amount, description: `Credit purchase — ${p.supplier}${p.description ? `: ${p.description}` : ''}`,
+          amount_minor: (p as any).amount_minor ?? Number(nairaToMinor(p.amount)),
+          description: `Credit purchase — ${p.supplier}${p.description ? `: ${p.description}` : ''}`,
           category: p.category || 'Credit Purchase', date: p.incurred_date,
           budget_id: null, account_type: 'COGS', cost_center: 'Daily Orders',
-          payment_method: payMethod, created_by: user!.id,
-        }).select('id').single();
+          payment_method: 'Credit', payee_name: p.supplier, created_by: user!.id,
+        } as any).select('id').single();
         if (expErr) throw expErr;
         expenseId = exp!.id;
       }

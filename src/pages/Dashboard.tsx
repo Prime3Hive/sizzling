@@ -139,11 +139,17 @@ const Dashboard = () => {
     enabled: !!user && isAdmin,
   });
 
-  // Budgets
+  // Budgets. The date range matters: the expense KPI compares month-to-date
+  // spend against the budget FOR THAT PERIOD, not against the sum of every
+  // budget on file (E-05 — that reported August's spend as 2% of budget by
+  // dividing by all twelve months' budgets).
   const { data: budgets = [] } = useQuery({
     queryKey: ['dashboard-budgets', user?.id],
     queryFn: async () => {
-      const { data, error } = await supabase.from('budgets').select('total_budget').eq('user_id', user!.id);
+      const { data, error } = await supabase
+        .from('budgets')
+        .select('total_budget, start_date, end_date')
+        .eq('user_id', user!.id);
       if (error) throw error;
       return data || [];
     },
@@ -388,7 +394,32 @@ const Dashboard = () => {
   const isLoading = expLoading || salesLoading || ytdExpLoading || payrollLoading;
 
   const monthlySpent = monthlyExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
-  const totalBudget = budgets.reduce((sum, b) => sum + Number(b.total_budget), 0);
+
+  // Budget for the CURRENT period only — any budget whose range overlaps this
+  // month. Summing all twelve is what produced "2% of budget".
+  const periodBudget = (() => {
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    const overlapping = budgets.filter((b: any) => {
+      if (!b.start_date || !b.end_date) return false;
+      return new Date(b.start_date) <= monthEnd && new Date(b.end_date) >= monthStart;
+    });
+    return overlapping.reduce((sum: number, b: any) => sum + Number(b.total_budget), 0);
+  })();
+
+  const budgetUsedPct = periodBudget > 0 ? (monthlySpent / periodBudget) * 100 : null;
+  const budgetRemaining = periodBudget - monthlySpent;
+
+  // Projected outturn at the current run rate: spend so far, scaled to the
+  // whole month.
+  const projectedOutturn = (() => {
+    const now = new Date();
+    const dayOfMonth = now.getDate();
+    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    if (dayOfMonth === 0) return monthlySpent;
+    return (monthlySpent / dayOfMonth) * daysInMonth;
+  })();
 
   const pendingPayroll = payrollRecords.filter(r => r.status === 'pending');
   const totalPendingPay = pendingPayroll.reduce((sum, r) => sum + Number(r.net_pay), 0);
@@ -757,7 +788,15 @@ const Dashboard = () => {
           />
           <ExecKpi
             to="/expenses" label="Expenses (MTD)" value={formatNairaCompact(monthlySpent)}
-            sub={totalBudget > 0 ? `${((monthlySpent / totalBudget) * 100).toFixed(0)}% of budget` : 'No budget set'}
+            sub={
+              budgetUsedPct === null
+                ? 'No budget set for this month'
+                : `${budgetUsedPct.toFixed(1)}% of ${formatNairaCompact(periodBudget)} · ${
+                    budgetRemaining >= 0
+                      ? `${formatNairaCompact(budgetRemaining)} left`
+                      : `${formatNairaCompact(-budgetRemaining)} over`
+                  } · projected ${formatNairaCompact(projectedOutturn)}`
+            }
             icon={Receipt} accent="bg-red-100 text-red-700"
           />
           <ExecKpi
