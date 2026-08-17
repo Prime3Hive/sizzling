@@ -99,7 +99,14 @@ CREATE TABLE IF NOT EXISTS public.expense_claim (
   -- A total the staff member stated, to reconcile the lines against.
   stated_total_minor bigint,
   -- The accounting period the claim falls in, derived from the claim date.
-  period_month  date        GENERATED ALWAYS AS (date_trunc('month', claim_date)::date) STORED,
+  --
+  -- The cast to `timestamp` is required, not decorative. There is no
+  -- date_trunc(text, date) overload, so a bare `claim_date` resolves to
+  -- date_trunc(text, timestamptz), which is STABLE rather than IMMUTABLE
+  -- because it depends on the session TimeZone — and a generated column
+  -- rejects a non-immutable expression:
+  --   ERROR: 42P17: generation expression is not immutable
+  period_month  date        GENERATED ALWAYS AS (date_trunc('month', claim_date::timestamp)::date) STORED,
   notes         text,
   -- Set when an approved claim has been written into `expenses`.
   posted_at     timestamptz,
