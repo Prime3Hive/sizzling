@@ -1,14 +1,19 @@
 import React from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { formatNairaCompact } from '@/lib/currency';
+import { formatMinor, sumMinor } from '@/lib/money';
 
 interface Expense {
   id: string;
   amount: number;
+  amount_minor?: number | null;
   category: string;
   receipt_path: string | null;
 }
+
+/** Kobo for a row, falling back to the derived naira column for old data. */
+const minorOf = (e: Expense): bigint =>
+  BigInt(e.amount_minor ?? Math.round((Number(e.amount) || 0) * 100));
 
 const getCategoryColor = (category: string) => {
   const colors: Record<string, string> = {
@@ -24,15 +29,16 @@ const getCategoryColor = (category: string) => {
 const ExpenseSummary = ({ expenses }: { expenses: Expense[] }) => {
   if (expenses.length === 0) return null;
 
-  const totalAmount = expenses.reduce((sum, e) => sum + Number(e.amount), 0);
+  // Summed in kobo so a category total never drifts by a fraction of a naira.
+  const totalMinor = sumMinor(expenses.map(minorOf));
   const categoryMap = expenses.reduce((acc, e) => {
     const cat = e.category || 'Uncategorized';
-    if (!acc[cat]) acc[cat] = { count: 0, amount: 0 };
+    if (!acc[cat]) acc[cat] = { count: 0, minor: 0n };
     acc[cat].count += 1;
-    acc[cat].amount += Number(e.amount);
+    acc[cat].minor += minorOf(e);
     return acc;
-  }, {} as Record<string, { count: number; amount: number }>);
-  const sorted = Object.entries(categoryMap).sort((a, b) => b[1].amount - a[1].amount);
+  }, {} as Record<string, { count: number; minor: bigint }>);
+  const sorted = Object.entries(categoryMap).sort((a, b) => Number(b[1].minor - a[1].minor));
 
   return (
     <>
@@ -46,7 +52,7 @@ const ExpenseSummary = ({ expenses }: { expenses: Expense[] }) => {
             </div>
             <div className="p-4 bg-muted rounded-lg">
               <p className="text-sm text-muted-foreground">Total Amount</p>
-              <p className="text-2xl font-bold">{formatNairaCompact(totalAmount)}</p>
+              <p className="text-2xl font-bold">{formatMinor(totalMinor)}</p>
             </div>
             <div className="p-4 bg-muted rounded-lg">
               <p className="text-sm text-muted-foreground">With Receipts</p>
@@ -64,7 +70,7 @@ const ExpenseSummary = ({ expenses }: { expenses: Expense[] }) => {
         <CardContent>
           <div className="space-y-4">
             {sorted.map(([category, data]) => {
-              const percentage = totalAmount > 0 ? (data.amount / totalAmount) * 100 : 0;
+              const percentage = totalMinor > 0n ? (Number(data.minor) / Number(totalMinor)) * 100 : 0;
               return (
                 <div key={category} className="space-y-2">
                   <div className="flex items-center justify-between">
@@ -73,7 +79,7 @@ const ExpenseSummary = ({ expenses }: { expenses: Expense[] }) => {
                       <span className="text-sm text-muted-foreground">({data.count} expense{data.count !== 1 ? 's' : ''})</span>
                     </div>
                     <div className="text-right">
-                      <span className="font-semibold">{formatNairaCompact(data.amount)}</span>
+                      <span className="font-semibold tabular-nums">{formatMinor(data.minor)}</span>
                       <span className="text-sm text-muted-foreground ml-2">({percentage.toFixed(1)}%)</span>
                     </div>
                   </div>
@@ -85,7 +91,7 @@ const ExpenseSummary = ({ expenses }: { expenses: Expense[] }) => {
             })}
             <div className="border-t pt-4 mt-4 flex items-center justify-between font-semibold">
               <span>Grand Total</span>
-              <span className="text-lg">{formatNairaCompact(totalAmount)}</span>
+              <span className="text-lg">{formatMinor(totalMinor)}</span>
             </div>
           </div>
         </CardContent>

@@ -1,46 +1,109 @@
-import React, { useState, useEffect } from 'react';
-import { z } from 'zod';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, Plus, Scissors } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Plus, X } from 'lucide-react';
+import { FormSheet, Field, RequiredLegend } from '@/components/ui/form-sheet';
+import { MoneyInput } from '@/components/ui/money-input';
+import { SearchableSelect } from '@/components/ui/searchable-select';
+import ReceiptUpload from '@/components/expenses/ReceiptUpload';
+import SplitLinesDialog, { type DraftLine } from '@/components/expenses/SplitLinesDialog';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useRoles } from '@/hooks/useRoles';
 import { useToast } from '@/hooks/use-toast';
-import { EXPENSE_CATEGORIES, ACCOUNT_TYPES, COST_CENTERS, PAYMENT_METHODS } from '@/lib/expenseConstants';
+import { parseMoney, isMoneyError, formatMinor, nairaToMinor } from '@/lib/money';
+import {
+  validateExpenseLine,
+  validationErrors,
+  errorMap,
+  todayIso,
+  type FieldError,
+  type ExpenseLineInput,
+  type ValidatedExpenseLine,
+} from '@/lib/expenseValidation';
+import { PAYMENT_METHODS } from '@/lib/expenseConstants';
+import {
+  useExpenseCategories, useCostCentres, usePayees, useExpenseAccounts,
+  useBankAccounts, useLockedThrough, useBudgetsWithSpend,
+  categoryOptions, costCentreOptions, payeeOptions, accountOptions,
+  bankOptions, budgetOptions,
+} from '@/hooks/useExpenseReference';
 
-const expenseSchema = z.object({
-  amount: z.number().positive('Amount must be positive').max(999999999, 'Amount too large'),
-  description: z.string().min(1, 'Description required').max(500, 'Description too long'),
-  category: z.string().min(1, 'Category required').max(100),
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format'),
-  budgetId: z.string().optional(),
-  accountType: z.string().max(50).optional(),
-  costCenter: z.string().max(100).optional(),
-  bankAccount: z.string().max(100).optional(),
-  paymentMethod: z.string().max(50).optional(),
+// ─────────────────────────────────────────────────────────────────────────────
+// Add / edit a single expense.
+//
+// Mobile first: a full-screen sheet below 640px with a sticky action bar, one
+// column, 44px targets and 16px text. Two columns from 640px, capped at 720px
+// so a text input is never 1400px wide.
+//
+// Field order is identical at every width (§5.1) — staff who learn one order
+// should not have to relearn it on another device.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const db = supabase as any;
+
+const ONE_OFF = '__one_off__';
+
+interface FormState {
+  amount: string;
+  date: string;
+  payeeId: string;
+  payeeName: string;
+  description: string;
+  categoryId: string;
+  budgetId: string;
+  accountId: string;
+  costCentreId: string;
+  paymentMethod: string;
+  bankAccountId: string;
+  vat: string;
+  wht: string;
+  reference: string;
+}
+
+const blank = (): FormState => ({
+  amount: '',
+  date: todayIso(),
+  payeeId: '',
+  payeeName: '',
+  description: '',
+  categoryId: '',
+  budgetId: '',
+  accountId: '',
+  costCentreId: '',
+  // NO pre-selected value. The old control displayed "Select method" while
+  // actually holding "Card" (§5.4).
+  paymentMethod: '',
+  bankAccountId: '',
+  vat: '',
+  wht: '',
+  reference: '',
 });
 
-interface EditingExpense {
+export interface EditingExpense {
   id: string;
+  amount_minor?: number;
   amount: number;
   description: string;
   category: string;
+  category_id?: string | null;
   date: string;
-  budget_id: string;
-  account_type: string | null;
+  budget_id: string | null;
   cost_center: string | null;
-  bank_account: string | null;
   payment_method: string | null;
   receipt_path: string | null;
+  expense_account_code?: string | null;
+  payee_id?: string | null;
+  payee_name?: string | null;
+  reference?: string | null;
+  vat_minor?: number | null;
+  wht_minor?: number | null;
+  bank_account_id?: string | null;
 }
 
-interface ExpenseFormDialogProps {
-  budgets: { id: string; title: string }[];
+interface Props {
+  budgets?: { id: string; title: string }[];
   onExpenseAdded: () => void;
   editingExpense?: EditingExpense | null;
   isEditOpen?: boolean;
@@ -48,286 +111,586 @@ interface ExpenseFormDialogProps {
   onExpenseUpdated?: () => void;
 }
 
-const ExpenseFormDialog = ({ budgets, onExpenseAdded, editingExpense, isEditOpen, onEditOpenChange, onExpenseUpdated }: ExpenseFormDialogProps) => {
+const METHODS_NEEDING_BANK = new Set(['transfer', 'card', 'pos']);
+
+export default function ExpenseFormDialog({
+  onExpenseAdded,
+  editingExpense,
+  isEditOpen,
+  onEditOpenChange,
+  onExpenseUpdated,
+}: Props) {
   const { user } = useAuth();
   const { isAdmin } = useRoles();
   const { toast } = useToast();
-  const [isOpen, setIsOpen] = useState(false);
+
   const isEditMode = !!editingExpense;
-  const currentOpen = isEditMode ? (isEditOpen ?? false) : undefined;
-  const handleOpenChange = isEditMode ? (onEditOpenChange ?? (() => {})) : setIsOpen;
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isUploading, setIsUploading] = useState(false);
+  const [selfOpen, setSelfOpen] = useState(false);
+  const open = isEditMode ? (isEditOpen ?? false) : selfOpen;
+  const setOpen = isEditMode ? (onEditOpenChange ?? (() => {})) : setSelfOpen;
+
+  const [form, setForm] = useState<FormState>(blank);
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
-  const [receiptPreview, setReceiptPreview] = useState<string | null>(null);
-  const [formData, setFormData] = useState({
-    amount: '',
-    description: '',
-    category: '',
-    date: new Date().toISOString().split('T')[0],
-    budgetId: budgets.length === 1 ? budgets[0].id : '',
-    accountType: 'COGS',
-    costCenter: 'Daily Orders',
-    bankAccount: '',
-    paymentMethod: '',
-  });
+  const [existingReceipt, setExistingReceipt] = useState<string | null>(null);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
+  const [saving, setSaving] = useState(false);
+  const [splitOpen, setSplitOpen] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
 
-  useEffect(() => {
-    if (editingExpense) {
-      setFormData({
-        amount: String(editingExpense.amount),
-        description: editingExpense.description,
-        category: editingExpense.category,
-        date: editingExpense.date,
-        budgetId: editingExpense.budget_id,
-        accountType: editingExpense.account_type || 'COGS',
-        costCenter: editingExpense.cost_center || 'Daily Orders',
-        bankAccount: editingExpense.bank_account || '',
-        paymentMethod: editingExpense.payment_method || '',
-      });
-      setReceiptFile(null);
-      setReceiptPreview(null);
-    }
-  }, [editingExpense]);
+  const { data: categories = [] } = useExpenseCategories();
+  const { data: costCentres = [] } = useCostCentres();
+  const { data: payees = [] } = usePayees();
+  const { data: accounts = [] } = useExpenseAccounts();
+  const { data: banks = [] } = useBankAccounts();
+  const { data: lockedThrough } = useLockedThrough();
+  const { data: budgetRows = [] } = useBudgetsWithSpend(user?.id);
 
-  const handleInputChange = (field: string, value: string) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
+  const set = (patch: Partial<FormState>) => {
+    setForm((prev) => ({ ...prev, ...patch }));
+    setDirty(true);
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      toast({ title: 'Invalid file type', description: 'Please select an image file.', variant: 'destructive' });
-      return;
-    }
-    if (file.size > 5 * 1024 * 1024) {
-      toast({ title: 'File too large', description: 'Please select an image smaller than 5MB.', variant: 'destructive' });
-      return;
-    }
-    setReceiptFile(file);
-    const reader = new FileReader();
-    reader.onload = (e) => setReceiptPreview(e.target?.result as string);
-    reader.readAsDataURL(file);
+  useEffect(() => {
+    if (!editingExpense) return;
+    const minor = editingExpense.amount_minor ?? Math.round((editingExpense.amount ?? 0) * 100);
+    setForm({
+      amount: (minor / 100).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ','),
+      date: editingExpense.date,
+      payeeId: editingExpense.payee_id ?? '',
+      payeeName: editingExpense.payee_name ?? '',
+      description: editingExpense.description ?? '',
+      categoryId: editingExpense.category_id ?? '',
+      budgetId: editingExpense.budget_id ?? '',
+      accountId: accounts.find((a) => a.code === editingExpense.expense_account_code)?.id ?? '',
+      costCentreId: costCentres.find((c) => c.name === editingExpense.cost_center)?.id ?? '',
+      paymentMethod: editingExpense.payment_method ?? '',
+      bankAccountId: editingExpense.bank_account_id ?? '',
+      vat: editingExpense.vat_minor ? (editingExpense.vat_minor / 100).toString() : '',
+      wht: editingExpense.wht_minor ? (editingExpense.wht_minor / 100).toString() : '',
+      reference: editingExpense.reference ?? '',
+    });
+    setExistingReceipt(editingExpense.receipt_path);
+    setReceiptFile(null);
+    setErrors({});
+    setTouched({});
+    setDirty(false);
+  }, [editingExpense, accounts, costCentres]);
+
+  // ── Category may pre-fill the account, but it stays editable ──────────────
+  const chosenCategory = categories.find((c) => c.id === form.categoryId);
+  useEffect(() => {
+    if (!chosenCategory?.account_code) return;
+    if (form.accountId) return; // never overwrite a choice the user made
+    const match = accounts.find((a) => a.code === chosenCategory.account_code);
+    if (match) setForm((p) => ({ ...p, accountId: match.id }));
+  }, [chosenCategory, accounts, form.accountId]);
+
+  const amountParsed = form.amount.trim() === '' ? null : parseMoney(form.amount);
+  const amountMinor = amountParsed && !isMoneyError(amountParsed) ? amountParsed.minor : 0n;
+
+  const selectedBudget = budgetRows.find((b) => b.id === form.budgetId);
+  const budgetRemaining = selectedBudget
+    ? nairaToMinor(selectedBudget.total_budget - selectedBudget.spent)
+    : null;
+  const overBudget = budgetRemaining !== null && amountMinor > budgetRemaining;
+
+  const needsBank = METHODS_NEEDING_BANK.has(form.paymentMethod.toLowerCase());
+
+  const toValidatorInput = (): ExpenseLineInput => ({
+    description: form.description,
+    amount: form.amount,
+    category_id: form.categoryId,
+    payee_id: form.payeeId && form.payeeId !== ONE_OFF ? form.payeeId : null,
+    payee_name: form.payeeId === ONE_OFF || !form.payeeId ? form.payeeName : null,
+    expense_account_code: accounts.find((a) => a.id === form.accountId)?.code ?? '',
+    cost_centre: costCentres.find((c) => c.id === form.costCentreId)?.name ?? '',
+    budget_id: form.budgetId || null,
+    vat: form.vat,
+    wht: form.wht,
+    reference: form.reference,
+    receipt_path: receiptFile ? 'pending-upload' : existingReceipt,
+    date: form.date,
+    payment_method: form.paymentMethod,
+    bank_account_id: form.bankAccountId || null,
+  });
+
+  /** Live errors, so a blurred field can show its own message (§5.3). */
+  const liveErrors = useMemo(() => {
+    return errorMap(validateExpenseLine(toValidatorInput(), { lockedThrough }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form, receiptFile, existingReceipt, lockedThrough, accounts, costCentres]);
+
+  const errorFor = (field: string) =>
+    errors[field] ?? (touched[field] ? liveErrors[field] : undefined) ?? null;
+
+  const splitOffered = !!liveErrors.description && form.description.trim().length > 0;
+
+  const reset = () => {
+    setForm(blank());
+    setReceiptFile(null);
+    setExistingReceipt(null);
+    setErrors({});
+    setTouched({});
+    setDirty(false);
   };
 
   const uploadReceipt = async (): Promise<string | null> => {
     if (!receiptFile || !user) return null;
-    setIsUploading(true);
-    try {
-      const fileExt = receiptFile.name.split('.').pop();
-      const fileName = `${user.id}/${Date.now()}.${fileExt}`;
-      const { error } = await supabase.storage.from('receipts').upload(fileName, receiptFile);
-      if (error) throw error;
-      return fileName;
-    } catch (error: any) {
-      toast({ title: 'Upload failed', description: error.message, variant: 'destructive' });
-      return null;
-    } finally {
-      setIsUploading(false);
-    }
+    const ext = receiptFile.name.split('.').pop() || 'jpg';
+    const path = `${user.id}/${Date.now()}.${ext}`;
+    const { error } = await supabase.storage.from('receipts').upload(path, receiptFile);
+    if (error) throw error;
+    return path;
   };
 
-  const resetForm = () => {
-    setFormData({
-      amount: '', description: '', category: '',
-      date: new Date().toISOString().split('T')[0],
-      budgetId: budgets.length === 1 ? budgets[0].id : '',
-      accountType: 'COGS', costCenter: 'Daily Orders', bankAccount: '', paymentMethod: '',
-    });
-    setReceiptFile(null);
-    setReceiptPreview(null);
+  const focusFirstError = (errs: FieldError[]) => {
+    const first = errs[0];
+    if (!first) return;
+    const el = formRef.current?.querySelector<HTMLElement>(`#expense-${first.field}`);
+    el?.focus();
+    el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Validate with Zod
-    const validation = expenseSchema.safeParse({
-      amount: parseFloat(formData.amount),
-      description: formData.description,
-      category: formData.category,
-      date: formData.date,
-      budgetId: formData.budgetId,
-      accountType: formData.accountType,
-      costCenter: formData.costCenter,
-      bankAccount: formData.bankAccount || undefined,
-      paymentMethod: formData.paymentMethod || undefined,
-    });
-
-    if (!validation.success) {
-      const firstError = validation.error.errors[0];
-      toast({ title: 'Validation Error', description: firstError.message, variant: 'destructive' });
+    // The same validator every other route calls. Nothing bypasses it.
+    const result = validateExpenseLine(toValidatorInput(), { lockedThrough });
+    const failures = validationErrors(result);
+    if (failures.length > 0) {
+      setErrors(errorMap(result));
+      setTouched((t) => ({ ...t, ...Object.fromEntries(failures.map((x) => [x.field, true])) }));
+      focusFirstError(failures);
+      toast({ title: 'Check the form', description: failures[0].message, variant: 'destructive' });
       return;
     }
 
-    setIsSubmitting(true);
+    setSaving(true);
     try {
+      let receiptPath = existingReceipt;
+      if (receiptFile) receiptPath = await uploadReceipt();
+
+      const value = (result as { ok: true; value: ValidatedExpenseLine }).value;
+      const account = accounts.find((a) => a.id === form.accountId);
+      const payload = {
+        amount_minor: Number(value.amount_minor),
+        description: value.description,
+        category: chosenCategory?.name ?? null,
+        category_id: value.category_id,
+        date: value.date,
+        budget_id: value.budget_id,
+        expense_account_code: account?.code ?? null,
+        // The old two-value column is kept in step for anything still reading
+        // it, but the account code above is what the journal now uses.
+        account_type: account?.code === '5000' ? 'COGS' : 'OpEX',
+        cost_center: value.cost_centre,
+        payment_method: value.payment_method,
+        bank_account_id: value.bank_account_id,
+        vat_minor: Number(value.vat_minor),
+        wht_minor: Number(value.wht_minor),
+        reference: value.reference,
+        receipt_path: receiptPath,
+        payee_id: value.payee_id,
+        payee_name: value.payee_name,
+      };
+
       if (isEditMode && editingExpense) {
-        let updatedReceiptPath = editingExpense.receipt_path;
-        if (receiptFile) {
-          const newPath = await uploadReceipt();
-          if (!newPath) return;
-          updatedReceiptPath = newPath;
-        }
-        const { error } = await supabase.from('expenses').update({
-          amount: validation.data.amount,
-          description: validation.data.description,
-          category: validation.data.category,
-          date: validation.data.date,
-          budget_id: validation.data.budgetId || null,
-          account_type: validation.data.accountType || 'COGS',
-          cost_center: validation.data.costCenter || 'Daily Orders',
-          bank_account: validation.data.bankAccount || null,
-          payment_method: validation.data.paymentMethod || null,
-          receipt_path: updatedReceiptPath,
-        }).eq('id', editingExpense.id);
+        const { error } = await db.from('expenses').update(payload).eq('id', editingExpense.id);
         if (error) throw error;
-        toast({ title: 'Expense updated!', description: 'Changes have been saved.' });
-        onEditOpenChange?.(false);
+        toast({ title: 'Expense updated', description: `${formatMinor(value.amount_minor)} saved.` });
+        setOpen(false);
         onExpenseUpdated?.();
       } else {
-        let receiptPath = null;
-        if (receiptFile) {
-          receiptPath = await uploadReceipt();
-          if (!receiptPath) return;
-        }
-        // Maker-checker: non-admin entries start as 'pending' and only reach
-        // the ledger and reports once an admin approves them.
-        const { error } = await supabase.from('expenses').insert({
-          amount: validation.data.amount,
-          description: validation.data.description,
-          category: validation.data.category,
-          date: validation.data.date,
-          budget_id: validation.data.budgetId || null,
-          receipt_path: receiptPath,
-          account_type: validation.data.accountType || 'COGS',
-          cost_center: validation.data.costCenter || 'Daily Orders',
-          bank_account: validation.data.bankAccount || null,
-          payment_method: validation.data.paymentMethod || null,
+        const { error } = await db.from('expenses').insert({
+          ...payload,
+          created_by: user?.id,
+          submitted_by: user?.id,
+          submitted_at: new Date().toISOString(),
           status: isAdmin ? 'approved' : 'pending',
         });
         if (error) throw error;
         toast({
-          title: 'Expense added!',
-          description: isAdmin ? 'Your expense has been recorded.' : 'Submitted for approval — it will count once an admin approves it.',
+          title: 'Expense added',
+          description: isAdmin
+            ? `${formatMinor(value.amount_minor)} recorded.`
+            : `${formatMinor(value.amount_minor)} submitted — it counts once an admin approves it.`,
         });
-        setIsOpen(false);
-        resetForm();
+        setOpen(false);
+        reset();
         onExpenseAdded();
       }
-    } catch (error: any) {
-      toast({ title: 'Error adding expense', description: error.message, variant: 'destructive' });
+    } catch (err: any) {
+      toast({ title: 'Could not save', description: err.message, variant: 'destructive' });
     } finally {
-      setIsSubmitting(false);
+      setSaving(false);
     }
   };
 
-  return (
-    <Dialog open={isEditMode ? currentOpen : isOpen} onOpenChange={isEditMode ? onEditOpenChange : setIsOpen}>
-      {!isEditMode && (
-        <DialogTrigger asChild>
-          <Button><Plus className="mr-2 h-4 w-4" />Add Expense</Button>
-        </DialogTrigger>
-      )}
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>{isEditMode ? 'Edit Expense' : 'Add Expense'}</DialogTitle>
-          <DialogDescription>{isEditMode ? 'Update the expense details below' : 'Record a new expense to track your spending'}</DialogDescription>
-        </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="amount">Amount (₦)</Label>
-              <Input id="amount" type="number" step="0.01" min="0" placeholder="0.00" value={formData.amount} onChange={(e) => handleInputChange('amount', e.target.value)} required />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="date">Date</Label>
-              <Input id="date" type="date" value={formData.date} onChange={(e) => handleInputChange('date', e.target.value)} required />
-            </div>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="description">Description</Label>
-            <Textarea id="description" placeholder="What did you spend money on?" value={formData.description} onChange={(e) => handleInputChange('description', e.target.value)} required />
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>Category</Label>
-              <Select value={formData.category || undefined} onValueChange={(v) => handleInputChange('category', v)}>
-                <SelectTrigger><SelectValue placeholder="Select category" /></SelectTrigger>
-                <SelectContent>{EXPENSE_CATEGORIES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>Budget (optional)</Label>
-              <Select value={formData.budgetId || 'none'} onValueChange={(v) => handleInputChange('budgetId', v === 'none' ? '' : v)}>
-                <SelectTrigger><SelectValue placeholder="No budget" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">No budget</SelectItem>
-                  {budgets.map(b => <SelectItem key={b.id} value={b.id}>{b.title}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>Account Type</Label>
-              <Select value={formData.accountType} onValueChange={(v) => handleInputChange('accountType', v)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>{ACCOUNT_TYPES.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>Cost Center</Label>
-              <Select value={formData.costCenter} onValueChange={(v) => handleInputChange('costCenter', v)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>{COST_CENTERS.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>Bank Account (Optional)</Label>
-              <Input placeholder="e.g. Main Account" value={formData.bankAccount} onChange={(e) => handleInputChange('bankAccount', e.target.value)} />
-            </div>
-            <div className="space-y-2">
-              <Label>Payment Method (Optional)</Label>
-              <Select value={formData.paymentMethod} onValueChange={(v) => handleInputChange('paymentMethod', v)}>
-                <SelectTrigger><SelectValue placeholder="Select method" /></SelectTrigger>
-                <SelectContent>{PAYMENT_METHODS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
-          </div>
-          <div className="space-y-2">
-            <Label>Receipt (Optional)</Label>
-            {!receiptPreview ? (
-              <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-input rounded-lg cursor-pointer bg-muted/50 hover:bg-muted transition-colors">
-                <div className="flex flex-col items-center pt-5 pb-6">
-                  <p className="mb-2 text-sm text-muted-foreground"><span className="font-semibold">Click to upload</span> receipt image</p>
-                  <p className="text-xs text-muted-foreground">PNG, JPG or JPEG (MAX. 5MB)</p>
-                </div>
-                <Input type="file" className="hidden" accept="image/*" onChange={handleFileChange} />
-              </label>
-            ) : (
-              <div className="space-y-3">
-                <div className="relative">
-                  <img src={receiptPreview} alt="Receipt preview" className="w-full max-w-md h-48 object-cover rounded-lg border" />
-                  <Button type="button" variant="destructive" size="sm" className="absolute top-2 right-2" onClick={() => { setReceiptFile(null); setReceiptPreview(null); }}>Remove</Button>
-                </div>
-                <p className="text-sm text-muted-foreground">Receipt: {receiptFile?.name}</p>
-              </div>
-            )}
-          </div>
-          <div className="flex gap-4">
-            <Button type="button" variant="outline" onClick={() => isEditMode ? onEditOpenChange?.(false) : setIsOpen(false)} className="flex-1">Cancel</Button>
-            <Button type="submit" disabled={isSubmitting || (!isEditMode && isUploading)} className="flex-1">
-              {isEditMode ? (isSubmitting ? 'Saving...' : 'Save Changes') : (isSubmitting ? 'Adding...' : isUploading ? 'Uploading...' : 'Add Expense')}
-            </Button>
-          </div>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-};
+  const applySplit = (lines: DraftLine[]) => {
+    // The single-entry form holds one expense. The split belongs on a claim,
+    // so keep the first line here and tell the user where the rest went.
+    const [first, ...rest] = lines;
+    if (first) {
+      set({ amount: first.amount, description: first.description, categoryId: first.categoryId });
+    }
+    if (rest.length > 0) {
+      toast({
+        title: `${rest.length} more line${rest.length === 1 ? '' : 's'} detected`,
+        description: 'Use "Add Multiple" to enter them all at once — this form records one expense.',
+      });
+    }
+  };
 
-export default ExpenseFormDialog;
+  const payeeSelectOptions = [
+    { value: ONE_OFF, label: 'One-off payee — type a name' },
+    ...payeeOptions(payees),
+  ];
+
+  const body = (
+    <form
+      ref={formRef}
+      id="expense-form"
+      onSubmit={submit}
+      onKeyDown={(e) => {
+        // Ctrl/Cmd+Enter saves (§5.3).
+        if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+          e.preventDefault();
+          formRef.current?.requestSubmit();
+        }
+      }}
+      className="space-y-4"
+    >
+      <RequiredLegend />
+
+      {/* 1 Amount, 2 Date — paired from sm up */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <Field id="expense-amount" label="Amount" required error={errorFor('amount')}>
+          <MoneyInput
+            id="expense-amount"
+            value={form.amount}
+            onChange={(v) => set({ amount: v })}
+            onBlur={() => setTouched((t) => ({ ...t, amount: true }))}
+            error={errorFor('amount')}
+            aria-required
+            enterKeyHint="next"
+          />
+        </Field>
+
+        <Field id="expense-date" label="Date" required error={errorFor('date')}>
+          <Input
+            id="expense-date"
+            type="date"
+            value={form.date}
+            max={todayIso()}
+            onChange={(e) => set({ date: e.target.value })}
+            onBlur={() => setTouched((t) => ({ ...t, date: true }))}
+            className="h-11 text-base"
+            aria-required
+          />
+        </Field>
+      </div>
+
+      {/* 3 Payee */}
+      <Field
+        id="expense-payee"
+        label="Payee / supplier"
+        required
+        error={errorFor('payee')}
+        hint="Who received the money."
+      >
+        <SearchableSelect
+          id="expense-payee"
+          options={payeeSelectOptions}
+          value={form.payeeId}
+          onChange={(v) => set({ payeeId: v, payeeName: v === ONE_OFF ? form.payeeName : '' })}
+          placeholder="Choose a supplier"
+          title="Choose a payee"
+          required
+          invalid={!!errorFor('payee')}
+        />
+        {form.payeeId === ONE_OFF && (
+          <Input
+            aria-label="One-off payee name"
+            placeholder="Name of the person or business paid"
+            value={form.payeeName}
+            onChange={(e) => set({ payeeName: e.target.value })}
+            onBlur={() => setTouched((t) => ({ ...t, payee: true }))}
+            className="h-11 text-base mt-2"
+          />
+        )}
+      </Field>
+
+      {/* 4 Description */}
+      <Field
+        id="expense-description"
+        label="Description"
+        required
+        error={errorFor('description')}
+        hint="One purchase. Paste a list and it will be split for you."
+      >
+        <Textarea
+          id="expense-description"
+          value={form.description}
+          onChange={(e) => set({ description: e.target.value })}
+          onBlur={() => setTouched((t) => ({ ...t, description: true }))}
+          onPaste={(e) => {
+            const pasted = e.clipboardData.getData('text');
+            if (pasted && /\n/.test(pasted)) {
+              // Multi-line paste is a list by definition — offer the splitter
+              // as soon as it lands, rather than at submit.
+              setTimeout(() => setSplitOpen(true), 0);
+            }
+          }}
+          rows={3}
+          className="text-base min-h-[80px]"
+          aria-required
+        />
+        {splitOffered && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-11 mt-1"
+            onClick={() => setSplitOpen(true)}
+          >
+            <Scissors className="h-4 w-4 mr-2" aria-hidden />
+            Split into lines
+          </Button>
+        )}
+      </Field>
+
+      {/* 5 Category, 6 Budget */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <Field id="expense-category_id" label="Category" required error={errorFor('category_id')}>
+          <SearchableSelect
+            id="expense-category_id"
+            options={categoryOptions(categories)}
+            value={form.categoryId}
+            onChange={(v) => set({ categoryId: v })}
+            placeholder="Choose a category"
+            title="Choose a category"
+            required
+            invalid={!!errorFor('category_id')}
+          />
+        </Field>
+
+        <Field
+          id="expense-budget_id"
+          label="Budget"
+          required
+          error={errorFor('budget_id')}
+          hint={
+            selectedBudget
+              ? `${formatMinor(budgetRemaining!)} remaining of ${formatMinor(nairaToMinor(selectedBudget.total_budget))}`
+              : undefined
+          }
+        >
+          <SearchableSelect
+            id="expense-budget_id"
+            options={budgetOptions(budgetRows)}
+            value={form.budgetId}
+            onChange={(v) => set({ budgetId: v })}
+            placeholder="Choose a budget"
+            title="Choose a budget"
+            required
+          />
+          {overBudget && (
+            <p role="alert" className="text-xs text-amber-600 flex items-start gap-1 mt-1">
+              <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" aria-hidden />
+              <span>
+                This takes the budget {formatMinor(amountMinor - budgetRemaining!)} over. You can still
+                save it — it will show as overspent.
+              </span>
+            </p>
+          )}
+        </Field>
+      </div>
+
+      {/* 7 Expense account, 7b Cost centre */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <Field
+          id="expense-expense_account_code"
+          label="Expense account"
+          required
+          error={errorFor('expense_account_code')}
+          hint="Where this lands in the ledger."
+        >
+          <SearchableSelect
+            id="expense-expense_account_code"
+            options={accountOptions(accounts)}
+            value={form.accountId}
+            onChange={(v) => set({ accountId: v })}
+            placeholder="Choose an account"
+            title="Choose an expense account"
+            required
+            invalid={!!errorFor('expense_account_code')}
+          />
+        </Field>
+
+        <Field id="expense-cost_centre" label="Cost centre" required error={errorFor('cost_centre')}>
+          <SearchableSelect
+            id="expense-cost_centre"
+            options={costCentreOptions(costCentres)}
+            value={form.costCentreId}
+            onChange={(v) => set({ costCentreId: v })}
+            placeholder="Choose a cost centre"
+            title="Choose a cost centre"
+            required
+            invalid={!!errorFor('cost_centre')}
+          />
+        </Field>
+      </div>
+
+      {/* 8 Payment method, 9 Bank account (conditional) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <Field
+          id="expense-payment_method"
+          label="Payment method"
+          required
+          error={errorFor('payment_method')}
+          hint="Decides which account the money leaves."
+        >
+          <SearchableSelect
+            id="expense-payment_method"
+            options={[...PAYMENT_METHODS, 'Credit'].map((m) => ({ value: m, label: m }))}
+            value={form.paymentMethod}
+            onChange={(v) => set({ paymentMethod: v, bankAccountId: METHODS_NEEDING_BANK.has(v.toLowerCase()) ? form.bankAccountId : '' })}
+            placeholder="Choose a method"
+            title="How was this paid?"
+            required
+            invalid={!!errorFor('payment_method')}
+          />
+        </Field>
+
+        {needsBank && (
+          <Field
+            id="expense-bank_account_id"
+            label="Bank account"
+            required
+            error={errorFor('bank_account_id')}
+          >
+            <SearchableSelect
+              id="expense-bank_account_id"
+              options={bankOptions(banks)}
+              value={form.bankAccountId}
+              onChange={(v) => set({ bankAccountId: v })}
+              placeholder="Choose the account used"
+              title="Which bank account?"
+              required
+              invalid={!!errorFor('bank_account_id')}
+            />
+          </Field>
+        )}
+      </div>
+
+      {/* 10 VAT / WHT, 11 Reference */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="grid grid-cols-2 gap-3">
+          <Field id="expense-vat" label="VAT" error={errorFor('vat')}>
+            <MoneyInput
+              id="expense-vat"
+              value={form.vat}
+              onChange={(v) => set({ vat: v })}
+              parseOptions={{ allowZero: true, label: 'VAT' }}
+              showPreview={false}
+              error={errorFor('vat')}
+            />
+          </Field>
+          <Field id="expense-wht" label="WHT" error={errorFor('wht')}>
+            <MoneyInput
+              id="expense-wht"
+              value={form.wht}
+              onChange={(v) => set({ wht: v })}
+              parseOptions={{ allowZero: true, label: 'WHT' }}
+              showPreview={false}
+              error={errorFor('wht')}
+            />
+          </Field>
+        </div>
+
+        <Field
+          id="expense-reference"
+          label="Reference / invoice no."
+          required
+          error={errorFor('reference')}
+        >
+          <Input
+            id="expense-reference"
+            value={form.reference}
+            onChange={(e) => set({ reference: e.target.value })}
+            onBlur={() => setTouched((t) => ({ ...t, reference: true }))}
+            className="h-11 text-base"
+            inputMode="text"
+            aria-required
+          />
+        </Field>
+      </div>
+
+      {/* 12 Receipt */}
+      <Field
+        id="expense-receipt"
+        label="Receipt"
+        required={amountMinor >= 1_000_000n}
+        error={errorFor('receipt')}
+      >
+        <ReceiptUpload
+          id="expense-receipt"
+          file={receiptFile}
+          onChange={(f) => { setReceiptFile(f); setDirty(true); }}
+          existingPath={existingReceipt}
+          onRemoveExisting={() => { setExistingReceipt(null); setDirty(true); }}
+          required={amountMinor >= 1_000_000n}
+          error={errorFor('receipt')}
+        />
+      </Field>
+    </form>
+  );
+
+  const footer = (
+    <div className="flex flex-col-reverse sm:flex-row gap-2">
+      <Button
+        type="button"
+        variant="outline"
+        className="h-11 sm:flex-1"
+        onClick={() => setOpen(false)}
+      >
+        Cancel
+      </Button>
+      <Button type="submit" form="expense-form" disabled={saving} className="h-11 sm:flex-1">
+        {saving ? 'Saving…' : isEditMode ? 'Save changes' : 'Add expense'}
+      </Button>
+    </div>
+  );
+
+  return (
+    <>
+      {!isEditMode && (
+        <Button className="h-11" onClick={() => { reset(); setSelfOpen(true); }}>
+          <Plus className="mr-2 h-4 w-4" aria-hidden />
+          Add Expense
+        </Button>
+      )}
+
+      <FormSheet
+        open={open}
+        onOpenChange={(o) => { if (!o) setDirty(false); setOpen(o); }}
+        title={isEditMode ? 'Edit expense' : 'Add expense'}
+        description={isEditMode ? 'Update the details below.' : 'One purchase per expense.'}
+        dirty={dirty}
+        footer={footer}
+      >
+        {body}
+      </FormSheet>
+
+      <SplitLinesDialog
+        open={splitOpen}
+        onOpenChange={setSplitOpen}
+        text={form.description}
+        categories={categoryOptions(categories)}
+        onConfirm={applySplit}
+      />
+    </>
+  );
+}

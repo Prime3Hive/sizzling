@@ -16,6 +16,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Scale, BookOpen, ListTree, Plus, Trash2, Loader2, CheckCircle2, AlertTriangle, TrendingUp, Landmark, Receipt, Banknote } from "lucide-react";
 import { formatNairaCompact } from "@/lib/currency";
 import { safeFormat } from "@/lib/safeDate";
+import AmountCorrectionScreen from "@/components/expenses/AmountCorrectionScreen";
 
 interface Account {
   id: string; code: string; name: string;
@@ -484,9 +485,15 @@ export default function Accounting() {
           <TabsTrigger value="books-check" className="gap-2"><CheckCircle2 className="h-4 w-4" /> Books Check</TabsTrigger>
           <TabsTrigger value="journal" className="gap-2"><BookOpen className="h-4 w-4" /> Journal</TabsTrigger>
           <TabsTrigger value="accounts" className="gap-2"><ListTree className="h-4 w-4" /> Chart of Accounts</TabsTrigger>
+          <TabsTrigger value="corrections" className="gap-2"><AlertTriangle className="h-4 w-4" /> Amount Corrections</TabsTrigger>
         </TabsList>
 
         {/* ── Trial Balance ── */}
+        {/* Migration M-03: re-capture the amounts the old parser corrupted. */}
+        <TabsContent value="corrections" className="space-y-4">
+          <AmountCorrectionScreen />
+        </TabsContent>
+
         <TabsContent value="trial-balance" className="space-y-4">
           <Card>
             <CardHeader className="pb-3">

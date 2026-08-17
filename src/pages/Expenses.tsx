@@ -1,31 +1,37 @@
-import React, { useState, useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Card, CardHeader, CardContent } from '@/components/ui/card';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useRoles } from '@/hooks/useRoles';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
-import ExpenseFormDialog from '@/components/expenses/ExpenseFormDialog';
+import ExpenseFormDialog, { type EditingExpense } from '@/components/expenses/ExpenseFormDialog';
 import BulkExpenseDialog from '@/components/expenses/BulkExpenseDialog';
 import ExpenseFilters from '@/components/expenses/ExpenseFilters';
-import ExpenseTable from '@/components/expenses/ExpenseTable';
+import ExpenseTable, { type ExpenseRow } from '@/components/expenses/ExpenseTable';
 import ExpenseSummary from '@/components/expenses/ExpenseSummary';
+import { useExpenseCategories } from '@/hooks/useExpenseReference';
+
+const db = supabase as any;
 
 const Expenses = () => {
   const { user } = useAuth();
   const { isAdmin } = useRoles();
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const [editingExpense, setEditingExpense] = React.useState<any | null>(null);
-  const [isEditOpen, setIsEditOpen] = React.useState(false);
-  const [deleteId, setDeleteId] = React.useState<string | null>(null);
+
+  const [editingExpense, setEditingExpense] = useState<EditingExpense | null>(null);
+  const [isEditOpen, setIsEditOpen] = useState(false);
+  const [deleteId, setDeleteId] = useState<string | null>(null);
 
   const [filterStartDate, setFilterStartDate] = useState<Date | undefined>();
   const [filterEndDate, setFilterEndDate] = useState<Date | undefined>();
   const [filterCategory, setFilterCategory] = useState('all');
   const [filterBudget, setFilterBudget] = useState('all');
+
+  const { data: categories = [] } = useExpenseCategories();
 
   const { data: budgets = [] } = useQuery({
     queryKey: ['expense-budgets', user?.id],
@@ -41,12 +47,12 @@ const Expenses = () => {
     enabled: !!user,
   });
 
-  const { data: expenses = [], isLoading } = useQuery({
+  const { data: expenses = [], isLoading } = useQuery<ExpenseRow[]>({
     queryKey: ['expenses', user?.id],
     queryFn: async () => {
-      const { data, error } = await supabase
+      const { data, error } = await db
         .from('expenses')
-        .select('*, budgets(title)')
+        .select('*, budgets(title), payees(name)')
         .is('cancelled_at', null)
         .order('date', { ascending: false })
         .order('created_at', { ascending: false });
@@ -56,17 +62,38 @@ const Expenses = () => {
     enabled: !!user,
   });
 
-  const filteredExpenses = useMemo(() => {
-    return expenses.filter((expense: any) => {
-      if (filterStartDate && new Date(expense.date) < filterStartDate) return false;
-      if (filterEndDate && new Date(expense.date) > filterEndDate) return false;
-      if (filterCategory !== 'all' && expense.category !== filterCategory) return false;
-      if (filterBudget !== 'all' && expense.budget_id !== filterBudget) return false;
-      return true;
-    });
-  }, [expenses, filterStartDate, filterEndDate, filterCategory, filterBudget]);
+  // Names for the approver column.
+  const { data: profiles = [] } = useQuery<{ user_id: string; full_name: string }[]>({
+    queryKey: ['profiles-min'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('profiles').select('user_id, full_name');
+      if (error) throw error;
+      return data ?? [];
+    },
+    enabled: !!user,
+  });
 
-  const hasActiveFilters = !!(filterStartDate || filterEndDate || filterCategory !== 'all' || filterBudget !== 'all');
+  const nameOf = useMemo(() => {
+    const map = Object.fromEntries(profiles.map((p) => [p.user_id, p.full_name]));
+    return (id: string | null | undefined) => (id ? (map[id] ?? '—') : '—');
+  }, [profiles]);
+
+  const filteredExpenses = useMemo(
+    () =>
+      expenses.filter((e) => {
+        if (filterStartDate && new Date(e.date) < filterStartDate) return false;
+        if (filterEndDate && new Date(e.date) > filterEndDate) return false;
+        if (filterCategory !== 'all' && e.category !== filterCategory) return false;
+        if (filterBudget !== 'all' && e.budget_id !== filterBudget) return false;
+        return true;
+      }),
+    [expenses, filterStartDate, filterEndDate, filterCategory, filterBudget],
+  );
+
+  const activeCount =
+    (filterStartDate ? 1 : 0) + (filterEndDate ? 1 : 0) +
+    (filterCategory !== 'all' ? 1 : 0) + (filterBudget !== 'all' ? 1 : 0);
+  const hasActiveFilters = activeCount > 0;
 
   const clearFilters = () => {
     setFilterStartDate(undefined);
@@ -75,13 +102,14 @@ const Expenses = () => {
     setFilterBudget('all');
   };
 
-  const handleExpenseAdded = () => {
+  const refresh = () => {
     queryClient.invalidateQueries({ queryKey: ['expenses'] });
     queryClient.invalidateQueries({ queryKey: ['pl-expenses'] });
+    queryClient.invalidateQueries({ queryKey: ['budgets-with-spend'] });
   };
 
-  // Maker-checker: admin approves or rejects pending expenses. A DB trigger
-  // posts the journal on approval (and blocks non-admin status changes).
+  // Maker-checker: an admin approves or rejects. A DB trigger posts the
+  // journal on approval and refuses a non-admin status change.
   const setStatusMutation = useMutation({
     mutationFn: async ({ id, status }: { id: string; status: 'approved' | 'rejected' }) => {
       const { error } = await supabase.from('expenses').update({ status }).eq('id', id);
@@ -89,8 +117,7 @@ const Expenses = () => {
       return status;
     },
     onSuccess: (status) => {
-      queryClient.invalidateQueries({ queryKey: ['expenses'] });
-      queryClient.invalidateQueries({ queryKey: ['pl-expenses'] });
+      refresh();
       toast({ title: status === 'approved' ? 'Expense approved' : 'Expense rejected' });
     },
     onError: (error: any) => toast({ title: 'Error', description: error.message, variant: 'destructive' }),
@@ -102,28 +129,18 @@ const Expenses = () => {
     mutationFn: async (id: string) => {
       const reason = window.prompt('Why is this expense being cancelled?')?.trim();
       if (!reason) throw new Error('A cancellation needs a reason. Nothing was changed.');
-      const { error } = await (supabase as any)
+      const { error } = await db
         .from('expenses')
         .update({ cancelled_at: new Date().toISOString(), cancellation_reason: reason })
         .eq('id', id);
       if (error) throw error;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['expenses'] });
-      queryClient.invalidateQueries({ queryKey: ['pl-expenses'] });
+      refresh();
       toast({ title: 'Expense cancelled' });
     },
     onError: (error: any) => toast({ title: 'Error', description: error.message, variant: 'destructive' }),
   });
-
-  const handleEdit = (expense: any) => {
-    setEditingExpense(expense);
-    setIsEditOpen(true);
-  };
-
-  const handleDelete = (id: string) => {
-    setDeleteId(id);
-  };
 
   if (isLoading) {
     return (
@@ -132,7 +149,12 @@ const Expenses = () => {
           <div><Skeleton className="h-8 w-48 mb-2" /><Skeleton className="h-4 w-96" /></div>
           <Skeleton className="h-10 w-32" />
         </div>
-        <Card><CardHeader><Skeleton className="h-6 w-32" /></CardHeader><CardContent><div className="space-y-4">{[...Array(5)].map((_, i) => <Skeleton key={i} className="h-16 w-full" />)}</div></CardContent></Card>
+        <Card>
+          <CardHeader><Skeleton className="h-6 w-32" /></CardHeader>
+          <CardContent>
+            <div className="space-y-4">{[...Array(5)].map((_, i) => <Skeleton key={i} className="h-16 w-full" />)}</div>
+          </CardContent>
+        </Card>
       </div>
     );
   }
@@ -145,8 +167,8 @@ const Expenses = () => {
           <p className="text-muted-foreground">View and manage all registered expenses</p>
         </div>
         <div className="flex gap-2 flex-wrap">
-          <BulkExpenseDialog budgets={budgets} onDone={handleExpenseAdded} />
-          <ExpenseFormDialog budgets={budgets} onExpenseAdded={handleExpenseAdded} />
+          <BulkExpenseDialog onDone={refresh} />
+          <ExpenseFormDialog onExpenseAdded={refresh} />
         </div>
       </div>
 
@@ -155,6 +177,7 @@ const Expenses = () => {
         filterEndDate={filterEndDate}
         filterCategory={filterCategory}
         filterBudget={filterBudget}
+        categories={categories}
         budgets={budgets}
         onStartDateChange={setFilterStartDate}
         onEndDateChange={setFilterEndDate}
@@ -162,6 +185,7 @@ const Expenses = () => {
         onBudgetChange={setFilterBudget}
         onClear={clearFilters}
         hasActiveFilters={hasActiveFilters}
+        activeCount={activeCount}
       />
 
       <ExpenseTable
@@ -170,23 +194,19 @@ const Expenses = () => {
         hasActiveFilters={hasActiveFilters}
         onClearFilters={clearFilters}
         onAddExpense={() => {}}
-        onEdit={handleEdit}
-        onDelete={handleDelete}
+        onEdit={(e) => { setEditingExpense(e as EditingExpense); setIsEditOpen(true); }}
+        onDelete={(id) => setDeleteId(id)}
         onSetStatus={isAdmin ? (id, status) => setStatusMutation.mutate({ id, status }) : undefined}
+        nameOf={nameOf}
       />
 
       {editingExpense && (
         <ExpenseFormDialog
-          budgets={budgets}
-          onExpenseAdded={handleExpenseAdded}
+          onExpenseAdded={refresh}
           editingExpense={editingExpense}
           isEditOpen={isEditOpen}
           onEditOpenChange={(open) => { setIsEditOpen(open); if (!open) setEditingExpense(null); }}
-          onExpenseUpdated={() => {
-            queryClient.invalidateQueries({ queryKey: ['expenses'] });
-            queryClient.invalidateQueries({ queryKey: ['pl-expenses'] });
-            setEditingExpense(null);
-          }}
+          onExpenseUpdated={() => { refresh(); setEditingExpense(null); }}
         />
       )}
 
