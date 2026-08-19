@@ -211,7 +211,15 @@ export default function Accounting() {
       const t = r.account.type;
       if (t === "asset") {
         const bal = r.debit - r.credit;
-        if (Math.abs(bal) > 0.005) assets.push({ ...r, balance: bal });
+        // A cash account in credit is not an asset worth less than nothing —
+        // it is money owed to the bank. Presenting it as a negative asset
+        // understates both sides of the sheet and hides an overdraft from the
+        // one statement whose job is to show what the business owes.
+        if (bal < -0.005) {
+          liabilities.push({ ...r, balance: -bal, overdraft: true });
+        } else if (Math.abs(bal) > 0.005) {
+          assets.push({ ...r, balance: bal });
+        }
       } else if (t === "liability") {
         const bal = r.credit - r.debit;
         if (Math.abs(bal) > 0.005) liabilities.push({ ...r, balance: bal });
@@ -660,7 +668,10 @@ export default function Accounting() {
                       <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Liabilities</p>
                       {balanceSheet.liabilities.map((r) => (
                         <div key={r.account.code} className="flex justify-between text-sm py-0.5">
-                          <span className="text-muted-foreground">{r.account.name}</span>
+                          <span className="text-muted-foreground">
+                            {r.account.name}
+                            {r.overdraft && <span className="ml-1.5 text-xs text-destructive">overdraft</span>}
+                          </span>
                           <span>{formatNairaCompact(r.balance)}</span>
                         </div>
                       ))}
