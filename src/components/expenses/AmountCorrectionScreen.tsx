@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { AlertTriangle, Check, Copy, Loader2, Scissors, Trash2 } from 'lucide-react';
+import { AlertTriangle, Check, Copy, FileText, Loader2, Scissors, Trash2 } from 'lucide-react';
+import ReportDetailsDialog, { type StaffReportRecord } from '@/components/reports/ReportDetailsDialog';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -38,6 +39,7 @@ interface SuspectRow {
   category: string | null;
   status: string;
   amount_suspect: boolean;
+  source_report_id: string | null;
 }
 
 export default function AmountCorrectionScreen() {
@@ -48,13 +50,14 @@ export default function AmountCorrectionScreen() {
 
   const [entered, setEntered] = useState<Record<string, string>>({});
   const [splitFor, setSplitFor] = useState<SuspectRow | null>(null);
+  const [viewingReport, setViewingReport] = useState<StaffReportRecord | null>(null);
 
   const { data: rows = [], isLoading } = useQuery<SuspectRow[]>({
     queryKey: ['suspect-amounts'],
     queryFn: async () => {
       const { data, error } = await db
         .from('expenses')
-        .select('id, date, amount, amount_minor, description, category, status, amount_suspect')
+        .select('id, date, amount, amount_minor, description, category, status, amount_suspect, source_report_id')
         .eq('amount_suspect', true)
         .is('cancelled_at', null)
         .order('date', { ascending: false });
@@ -62,6 +65,30 @@ export default function AmountCorrectionScreen() {
       return data ?? [];
     },
   });
+
+  // The reports behind these rows, so the approver can open what the staff
+  // member actually submitted — including any receipts — rather than working
+  // from the truncated description alone.
+  const reportIds = Array.from(
+    new Set(rows.map((r) => r.source_report_id).filter(Boolean) as string[]),
+  );
+
+  const { data: sourceReports = [] } = useQuery<StaffReportRecord[]>({
+    queryKey: ['suspect-source-reports', reportIds.join(',')],
+    queryFn: async () => {
+      if (reportIds.length === 0) return [];
+      const { data, error } = await db
+        .from('staff_reports')
+        .select('*')
+        .in('id', reportIds);
+      if (error) throw error;
+      return data ?? [];
+    },
+    enabled: reportIds.length > 0,
+  });
+
+  const reportFor = (row: SuspectRow) =>
+    row.source_report_id ? sourceReports.find((r) => r.id === row.source_report_id) ?? null : null;
 
   const correct = useMutation({
     mutationFn: async ({ row, minor }: { row: SuspectRow; minor: bigint }) => {
@@ -225,6 +252,7 @@ export default function AmountCorrectionScreen() {
           const siblings = rows.filter(
             (r) => r.id !== row.id && r.date === row.date && r.amount_minor === row.amount_minor,
           );
+          const report = reportFor(row);
           const typed = entered[row.id] ?? '';
           const parsed = typed.trim() === '' ? null : parseMoney(typed);
           const ready = parsed !== null && !isMoneyError(parsed);
@@ -237,7 +265,25 @@ export default function AmountCorrectionScreen() {
                   {format(new Date(row.date), 'dd MMM yyyy')}
                   {row.category && ` · ${row.category}`}
                 </span>
-                <Badge variant="outline" className="capitalize">{row.status}</Badge>
+                <div className="flex items-center gap-2">
+                  {report ? (
+                    <Button
+                      variant="outline"
+                      className="h-9"
+                      onClick={() => setViewingReport(report)}
+                    >
+                      <FileText className="h-3.5 w-3.5 mr-1.5" aria-hidden />
+                      Open source report
+                    </Button>
+                  ) : row.source_report_id ? (
+                    <span className="text-xs text-muted-foreground">Loading report…</span>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">
+                      No linked report — captured directly
+                    </span>
+                  )}
+                  <Badge variant="outline" className="capitalize">{row.status}</Badge>
+                </div>
               </div>
 
               {siblings.length > 0 && (
@@ -328,6 +374,12 @@ export default function AmountCorrectionScreen() {
           );
         })}
       </CardContent>
+
+      <ReportDetailsDialog
+        report={viewingReport}
+        open={!!viewingReport}
+        onOpenChange={(o) => { if (!o) setViewingReport(null); }}
+      />
 
       {splitFor && (
         <SplitLinesDialog

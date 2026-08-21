@@ -24,6 +24,11 @@ import {
 import { formatNairaCompact } from '@/lib/currency';
 import { nairaToMinor } from '@/lib/money';
 import { checkExpenseClaim } from '@/lib/expenseValidation';
+import { parseMoney, isMoneyError } from '@/lib/money';
+import ApprovalLineEditor, {
+  linesFromReport, lineIssues, type EditableLine,
+} from '@/components/expenses/ApprovalLineEditor';
+import { useExpenseCategories } from '@/hooks/useExpenseReference';
 import ChecklistAdmin from '@/components/reports/ChecklistAdmin';
 import ReportDetailsDialog, { type StaffReportRecord } from '@/components/reports/ReportDetailsDialog';
 
@@ -37,9 +42,25 @@ export default function StaffReportsAdmin() {
   const { toast } = useToast();
   const qc = useQueryClient();
 
+  const { data: categories = [] } = useExpenseCategories();
+
   const [review, setReview] = useState<Report | null>(null);
   const [quality, setQuality] = useState('');
   const [reviewNote, setReviewNote] = useState('');
+  // Editable copy of an expense report's lines, so the approver can correct a
+  // figure instead of being refused by the implausibility check with no way out.
+  const [editLines, setEditLines] = useState<EditableLine[]>([]);
+
+  /** Open a report for review, loading its lines for editing. */
+  const openReview = (r: Report) => {
+    setReview(r);
+    setQuality(r.quality_score?.toString() ?? '');
+    setReviewNote(r.review_note ?? '');
+    setEditLines(r.report_type === 'expense' ? linesFromReport(r.details) : []);
+  };
+  const closeReview = () => {
+    setReview(null); setQuality(''); setReviewNote(''); setEditLines([]);
+  };
 
   const [assignOpen, setAssignOpen] = useState(false);
   const [assignForm, setAssignForm] = useState({ user_id: '', report_type: 'sales' as ReportType, cadence: 'daily', due_time: '' });
@@ -109,6 +130,8 @@ export default function StaffReportsAdmin() {
       const performance = combinePerformance(r.timeliness_score ?? null, q);
       let convertedRef: string | null = null;
       let status: 'approved' | 'converted' = 'approved';
+      let amendedLines: unknown[] | null = null;
+      let amendedTotalMinor: number | null = null;
 
       if (r.report_type === 'expense') {
         // The approver may not be the submitter. The database enforces this
@@ -117,21 +140,26 @@ export default function StaffReportsAdmin() {
           throw new Error('You cannot approve an expense report you submitted yourself.');
         }
 
-        const lines: {
-          category: string; category_id?: string | null;
-          amount?: number; amount_minor?: number; description: string;
-          receipt_path?: string | null;
-        }[] = r.details?.lines ?? [];
-
-        if (lines.length === 0) {
+        // The approver's edited lines are authoritative — that is the whole
+        // point of letting them correct a figure before approving.
+        if (editLines.length === 0) {
           throw new Error('This report has no expense lines. Reject it and ask for them to be entered.');
         }
+        const blocking = lineIssues(editLines);
+        if (blocking.length > 0) throw new Error(blocking[0].message);
 
-        // Amounts are already kobo on new reports; older ones carry only the
-        // naira value, so convert rather than re-parsing a formatted string.
-        const withMinor = lines
-          .map(l => ({ ...l, minor: l.amount_minor ?? Number(nairaToMinor(l.amount ?? 0)) }))
-          .filter(l => l.minor > 0);
+        const withMinor = editLines.map(l => {
+          const parsed = parseMoney(l.amount);
+          if (isMoneyError(parsed)) throw new Error(`"${l.description}": ${parsed.error}`);
+          return {
+            description: l.description,
+            category: categories.find(c => c.id === l.categoryId)?.name ?? l.categoryName ?? 'Miscellaneous',
+            category_id: l.categoryId || null,
+            receipt_path: l.receiptPath ?? null,
+            minor: Number(parsed.minor),
+            original_minor: l.originalMinor,
+          };
+        }).filter(l => l.minor > 0);
 
         const stated = r.details?.stated_total_minor ?? null;
         const check = checkExpenseClaim({
@@ -154,6 +182,8 @@ export default function StaffReportsAdmin() {
           payment_method: 'Cash',
           receipt_path: l.receipt_path ?? null,
           payee_name: nameOf(r.user_id),
+          // Keeps the correction screen able to open the report behind a row.
+          source_report_id: r.id,
           // Posted from a report that has already been reviewed, so the
           // capture-time rules (receipt threshold, pasted-list) do not apply.
           source: 'report',
@@ -172,6 +202,19 @@ export default function StaffReportsAdmin() {
         if (error) throw error;
         convertedRef = data?.[0]?.id ?? null;
         status = 'converted';
+
+        amendedTotalMinor = withMinor.reduce((t, l) => t + l.minor, 0);
+        amendedLines = withMinor.map(l => ({
+          description: l.description,
+          category: l.category,
+          category_id: l.category_id,
+          amount_minor: l.minor,
+          amount: l.minor / 100,
+          receipt_path: l.receipt_path,
+          ...(l.original_minor !== null && l.original_minor !== l.minor
+            ? { amended_from_minor: l.original_minor }
+            : {}),
+        }));
       } else if (r.report_type === 'sales') {
         // Record under Weekly Sales (the `sales` table drives revenue & the weekly view).
         const saleType = r.details?.sale_type === 'event' ? 'event' : 'daily';
@@ -237,18 +280,33 @@ export default function StaffReportsAdmin() {
         status = 'converted';
       }
 
+      // When the approver amended a line, keep BOTH versions: what the staff
+      // member submitted and what was approved, with who changed it.
+      const amendedDetails = amendedLines
+        ? {
+            ...(r.details ?? {}),
+            lines: amendedLines,
+            submitted_lines: r.details?.submitted_lines ?? r.details?.lines ?? null,
+            amended_by: user!.id,
+            amended_at: new Date().toISOString(),
+          }
+        : undefined;
+
       const { error: upErr } = await supabase.from('staff_reports').update({
         status, quality_score: q, performance_score: performance, grade: gradeFromScore(performance),
         review_note: reviewNote || null, reviewed_by: user!.id, reviewed_at: new Date().toISOString(),
         converted_ref: convertedRef,
-      }).eq('id', r.id);
+        ...(amendedDetails ? { details: amendedDetails, amount_minor: amendedTotalMinor, amount: (amendedTotalMinor ?? 0) / 100 } : {}),
+      } as any).eq('id', r.id);
       if (upErr) throw upErr;
     },
     onSuccess: () => {
       toast({ title: 'Report approved', description: 'Converted to financial records where applicable.' });
-      setReview(null); setQuality(''); setReviewNote('');
+      closeReview();
       qc.invalidateQueries({ queryKey: ['admin-staff-reports'] });
       qc.invalidateQueries({ queryKey: ['admin-payables'] });
+      qc.invalidateQueries({ queryKey: ['expenses'] });
+      qc.invalidateQueries({ queryKey: ['suspect-amounts'] });
     },
     onError: (e: Error) => toast({ title: 'Failed', description: e.message, variant: 'destructive' }),
   });
@@ -263,7 +321,7 @@ export default function StaffReportsAdmin() {
     },
     onSuccess: () => {
       toast({ title: 'Report rejected' });
-      setReview(null); setQuality(''); setReviewNote('');
+      closeReview();
       qc.invalidateQueries({ queryKey: ['admin-staff-reports'] });
     },
     onError: (e: Error) => toast({ title: 'Failed', description: e.message, variant: 'destructive' }),
@@ -360,11 +418,11 @@ export default function StaffReportsAdmin() {
 
         {/* Review queue */}
         <TabsContent value="review" className="mt-4">
-          <ReportTable rows={pending} nameOf={nameOf} emptyMsg="No reports awaiting review." onRow={(r) => { setReview(r); setQuality(''); setReviewNote(''); }} actionLabel="Review" />
+          <ReportTable rows={pending} nameOf={nameOf} emptyMsg="No reports awaiting review." onRow={openReview} actionLabel="Review" />
         </TabsContent>
 
         <TabsContent value="all" className="mt-4">
-          <ReportTable rows={reports} nameOf={nameOf} emptyMsg="No reports yet." onRow={(r) => { setReview(r); setQuality(r.quality_score?.toString() ?? ''); setReviewNote(r.review_note ?? ''); }} actionLabel="View" />
+          <ReportTable rows={reports} nameOf={nameOf} emptyMsg="No reports yet." onRow={openReview} actionLabel="View" />
         </TabsContent>
 
         {/* General (operations) report — a running log of key activities, challenges,
@@ -386,7 +444,7 @@ export default function StaffReportsAdmin() {
                       <div className="flex items-center gap-2">
                         <Badge className={`text-xs border capitalize ${REPORT_STATUS_COLOR[r.status as keyof typeof REPORT_STATUS_COLOR] ?? ''}`}>{r.status}</Badge>
                         {r.grade && <Badge className={`text-xs border ${gradeColor(r.grade)}`}>{r.grade}{r.performance_score != null ? ` · ${r.performance_score}` : ''}</Badge>}
-                        <Button size="sm" variant="outline" onClick={() => { setReview(r); setQuality(r.quality_score?.toString() ?? ''); setReviewNote(r.review_note ?? ''); }}>{r.status === 'submitted' ? 'Review' : 'View'}</Button>
+                        <Button size="sm" variant="outline" onClick={() => openReview(r)}>{r.status === 'submitted' ? 'Review' : 'View'}</Button>
                       </div>
                     </div>
                     <div className="grid gap-2 sm:grid-cols-2">
@@ -510,7 +568,7 @@ export default function StaffReportsAdmin() {
       <ReportDetailsDialog
         report={review}
         open={!!review}
-        onOpenChange={o => { if (!o) setReview(null); }}
+        onOpenChange={o => { if (!o) closeReview(); }}
         staffName={review ? nameOf(review.user_id) : undefined}
         footer={review?.status === 'submitted' ? (
           <>
@@ -523,6 +581,19 @@ export default function StaffReportsAdmin() {
           </>
         ) : undefined}
       >
+        {/* An expense report's lines are editable at approval: the approver
+            corrects a figure from the receipt rather than being refused. */}
+        {review?.report_type === 'expense' && review?.status === 'submitted' && (
+          <div className="border-t pt-3 mt-3">
+            <ApprovalLineEditor
+              lines={editLines}
+              onChange={setEditLines}
+              statedTotalMinor={(review.details as any)?.stated_total_minor ?? null}
+              disabled={approve.isPending}
+            />
+          </div>
+        )}
+
         {review?.status === 'submitted' && (
           <div className="space-y-3 pt-3 border-t">
             <div className="space-y-2">
