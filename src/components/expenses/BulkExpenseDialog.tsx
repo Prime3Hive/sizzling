@@ -197,6 +197,7 @@ export default function BulkExpenseDialog({ onDone }: Props) {
           receipt_path: receiptPath,
           payee_id: value.payee_id,
           payee_name: value.payee_name,
+          source: 'capture',
           created_by: user?.id,
           submitted_by: user?.id,
           submitted_at: new Date().toISOString(),

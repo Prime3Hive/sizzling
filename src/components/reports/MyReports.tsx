@@ -163,6 +163,9 @@ export default function MyReports() {
             amount: Number(parsed.minor) / 100,
             description: l.description,
             receipt_name: l.receiptName,
+            // The approver copies this onto the expense row, so the receipt
+            // survives the approval boundary.
+            receipt_path: l.receiptPath,
           };
         });
 

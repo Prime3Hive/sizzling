@@ -9,6 +9,7 @@ import { SearchableSelect } from '@/components/ui/searchable-select';
 import ReceiptUpload from '@/components/expenses/ReceiptUpload';
 import SplitLinesDialog, { type DraftLine } from '@/components/expenses/SplitLinesDialog';
 import { useToast } from '@/hooks/use-toast';
+import { supabase } from '@/integrations/supabase/client';
 import { formatMinor, parseMoney, isMoneyError } from '@/lib/money';
 import {
   validateExpenseLine, validationErrors, errorMap, checkExpenseClaim, looksLikePastedList,
@@ -35,6 +36,15 @@ export interface ClaimLine {
   categoryId: string;
   receipt: File | null;
   receiptName: string | null;
+  /**
+   * Storage path once the receipt has actually been uploaded.
+   *
+   * The file is uploaded the moment it is chosen rather than at submit, for
+   * two reasons: a File cannot be serialised into the saved draft, so a
+   * reload used to lose it; and the approval step needs a path it can carry
+   * onto the expense row.
+   */
+  receiptPath: string | null;
 }
 
 export interface ClaimDraft {
@@ -50,6 +60,7 @@ const newLine = (): ClaimLine => ({
   categoryId: '',
   receipt: null,
   receiptName: null,
+  receiptPath: null,
 });
 
 export const emptyDraft = (): ClaimDraft => ({ lines: [], statedTotal: '', notes: '' });
@@ -68,6 +79,8 @@ export function loadDraft(userId: string | undefined, reportDate: string): Claim
     const parsed = JSON.parse(raw) as ClaimDraft;
     return {
       ...parsed,
+      // The File cannot survive JSON, but receiptPath can — so a restored
+      // draft keeps its receipts instead of asking for them again.
       lines: (parsed.lines ?? []).map((l) => ({ ...l, receipt: null })),
     };
   } catch {
@@ -135,7 +148,7 @@ export default function StaffExpenseClaim({
           // The claim carries the payee and the claim-level fields; a line
           // only owns its own three.
           payee_name: 'Staff claim',
-          receipt_path: entry.receipt ? 'pending-upload' : null,
+          receipt_path: entry.receiptPath,
         },
         { scope: 'line' },
       ),
@@ -170,7 +183,7 @@ export default function StaffExpenseClaim({
           amount: p.line.amount,
           category_id: p.line.categoryId,
           payee_name: 'Staff claim',
-          receipt_path: p.line.receipt || p.line.receiptName ? 'pending-upload' : null,
+          receipt_path: p.line.receiptPath,
         },
         { scope: 'line' },
       );
@@ -182,6 +195,34 @@ export default function StaffExpenseClaim({
     onValidityChange?.(outstanding.length === 0, outstanding);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft, claimCheck.reconciles, entryStarted, entryValid]);
+
+  const [uploading, setUploading] = useState(false);
+
+  /** Upload the receipt as soon as it is chosen, and keep only the path. */
+  const attachReceipt = async (file: File | null) => {
+    if (!file) {
+      setEntry((e) => ({ ...e, receipt: null, receiptName: null, receiptPath: null }));
+      return;
+    }
+    if (!userId) {
+      toast({ title: 'Not signed in', description: 'Sign in again before attaching a receipt.', variant: 'destructive' });
+      return;
+    }
+    setUploading(true);
+    try {
+      const ext = file.name.split('.').pop() || 'jpg';
+      const path = `${userId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+      const { error } = await supabase.storage.from('receipts').upload(path, file);
+      if (error) throw error;
+      setEntry((e) => ({ ...e, receipt: file, receiptName: file.name, receiptPath: path }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast({ title: 'Receipt not attached', description: message, variant: 'destructive' });
+      setEntry((e) => ({ ...e, receipt: null, receiptName: null, receiptPath: null }));
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const commitEntry = () => {
     setShowEntryErrors(true);
@@ -366,7 +407,8 @@ export default function StaffExpenseClaim({
           <ReceiptUpload
             id="claim-receipt"
             file={entry.receipt}
-            onChange={(f) => setEntry((e) => ({ ...e, receipt: f, receiptName: f?.name ?? null }))}
+            onChange={(f) => { void attachReceipt(f); }}
+            disabled={uploading}
             error={showEntryErrors ? entryErrors.receipt : null}
           />
         </div>
@@ -380,7 +422,7 @@ export default function StaffExpenseClaim({
               Cancel edit
             </Button>
           )}
-          <Button type="button" className="h-11 flex-1" onClick={commitEntry}>
+          <Button type="button" className="h-11 flex-1" onClick={commitEntry} disabled={uploading}>
             <Plus className="h-4 w-4 mr-2" aria-hidden />
             {editingId ? 'Save line' : 'Add another'}
           </Button>

@@ -294,6 +294,8 @@ export default function ExpenseFormDialog({
         receipt_path: receiptPath,
         payee_id: value.payee_id,
         payee_name: value.payee_name,
+        // Typed by a person: the full capture-time rules apply.
+        source: 'capture',
       };
 
       if (isEditMode && editingExpense) {

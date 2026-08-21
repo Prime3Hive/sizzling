@@ -120,6 +120,7 @@ export default function StaffReportsAdmin() {
         const lines: {
           category: string; category_id?: string | null;
           amount?: number; amount_minor?: number; description: string;
+          receipt_path?: string | null;
         }[] = r.details?.lines ?? [];
 
         if (lines.length === 0) {
@@ -151,7 +152,11 @@ export default function StaffReportsAdmin() {
           account_type: 'COGS',
           cost_center: 'Daily Orders',
           payment_method: 'Cash',
+          receipt_path: l.receipt_path ?? null,
           payee_name: nameOf(r.user_id),
+          // Posted from a report that has already been reviewed, so the
+          // capture-time rules (receipt threshold, pasted-list) do not apply.
+          source: 'report',
           // Identity carried THROUGH the approval boundary: the staff member
           // stays the submitter, the approver is recorded separately. That
           // link used to be lost here.
@@ -210,6 +215,7 @@ export default function StaffReportsAdmin() {
           // rather than Bank.
           payment_method: 'Credit',
           payee_name: supplier,
+          source: 'report',
           submitted_by: r.user_id,
           submitted_at: r.submitted_at,
           created_by: user!.id,
@@ -314,6 +320,7 @@ export default function StaffReportsAdmin() {
           category: p.category || 'Credit Purchase', date: p.incurred_date,
           budget_id: null, account_type: 'COGS', cost_center: 'Daily Orders',
           payment_method: 'Credit', payee_name: p.supplier, created_by: user!.id,
+          source: 'settlement',
         } as any).select('id').single();
         if (expErr) throw expErr;
         expenseId = exp!.id;

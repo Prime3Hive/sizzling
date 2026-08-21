@@ -140,7 +140,9 @@ export default function AmountCorrectionScreen() {
           amount_minor: first.minor,
           description: first.description,
           category_id: first.categoryId,
-          category: categories.find((c) => c.id === first.categoryId)?.name ?? null,
+          // `expenses.category` is NOT NULL, so a category that cannot be
+          // resolved must fall back rather than fail the write.
+          category: categories.find((c) => c.id === first.categoryId)?.name ?? 'Miscellaneous',
           amount_corrected_by: user?.id,
         })
         .eq('id', row.id);
@@ -152,7 +154,7 @@ export default function AmountCorrectionScreen() {
             amount_minor: l.minor,
             description: l.description,
             category_id: l.categoryId,
-            category: categories.find((c) => c.id === l.categoryId)?.name ?? null,
+            category: categories.find((c) => c.id === l.categoryId)?.name ?? 'Miscellaneous',
             date: row.date,
             budget_id: null,
             account_type: 'COGS',
@@ -161,6 +163,8 @@ export default function AmountCorrectionScreen() {
             payee_name: 'Unattributed — pre-migration',
             created_by: user?.id,
             status: 'approved',
+            // A historical narrative being split, not a fresh capture.
+            source: 'correction',
           })),
         );
         if (insErr) throw insErr;
