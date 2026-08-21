@@ -1,15 +1,16 @@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { CalendarDays, AlertTriangle, Mail, TrendingUp, FileText, ClipboardList, ListChecks } from 'lucide-react';
+import { CalendarDays, AlertTriangle, Mail, TrendingUp, FileText, ClipboardList, ListChecks, CalendarCheck } from 'lucide-react';
 import StaffLeaveRequests from '@/components/staff-portal/StaffLeaveRequests';
 import StaffComplaints from '@/components/staff-portal/StaffComplaints';
 import StaffMessages from '@/components/staff-portal/StaffMessages';
 import StaffKPITasks from '@/components/staff-portal/StaffKPITasks';
 import StaffMyDocuments from '@/components/staff-portal/StaffMyDocuments';
+import StaffAttendance from '@/components/staff-portal/StaffAttendance';
 import MyReports from '@/components/reports/MyReports';
 import MyChecklists from '@/components/reports/MyChecklists';
 import { useSearchParams } from 'react-router-dom';
 
-const VALID_TABS = ['leave', 'complaints', 'messages', 'reports', 'checklists', 'performance', 'documents'];
+const VALID_TABS = ['leave', 'attendance', 'complaints', 'messages', 'reports', 'checklists', 'performance', 'documents'];
 
 const StaffPortal = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -29,6 +30,9 @@ const StaffPortal = () => {
         <TabsList className="bg-muted/50 p-1 flex-wrap h-auto gap-1">
           <TabsTrigger value="leave" className="data-[state=active]:bg-background data-[state=active]:shadow-card">
             <CalendarDays className="h-4 w-4 mr-2" />Leave Requests
+          </TabsTrigger>
+          <TabsTrigger value="attendance" className="data-[state=active]:bg-background data-[state=active]:shadow-card">
+            <CalendarCheck className="h-4 w-4 mr-2" />My Attendance
           </TabsTrigger>
           <TabsTrigger value="complaints" className="data-[state=active]:bg-background data-[state=active]:shadow-card">
             <AlertTriangle className="h-4 w-4 mr-2" />Complaints
@@ -51,6 +55,7 @@ const StaffPortal = () => {
         </TabsList>
 
         <TabsContent value="leave"><StaffLeaveRequests /></TabsContent>
+        <TabsContent value="attendance"><StaffAttendance /></TabsContent>
         <TabsContent value="complaints"><StaffComplaints /></TabsContent>
         <TabsContent value="messages"><StaffMessages /></TabsContent>
         <TabsContent value="reports"><MyReports /></TabsContent>

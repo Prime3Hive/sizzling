@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
-import { Bell, DollarSign, FileText, CalendarDays, AlertTriangle, MessageSquare, Info } from 'lucide-react';
+import { Bell, DollarSign, FileText, CalendarDays, CalendarCheck, AlertTriangle, MessageSquare, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -28,6 +28,8 @@ const getNotificationRoute = (type: string): string => {
     case 'birthday': return '/birthdays';
     case 'leave_request': return '/staff-portal?tab=leave';
     case 'complaint': return '/staff-portal?tab=complaints';
+    case 'attendance': return '/staff-portal?tab=attendance';
+    case 'attendance_report': return '/attendance';
     default: return '';
   }
 };
@@ -88,6 +90,9 @@ export default function NotificationBell() {
       case 'leave_request':return <CalendarDays className="h-4 w-4 text-orange-500" aria-hidden="true" />;
       case 'complaint':    return <AlertTriangle className="h-4 w-4 text-yellow-600" aria-hidden="true" />;
       case 'message':      return <MessageSquare className="h-4 w-4 text-primary"    aria-hidden="true" />;
+      case 'attendance':
+      case 'attendance_report':
+                           return <CalendarCheck className="h-4 w-4 text-purple-600" aria-hidden="true" />;
       default:             return <Info          className="h-4 w-4 text-muted-foreground" aria-hidden="true" />;
     }
   };

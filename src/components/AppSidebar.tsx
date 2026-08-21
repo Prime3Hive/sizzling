@@ -24,6 +24,7 @@ import {
   Landmark,
   ToggleLeft,
   ClipboardCheck,
+  CalendarCheck,
   HardDrive,
   User,
   Send,
@@ -273,6 +274,11 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                         </SidebarMenuSubButton>
                       </SidebarMenuSubItem>
                       <SidebarMenuSubItem>
+                        <SidebarMenuSubButton asChild isActive={isStaffPortalTab('attendance')}>
+                          <Link to="/staff-portal?tab=attendance"><CalendarCheck className="h-3 w-3" /><span>My Attendance</span></Link>
+                        </SidebarMenuSubButton>
+                      </SidebarMenuSubItem>
+                      <SidebarMenuSubItem>
                         <SidebarMenuSubButton asChild>
                           <Link to="/staff-portal?tab=complaints"><AlertTriangle className="h-3 w-3" /><span>Complaints</span></Link>
                         </SidebarMenuSubButton>
@@ -500,6 +506,14 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                   </SidebarMenuButton>
                 </SidebarMenuItem>
 
+                <Can feature="mark_attendance">
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild isActive={location.pathname === '/attendance'}>
+                      <Link to="/attendance"><CalendarCheck className="h-4 w-4" />Attendance</Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                </Can>
+
                 <Can feature="view_payroll">
                   <SidebarMenuItem>
                     <SidebarMenuButton asChild isActive={location.pathname === '/payroll'}>
@@ -573,6 +587,12 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             <SidebarMenuItem>
               <SidebarMenuButton asChild isActive={location.pathname === '/my-payslip'}>
                 <Link to="/my-payslip"><FileText className="h-4 w-4" />My Payslip</Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+
+            <SidebarMenuItem>
+              <SidebarMenuButton asChild isActive={isStaffPortalTab('attendance')}>
+                <Link to="/staff-portal?tab=attendance"><CalendarCheck className="h-4 w-4" />My Attendance</Link>
               </SidebarMenuButton>
             </SidebarMenuItem>
 

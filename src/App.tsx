@@ -54,6 +54,7 @@ const StaffProfiles     = lazy(() => import("./pages/StaffProfiles"));
 const NJCSupplies       = lazy(() => import("./pages/NJCSupplies"));
 const ProfitLoss        = lazy(() => import("./pages/ProfitLoss"));
 const Payroll           = lazy(() => import("./pages/Payroll"));
+const Attendance        = lazy(() => import("./pages/Attendance"));
 const MyProfile         = lazy(() => import("./pages/MyProfile"));
 const StaffPortal       = lazy(() => import("./pages/StaffPortal"));
 const BirthdayCalendar  = lazy(() => import("./pages/BirthdayCalendar"));
@@ -275,6 +276,13 @@ const App = () => (
                 <Route path="payroll" element={
                   <Can roles={['admin']} redirect="/dashboard">
                     <Payroll />
+                  </Can>
+                } />
+                {/* HR marks and submits; the page itself shows admin-only
+                    approval controls to admins. */}
+                <Route path="attendance" element={
+                  <Can feature="mark_attendance" redirect="/dashboard">
+                    <Attendance />
                   </Can>
                 } />
                 <Route path="procurement" element={

@@ -7,8 +7,8 @@
 -- do. Work down the list in `step` order and run whatever says "RUN THIS".
 --
 -- Covers everything from 2026-08-16 onward: the two records-integrity
--- migrations, the four expense migrations, the two expense fixes, and the
--- stock-issue costing migration.
+-- migrations, the four expense migrations, the two expense fixes, the
+-- stock-issue costing migration, and attendance.
 -- ═════════════════════════════════════════════════════════════════════════════
 
 WITH checks(step, migration, what_it_does, marker, applied) AS (
@@ -69,7 +69,13 @@ WITH checks(step, migration, what_it_does, marker, applied) AS (
         'Cost recognised when stock is issued, not only when invoiced',
         'function fn_post_stock_movement',
         EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-                 WHERE n.nspname = 'public' AND p.proname = 'fn_post_stock_movement'))
+                 WHERE n.nspname = 'public' AND p.proname = 'fn_post_stock_movement')),
+
+    (10, '20260821100000_attendance',
+        'HR marks attendance weekly; admin approves it onto the staff portal',
+        'table attendance_records',
+        EXISTS (SELECT 1 FROM information_schema.tables
+                 WHERE table_schema = 'public' AND table_name = 'attendance_records'))
 )
 SELECT
   step,
