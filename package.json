@@ -13,7 +13,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "types:supabase": "npx --yes supabase@2 gen types typescript --project-id kqnqzyklwfrhtywimsjm > src/integrations/supabase/types.ts"
   },
   "dependencies": {
     "@marsidev/react-turnstile": "^1.5.0",

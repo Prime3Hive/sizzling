@@ -1,9 +1,10 @@
 import * as React from 'react';
 import { Check, ChevronDown, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useMediaQuery } from '@/hooks/use-media-query';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
@@ -15,9 +16,19 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 //
 // Under the threshold it stays an ordinary Select, because a searchable sheet
 // for three cost centres is worse than a dropdown, not better.
+//
+// Exactly one overlay is mounted at a time. Rendering the Sheet and the Popover
+// together and hiding one with `sm:hidden` does not work — both portal to
+// <body> and escape the wrapper, so the modal Sheet ends up painting over the
+// desktop layout and marking the Popover's portal aria-hidden while the search
+// box inside it still holds focus.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const SEARCHABLE_ABOVE = 8;
+
+// Radix forbids an empty SelectItem value, so the "no selection" row carries a
+// sentinel that is mapped back to '' on the way out.
+const NONE = '__none__';
 
 export interface SelectOption {
   value: string;
@@ -59,9 +70,27 @@ export function SearchableSelect({
 }: SearchableSelectProps) {
   const [open, setOpen] = React.useState(false);
   const [query, setQuery] = React.useState('');
+  const isDesktop = useMediaQuery('(min-width: 640px)');
 
-  const selected = options.find((o) => o.value === value);
-  const searchable = options.length > SEARCHABLE_ABOVE;
+  // options.length is not stable: reference lists arrive asynchronously (0 -> 13)
+  // and typing in the search box does not shrink it, but a parent re-filtering
+  // its own source list can. Deciding afresh every render would swap the control
+  // between Select and Popover mid-life — a full unmount that throws away focus
+  // and any open dropdown.
+  //
+  // So the decision runs off the high-water mark: it can only ever go from
+  // "ordinary Select" to "searchable", once, when the real list first lands. It
+  // never goes back, so a filter that narrows the list leaves the control alone.
+  const maxOptions = React.useRef(0);
+  if (options.length > maxOptions.current) maxOptions.current = options.length;
+  const decided = maxOptions.current > 0;
+  const searchable = maxOptions.current > SEARCHABLE_ABOVE;
+
+  // Never uncontrolled: '' is a valid controlled value for Radix Select and
+  // still shows the placeholder, whereas undefined makes it uncontrolled and
+  // React warns the moment a value is picked.
+  const current = value ?? '';
+  const selected = options.find((o) => o.value === current);
 
   const filtered = React.useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -71,10 +100,32 @@ export function SearchableSelect({
     );
   }, [options, query]);
 
+  // Nothing to choose from yet. A neutral disabled trigger keeps the layout
+  // stable while the list loads, instead of an empty dropdown that opens onto
+  // nothing.
+  if (!decided) {
+    return (
+      <Button
+        type="button"
+        variant="outline"
+        id={id}
+        disabled
+        aria-describedby={ariaDescribedBy}
+        className={cn(
+          'h-11 w-full justify-between font-normal text-base text-muted-foreground',
+          className,
+        )}
+      >
+        <span className="truncate">{placeholder}</span>
+        <ChevronDown className="h-4 w-4 shrink-0 opacity-50" />
+      </Button>
+    );
+  }
+
   // Short lists keep the ordinary control.
   if (!searchable) {
     return (
-      <Select value={value || undefined} onValueChange={onChange} disabled={disabled}>
+      <Select value={current} onValueChange={(v) => onChange(v === NONE ? '' : v)} disabled={disabled}>
         <SelectTrigger
           id={id}
           aria-required={required || undefined}
@@ -85,7 +136,7 @@ export function SearchableSelect({
           <SelectValue placeholder={placeholder} />
         </SelectTrigger>
         <SelectContent>
-          {emptyOptionLabel && <SelectItem value="__none__">{emptyOptionLabel}</SelectItem>}
+          {emptyOptionLabel && <SelectItem value={NONE}>{emptyOptionLabel}</SelectItem>}
           {options.map((o) => (
             <SelectItem key={o.value} value={o.value}>
               {o.label}
@@ -95,6 +146,11 @@ export function SearchableSelect({
       </Select>
     );
   }
+
+  const close = () => {
+    setOpen(false);
+    setQuery('');
+  };
 
   const trigger = (
     <Button
@@ -124,7 +180,10 @@ export function SearchableSelect({
   const list = (
     <div className="flex flex-col min-h-0">
       <div className="relative px-1 pb-2">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" aria-hidden />
+        <Search
+          className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground"
+          aria-hidden
+        />
         <Input
           autoFocus
           value={query}
@@ -138,27 +197,27 @@ export function SearchableSelect({
         {emptyOptionLabel && (
           <OptionRow
             label={emptyOptionLabel}
-            selected={!value}
+            selected={!current}
             onSelect={() => {
               onChange('');
-              setOpen(false);
-              setQuery('');
+              close();
             }}
           />
         )}
         {filtered.length === 0 && (
-          <p className="px-3 py-6 text-sm text-muted-foreground text-center">No match for “{query}”.</p>
+          <p className="px-3 py-6 text-sm text-muted-foreground text-center">
+            No match for “{query}”.
+          </p>
         )}
         {filtered.map((o) => (
           <OptionRow
             key={o.value}
             label={o.label}
             hint={o.hint}
-            selected={o.value === value}
+            selected={o.value === current}
             onSelect={() => {
               onChange(o.value);
-              setOpen(false);
-              setQuery('');
+              close();
             }}
           />
         ))}
@@ -166,30 +225,49 @@ export function SearchableSelect({
     </div>
   );
 
+  const heading = title ?? placeholder;
+
+  // Desktop: the same search, in a popover.
+  if (isDesktop) {
+    return (
+      <Popover
+        open={open}
+        onOpenChange={(o) => {
+          setOpen(o);
+          if (!o) setQuery('');
+        }}
+      >
+        <PopoverTrigger asChild>{trigger}</PopoverTrigger>
+        <PopoverContent
+          className="p-2 w-[--radix-popover-trigger-width] min-w-[16rem]"
+          align="start"
+          aria-label={heading}
+        >
+          {list}
+        </PopoverContent>
+      </Popover>
+    );
+  }
+
+  // Mobile: a searchable bottom sheet.
   return (
     <>
-      {/* Mobile: a searchable bottom sheet. */}
-      <div className="sm:hidden">
-        {trigger}
-        <Sheet open={open} onOpenChange={(o) => { setOpen(o); if (!o) setQuery(''); }}>
-          <SheetContent side="bottom" className="h-[85vh] flex flex-col pb-[env(safe-area-inset-bottom)]">
-            <SheetHeader className="text-left">
-              <SheetTitle>{title ?? placeholder}</SheetTitle>
-            </SheetHeader>
-            <div className="mt-3 flex-1 min-h-0">{list}</div>
-          </SheetContent>
-        </Sheet>
-      </div>
-
-      {/* Desktop: the same search, in a popover. */}
-      <div className="hidden sm:block">
-        <Popover open={open} onOpenChange={(o) => { setOpen(o); if (!o) setQuery(''); }}>
-          <PopoverTrigger asChild>{trigger}</PopoverTrigger>
-          <PopoverContent className="p-2 w-[--radix-popover-trigger-width] min-w-[16rem]" align="start">
-            {list}
-          </PopoverContent>
-        </Popover>
-      </div>
+      {trigger}
+      <Sheet
+        open={open}
+        onOpenChange={(o) => {
+          setOpen(o);
+          if (!o) setQuery('');
+        }}
+      >
+        <SheetContent side="bottom" className="h-[85vh] flex flex-col pb-[env(safe-area-inset-bottom)]">
+          <SheetHeader className="text-left">
+            <SheetTitle>{heading}</SheetTitle>
+            <SheetDescription>Search the list, then tap an option to choose it.</SheetDescription>
+          </SheetHeader>
+          <div className="mt-3 flex-1 min-h-0">{list}</div>
+        </SheetContent>
+      </Sheet>
     </>
   );
 }

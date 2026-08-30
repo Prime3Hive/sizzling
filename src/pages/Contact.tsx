@@ -31,7 +31,7 @@ export default function Contact() {
     }
     setSending(true);
     try {
-      const { error } = await (supabase as any).from("contact_messages").insert({
+      const { error } = await supabase.from("contact_messages").insert({
         name: form.name.trim(),
         email: form.email.trim(),
         phone: form.phone.trim() || null,
@@ -57,7 +57,7 @@ export default function Contact() {
     }
     setSubscribing(true);
     try {
-      const { error } = await (supabase as any).from("subscribers").insert({
+      const { error } = await supabase.from("subscribers").insert({
         email: subEmail.trim().toLowerCase(),
         name: subName.trim() || null,
         source: "website",

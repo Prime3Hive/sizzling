@@ -58,7 +58,7 @@ export default function Messages() {
   const { data: messages = [], isLoading } = useQuery<ContactMessage[]>({
     queryKey: ["contact-messages"],
     queryFn: async () => {
-      const { data, error } = await (supabase as any)
+      const { data, error } = await supabase
         .from("contact_messages")
         .select("*")
         .order("created_at", { ascending: false });
@@ -70,7 +70,7 @@ export default function Messages() {
   const { data: subscribers = [], isLoading: loadingSubs } = useQuery<Subscriber[]>({
     queryKey: ["subscribers"],
     queryFn: async () => {
-      const { data, error } = await (supabase as any)
+      const { data, error } = await supabase
         .from("subscribers")
         .select("*")
         .order("subscribed_at", { ascending: false });
@@ -82,7 +82,7 @@ export default function Messages() {
   // ── Mutations ──
   const setStatus = useMutation({
     mutationFn: async ({ id, status }: { id: string; status: ContactMessage["status"] }) => {
-      const { error } = await (supabase as any)
+      const { error } = await supabase
         .from("contact_messages")
         .update({ status, updated_at: new Date().toISOString() })
         .eq("id", id);
@@ -94,7 +94,7 @@ export default function Messages() {
 
   const deleteMsg = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await (supabase as any).from("contact_messages").delete().eq("id", id);
+      const { error } = await supabase.from("contact_messages").delete().eq("id", id);
       if (error) throw error;
     },
     onSuccess: () => {
@@ -108,7 +108,7 @@ export default function Messages() {
 
   const toggleSub = useMutation({
     mutationFn: async ({ id, status }: { id: string; status: Subscriber["status"] }) => {
-      const { error } = await (supabase as any)
+      const { error } = await supabase
         .from("subscribers")
         .update({
           status,

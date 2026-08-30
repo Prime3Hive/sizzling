@@ -6,14 +6,20 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { Badge } from '@/components/ui/badge';
+import { useMediaQuery } from '@/hooks/use-media-query';
 import { cn } from '@/lib/utils';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Expense filters. On a phone these collapse into a bottom sheet (§7) rather
 // than wrapping into four rows of controls above the list.
+//
+// The two layouts are mounted one at a time, not both-with-one-hidden. Two
+// copies of the same controls means two elements answering to the same id, so
+// every <Label htmlFor> silently binds to whichever copy the document happens
+// to reach first — which, on a phone, is the one nobody can see.
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface Props {
@@ -32,22 +38,24 @@ interface Props {
   activeCount: number;
 }
 
-export default function ExpenseFilters(props: Props) {
-  const {
-    filterStartDate, filterEndDate, filterCategory, filterBudget,
-    categories, budgets, onStartDateChange, onEndDateChange,
-    onCategoryChange, onBudgetChange, onClear, hasActiveFilters, activeCount,
-  } = props;
-  const [sheetOpen, setSheetOpen] = useState(false);
-
-  const DateField = ({
-    id, label, value, onChange, placeholder,
-  }: {
-    id: string; label: string; value: Date | undefined;
-    onChange: (d: Date | undefined) => void; placeholder: string;
-  }) => (
+function DateField({
+  id,
+  label,
+  value,
+  onChange,
+  placeholder,
+}: {
+  id: string;
+  label: string;
+  value: Date | undefined;
+  onChange: (d: Date | undefined) => void;
+  placeholder: string;
+}) {
+  return (
     <div className="space-y-1.5">
-      <Label htmlFor={id} className="text-xs text-muted-foreground">{label}</Label>
+      <Label htmlFor={id} className="text-xs text-muted-foreground">
+        {label}
+      </Label>
       <Popover>
         <PopoverTrigger asChild>
           <Button
@@ -60,16 +68,44 @@ export default function ExpenseFilters(props: Props) {
           </Button>
         </PopoverTrigger>
         <PopoverContent className="w-auto p-0" align="start">
-          <Calendar mode="single" selected={value} onSelect={onChange} initialFocus className="p-3 pointer-events-auto" />
+          <Calendar
+            mode="single"
+            selected={value}
+            onSelect={onChange}
+            initialFocus
+            className="p-3 pointer-events-auto"
+          />
         </PopoverContent>
       </Popover>
     </div>
   );
+}
+
+export default function ExpenseFilters(props: Props) {
+  const {
+    filterStartDate, filterEndDate, filterCategory, filterBudget,
+    categories, budgets, onStartDateChange, onEndDateChange,
+    onCategoryChange, onBudgetChange, onClear, hasActiveFilters, activeCount,
+  } = props;
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const isDesktop = useMediaQuery('(min-width: 640px)');
 
   const controls = (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-      <DateField id="filter-from" label="From" value={filterStartDate} onChange={onStartDateChange} placeholder="Start date" />
-      <DateField id="filter-to" label="To" value={filterEndDate} onChange={onEndDateChange} placeholder="End date" />
+      <DateField
+        id="filter-from"
+        label="From"
+        value={filterStartDate}
+        onChange={onStartDateChange}
+        placeholder="Start date"
+      />
+      <DateField
+        id="filter-to"
+        label="To"
+        value={filterEndDate}
+        onChange={onEndDateChange}
+        placeholder="End date"
+      />
       <div className="space-y-1.5">
         <Label htmlFor="filter-category" className="text-xs text-muted-foreground">Category</Label>
         <SearchableSelect
@@ -95,10 +131,27 @@ export default function ExpenseFilters(props: Props) {
     </div>
   );
 
+  // Tablet and desktop: inline.
+  if (isDesktop) {
+    return (
+      <Card>
+        <CardContent className="pt-6 space-y-3">
+          {controls}
+          {hasActiveFilters && (
+            <Button variant="ghost" className="h-9" onClick={onClear}>
+              <X className="h-3.5 w-3.5 mr-1" aria-hidden />
+              Clear filters
+            </Button>
+          )}
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // Phone: one button that opens a bottom sheet.
   return (
     <>
-      {/* Phone: one button that opens a bottom sheet. */}
-      <div className="sm:hidden flex gap-2">
+      <div className="flex gap-2">
         <Button variant="outline" className="h-11 flex-1 justify-between" onClick={() => setSheetOpen(true)}>
           <span className="inline-flex items-center gap-2">
             <SlidersHorizontal className="h-4 w-4" aria-hidden />
@@ -115,9 +168,13 @@ export default function ExpenseFilters(props: Props) {
       </div>
 
       <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
-        <SheetContent side="bottom" className="max-h-[85vh] overflow-y-auto pb-[max(1rem,env(safe-area-inset-bottom))]">
+        <SheetContent
+          side="bottom"
+          className="max-h-[85vh] overflow-y-auto pb-[max(1rem,env(safe-area-inset-bottom))]"
+        >
           <SheetHeader className="text-left">
             <SheetTitle>Filters</SheetTitle>
+            <SheetDescription>Narrow the expense list by date, category or budget.</SheetDescription>
           </SheetHeader>
           <div className="mt-4 space-y-4">
             {controls}
@@ -128,19 +185,6 @@ export default function ExpenseFilters(props: Props) {
           </div>
         </SheetContent>
       </Sheet>
-
-      {/* Tablet and desktop: inline. */}
-      <Card className="hidden sm:block">
-        <CardContent className="pt-6 space-y-3">
-          {controls}
-          {hasActiveFilters && (
-            <Button variant="ghost" className="h-9" onClick={onClear}>
-              <X className="h-3.5 w-3.5 mr-1" aria-hidden />
-              Clear filters
-            </Button>
-          )}
-        </CardContent>
-      </Card>
     </>
   );
 }

@@ -94,13 +94,21 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const { data: unreadMessages = 0 } = useQuery({
     queryKey: ["contact-messages-unread"],
     enabled: !!isAdmin,
-    refetchInterval: 60_000,
+    retry: false,
+    // null means "this inbox is not deployed here". Polling a table that does
+    // not exist just prints a 404 in every admin's console twice a minute for
+    // as long as they stay logged in, so the poll stops instead.
+    refetchInterval: (query) => (query.state.data === null ? false : 60_000),
     queryFn: async () => {
-      const { count, error } = await (supabase as any)
+      const { count, error } = await supabase
         .from("contact_messages")
         .select("id", { count: "exact", head: true })
         .eq("status", "new");
-      if (error) throw error;
+      if (error) {
+        // PGRST205: relation missing from the PostgREST schema cache.
+        if (error.code === "PGRST205") return null;
+        throw error;
+      }
       return count ?? 0;
     },
   });
@@ -659,7 +667,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                     <Link to="/messages">
                       <Inbox className="h-4 w-4" />
                       <span>Messages</span>
-                      {unreadMessages > 0 && (
+                      {(unreadMessages ?? 0) > 0 && (
                         <Badge className="ml-auto bg-blue-600 text-white text-[10px] h-5 min-w-5 px-1.5">
                           {unreadMessages}
                         </Badge>

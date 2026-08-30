@@ -36,17 +36,18 @@ CREATE POLICY "anyone can submit contact message"
   TO anon, authenticated
   WITH CHECK (true);
 
--- Admins may read / update / delete
+-- Admins may read / update / delete.
+--
+-- public.is_admin() rather than an inline EXISTS over user_roles: it is
+-- SECURITY DEFINER (so it does not re-enter user_roles' own RLS) and it also
+-- requires role_status = 'approved', which the inline form did not — a revoked
+-- or not-yet-approved admin row would otherwise still open the whole inbox.
 DROP POLICY IF EXISTS "admins manage contact messages" ON contact_messages;
 CREATE POLICY "admins manage contact messages"
   ON contact_messages FOR ALL
   TO authenticated
-  USING (
-    EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = auth.uid() AND ur.role = 'admin')
-  )
-  WITH CHECK (
-    EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = auth.uid() AND ur.role = 'admin')
-  );
+  USING (public.is_admin(auth.uid()))
+  WITH CHECK (public.is_admin(auth.uid()));
 
 -- ── Newsletter subscribers ───────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS subscribers (
@@ -76,9 +77,9 @@ DROP POLICY IF EXISTS "admins manage subscribers" ON subscribers;
 CREATE POLICY "admins manage subscribers"
   ON subscribers FOR ALL
   TO authenticated
-  USING (
-    EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = auth.uid() AND ur.role = 'admin')
-  )
-  WITH CHECK (
-    EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = auth.uid() AND ur.role = 'admin')
-  );
+  USING (public.is_admin(auth.uid()))
+  WITH CHECK (public.is_admin(auth.uid()));
+
+-- PostgREST caches the schema. Without this the tables exist but every request
+-- still 404s (PGRST205) until the API restarts on its own.
+NOTIFY pgrst, 'reload schema';

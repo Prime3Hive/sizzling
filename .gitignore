@@ -30,3 +30,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Supabase CLI local state — supabase/.temp/pooler-url embeds the database
+# password, and the rest is per-machine link state. Never commit it.
+supabase/.temp/
