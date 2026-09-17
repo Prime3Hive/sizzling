@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
@@ -79,6 +80,8 @@ interface ReviewRow {
   } | null;
 }
 
+const ATTENDANCE_TABS = ['mark', 'weeks', 'reviews'];
+
 /** A cell being edited in the marking grid. */
 interface CellDraft {
   status: AttendanceStatus;
@@ -93,7 +96,33 @@ export default function Attendance() {
   const { toast } = useToast();
   const qc = useQueryClient();
 
-  const [weekStart, setWeekStart] = useState(() => weekStartOf(todayIso()));
+  // The week being looked at and the open tab live in the URL rather than in
+  // component state, so the "attendance submitted" notification can put an
+  // admin on the exact week awaiting them instead of on whatever week today
+  // falls in, and so "Open" on a report row is a real link to that week.
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const weekParam = searchParams.get('week');
+  const weekStart = /^\d{4}-\d{2}-\d{2}$/.test(weekParam ?? '')
+    ? weekStartOf(weekParam!)
+    : weekStartOf(todayIso());
+
+  const tabParam = searchParams.get('tab');
+  const tab = ATTENDANCE_TABS.includes(tabParam ?? '') ? tabParam! : 'mark';
+
+  const setParams = (next: { week?: string; tab?: string }) => {
+    const p = new URLSearchParams(searchParams);
+    if (next.week !== undefined) p.set('week', next.week);
+    if (next.tab !== undefined) {
+      if (next.tab === 'mark') p.delete('tab');
+      else p.set('tab', next.tab);
+    }
+    setSearchParams(p, { replace: true });
+  };
+
+  const setWeekStart = (next: string | ((prev: string) => string)) =>
+    setParams({ week: typeof next === 'function' ? next(weekStart) : next });
+
   const [comment, setComment] = useState('');
   const [commentTouched, setCommentTouched] = useState(false);
   // The open cell and its draft live here rather than inside the cell, so a
@@ -181,6 +210,28 @@ export default function Attendance() {
       return (data ?? []) as ReviewRow[];
     },
   });
+
+  // What is actually being approved. Keyed on the week in the dialog, which is
+  // not always the week open in the grid — a report can be decided straight
+  // from the list. Same key shape as the grid's query, so it reuses that cache
+  // when they are the same week.
+  const { data: decisionRecords = [], isLoading: decisionLoading } = useQuery<RecordRow[]>({
+    queryKey: ['attendance-records', decision?.week.id],
+    queryFn: async () => {
+      const { data, error } = await db
+        .from('attendance_records')
+        .select('id, week_id, staff_profile_id, work_date, status, check_in, check_out, hr_note, corrected_from')
+        .eq('week_id', decision!.week.id);
+      if (error) throw error;
+      return (data ?? []) as RecordRow[];
+    },
+    enabled: !!decision?.week.id,
+  });
+
+  const decisionSummary = useMemo(() => ({
+    ...summarizeAttendance(decisionRecords),
+    staffCount: new Set(decisionRecords.map(r => r.staff_profile_id)).size,
+  }), [decisionRecords]);
 
   const byCell = useMemo(() => {
     const m = new Map<string, RecordRow>();
@@ -288,6 +339,7 @@ export default function Attendance() {
             title: 'Weekly attendance submitted',
             message: `${who} submitted the attendance report for the week of ${format(parseISO(weekStart), 'd MMM yyyy')}.`,
             type: 'attendance_report',
+            related_id: args.weekId,
           });
         }
         toast({ title: 'Submitted for approval' });
@@ -360,13 +412,17 @@ export default function Attendance() {
     const key = `${s.id}|${day}`;
     const rec = byCell.get(key);
 
+    // A locked week is still worth opening — the admin approving it has to be
+    // able to read the note and the times behind a letter, not just hover it.
+    const openable = editable || !!rec;
+
     const face = (
       <button
         type="button"
-        disabled={!editable}
+        disabled={!openable}
         className={`h-9 w-9 rounded-md border text-xs font-semibold transition ${
           rec ? statusColor(rec.status) : 'bg-background text-muted-foreground border-dashed border-border'
-        } ${editable ? 'hover:ring-2 hover:ring-primary/30' : 'cursor-default'} ${
+        } ${openable ? 'hover:ring-2 hover:ring-primary/30' : 'cursor-default'} ${
           rec?.hr_note ? 'ring-1 ring-primary/40' : ''
         }`}
         title={rec ? `${statusLabel(rec.status)}${rec.hr_note ? ` — ${rec.hr_note}` : ''}` : 'Not marked'}
@@ -375,7 +431,55 @@ export default function Attendance() {
       </button>
     );
 
-    if (!editable) return face;
+    if (!openable) return face;
+
+    // Locked week: the same cell, read only.
+    if (!editable) {
+      return (
+        <Popover open={openCell === key} onOpenChange={o => setOpenCell(o ? key : null)}>
+          <PopoverTrigger asChild>{face}</PopoverTrigger>
+          <PopoverContent className="w-72 space-y-3" align="start">
+            <div>
+              <p className="text-sm font-semibold">{s.full_name}</p>
+              <p className="text-xs text-muted-foreground">{format(parseISO(day), 'EEEE d MMM yyyy')}</p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className={`text-[10px] ${statusColor(rec!.status)}`}>
+                {statusLabel(rec!.status)}
+              </Badge>
+              {rec!.corrected_from && (
+                <span className="text-[11px] text-muted-foreground">
+                  was {statusLabel(rec!.corrected_from)}
+                </span>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div>
+                <p className="text-muted-foreground">In</p>
+                <p className="font-medium">{rec!.check_in?.slice(0, 5) ?? '—'}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Out</p>
+                <p className="font-medium">{rec!.check_out?.slice(0, 5) ?? '—'}</p>
+              </div>
+            </div>
+
+            <div>
+              <p className="text-xs text-muted-foreground">HR comment</p>
+              <p className="text-sm">{rec!.hr_note || <span className="text-muted-foreground">None.</span>}</p>
+            </div>
+
+            <p className="text-[11px] text-muted-foreground border-t pt-2">
+              {weekStatus === 'approved'
+                ? 'This week is approved. A day changes only through an approved review request.'
+                : 'This week is with the admin. Send it back to HR to have a day changed.'}
+            </p>
+          </PopoverContent>
+        </Popover>
+      );
+    }
 
     return (
       <Popover open={openCell === key} onOpenChange={o => (o ? openCellFor(key, rec) : setOpenCell(null))}>
@@ -449,7 +553,7 @@ export default function Attendance() {
         </p>
       </div>
 
-      <Tabs defaultValue="mark" className="space-y-6">
+      <Tabs value={tab} onValueChange={t => setParams({ tab: t })} className="space-y-6">
         <TabsList className="bg-muted/50 p-1 flex-wrap h-auto gap-1">
           <TabsTrigger value="mark"><CalendarCheck className="h-4 w-4 mr-2" />Mark Week</TabsTrigger>
           <TabsTrigger value="weeks"><ClipboardList className="h-4 w-4 mr-2" />Weekly Reports</TabsTrigger>
@@ -499,10 +603,14 @@ export default function Attendance() {
                   )}
                   {weekStatus === 'submitted' && (
                     <>
-                      <Button variant="outline" size="sm" disabled={setWeekStatus.isPending}
-                        onClick={() => setWeekStatus.mutate({ weekId: week!.id, status: 'draft' })}>
-                        <Undo2 className="h-4 w-4 mr-2" />Recall
-                      </Button>
+                      {/* HR pulls its own report back; an admin sends it back
+                          instead, so the reason is recorded with it. */}
+                      {!isAdmin && (
+                        <Button variant="outline" size="sm" disabled={setWeekStatus.isPending}
+                          onClick={() => setWeekStatus.mutate({ weekId: week!.id, status: 'draft' })}>
+                          <Undo2 className="h-4 w-4 mr-2" />Recall
+                        </Button>
+                      )}
                       {isAdmin && (
                         <>
                           <Button variant="outline" size="sm"
@@ -532,7 +640,11 @@ export default function Attendance() {
               {weekStatus === 'submitted' && (
                 <div className="mt-3 flex items-start gap-2 rounded-md border border-warning/20 bg-warning/5 px-3 py-2 text-xs text-warning">
                   <Lock className="h-4 w-4 shrink-0 mt-0.5" />
-                  <span>With the admin for approval. Recall it to draft if a day still needs changing.</span>
+                  <span>
+                    {isAdmin
+                      ? 'Submitted for your approval. Open any day to read its times and HR’s comment, then approve the week or send it back with a note.'
+                      : 'With the admin for approval. Recall it to draft if a day still needs changing.'}
+                  </span>
                 </div>
               )}
               {weekStatus === 'rejected' && (
@@ -684,7 +796,10 @@ export default function Attendance() {
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-2">
-                            <Button variant="ghost" size="sm" onClick={() => setWeekStart(w.week_start)}>Open</Button>
+                            <Button variant="ghost" size="sm"
+                              onClick={() => setParams({ week: w.week_start, tab: 'mark' })}>
+                              Open
+                            </Button>
                             {isAdmin && w.status === 'submitted' && (
                               <>
                                 <Button variant="outline" size="sm"
@@ -788,6 +903,56 @@ export default function Attendance() {
                 : 'HR gets the week back as a draft, with your note attached.'}
             </DialogDescription>
           </DialogHeader>
+
+          {/* What is in the week, so the decision is not taken blind. */}
+          {decision && (
+            <div className="rounded-lg border bg-muted/30 p-3 space-y-2">
+              <p className="text-xs font-medium">
+                Week of {format(parseISO(decision.week.week_start), 'd MMM')} – {format(parseISO(decision.week.week_end), 'd MMM yyyy')}
+              </p>
+              {decisionLoading ? (
+                <Skeleton className="h-10 w-full" />
+              ) : (
+                <>
+                  <div className="grid grid-cols-3 gap-2 text-center sm:grid-cols-6">
+                    {[
+                      { label: 'Staff', value: decisionSummary.staffCount },
+                      { label: 'Days', value: decisionSummary.total },
+                      { label: 'Present', value: decisionSummary.present },
+                      { label: 'Late', value: decisionSummary.late },
+                      { label: 'Absent', value: decisionSummary.absent },
+                      { label: 'Leave', value: decisionSummary.onLeave },
+                    ].map(m => (
+                      <div key={m.label}>
+                        <p className="text-sm font-semibold">{m.value}</p>
+                        <p className="text-[10px] text-muted-foreground">{m.label}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <p className={`text-xs font-medium ${rateColor(decisionSummary.rate)}`}>
+                    Attendance rate {decisionSummary.rate == null ? '—' : `${decisionSummary.rate}%`}
+                  </p>
+                </>
+              )}
+              <div className="border-t pt-2">
+                <p className="text-[10px] text-muted-foreground">HR’s comment on the week</p>
+                <p className="text-xs">
+                  {decision.week.hr_comment || <span className="text-muted-foreground">None given.</span>}
+                </p>
+              </div>
+              {decision.approve && (
+                <Button variant="outline" size="sm" className="w-full"
+                  onClick={() => {
+                    setParams({ week: decision.week.week_start, tab: 'mark' });
+                    setDecision(null);
+                    setDecisionNote('');
+                  }}>
+                  Review the days first
+                </Button>
+              )}
+            </div>
+          )}
+
           <div>
             <Label className="text-xs">Note {decision?.approve ? '(optional)' : ''}</Label>
             <Textarea rows={3} value={decisionNote} onChange={e => setDecisionNote(e.target.value)}

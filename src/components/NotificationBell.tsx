@@ -29,7 +29,9 @@ const getNotificationRoute = (type: string): string => {
     case 'leave_request': return '/staff-portal?tab=leave';
     case 'complaint': return '/staff-portal?tab=complaints';
     case 'attendance': return '/staff-portal?tab=attendance';
-    case 'attendance_report': return '/attendance';
+    // The list of weekly reports, not the marking grid — the grid opens on the
+    // current week, which is rarely the week that was just submitted.
+    case 'attendance_report': return '/attendance?tab=weeks';
     default: return '';
   }
 };
