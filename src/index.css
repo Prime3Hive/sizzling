@@ -7,128 +7,136 @@ All colors MUST be HSL.
 */
 
 @layer base {
+  /* Sizzling Spices brand: spice orange on white and warm paper, chilli red
+     for alerts. Buttons use the deep orange (17 88% 40%) because white text on
+     the brighter logo orange is only ~3.6:1; the deep one clears WCAG AA. */
   :root {
-    --background: 0 0% 99%;
-    --foreground: 220 13% 9%;
+    --background: 34 41% 97%;          /* warm paper #FAF7F3 */
+    --foreground: 24 10% 10%;          /* charcoal #1C1917 */
 
     --card: 0 0% 100%;
-    --card-foreground: 220 13% 9%;
+    --card-foreground: 24 10% 10%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 220 13% 9%;
+    --popover-foreground: 24 10% 10%;
 
-    /* Lightness dropped from 70% to 55%: 70% gives ~3:1 contrast for white text
-       on primary buttons / primary-colored body text, failing WCAG AA (4.5:1).
-       55% clears AA while keeping the same hue. Decorative gradients below stay
-       at the brighter 70% since they don't carry text. */
-    --primary: 280 100% 55%;
+    --primary: 17 88% 40%;             /* deep orange #C2410C: buttons, links */
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 25 95% 53%;
-    --secondary-foreground: 0 0% 100%;
+    --brand: 21 90% 48%;               /* spice orange #EA580C: logo, marks */
+    --brand-soft: 26 100% 95%;         /* orange tint #FFF1E6: active states */
+    --brand-soft-foreground: 15 79% 34%;
+    --chilli: 0 72% 51%;               /* chilli red #DC2626: badges, alerts */
 
-    --muted: 220 14% 96%;
-    --muted-foreground: 215 16% 47%;
+    --secondary: 26 100% 95%;
+    --secondary-foreground: 15 79% 34%;
 
-    --accent: 25 95% 53%;
-    --accent-foreground: 0 0% 100%;
+    --muted: 30 24% 94%;
+    --muted-foreground: 33 5% 33%;     /* stone #57534E */
 
-    --destructive: 0 84% 60%;
-    --destructive-foreground: 210 40% 98%;
+    --accent: 30 30% 95%;
+    --accent-foreground: 24 10% 10%;
 
-    --success: 142 76% 36%;
+    --destructive: 0 72% 42%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 142 72% 29%;
     --success-foreground: 0 0% 100%;
 
-    --warning: 38 92% 50%;
+    --warning: 32 95% 40%;
     --warning-foreground: 0 0% 100%;
 
-    --border: 220 13% 91%;
-    --input: 220 13% 91%;
-    --ring: 280 100% 55%;
-    
-    /* Custom gradients */
-    --gradient-primary: linear-gradient(135deg, hsl(280 100% 70%), hsl(25 95% 53%));
-    --gradient-card: linear-gradient(145deg, hsl(280 100% 70% / 0.03), hsl(25 95% 53% / 0.03));
-    --gradient-hero: linear-gradient(180deg, hsl(280 100% 70%), hsl(25 95% 53%));
-    --gradient-subtle: linear-gradient(135deg, hsl(280 100% 98%), hsl(25 95% 98%));
-    --gradient-surface: linear-gradient(180deg, hsl(0 0% 100%), hsl(220 14% 97%));
-    
-    /* Shadows with brand colors */
-    --shadow-primary: 0 4px 20px -2px hsl(280 100% 70% / 0.15);
-    --shadow-secondary: 0 4px 20px -2px hsl(25 95% 53% / 0.15);
-    --shadow-elegant: 0 10px 40px -10px hsl(220 13% 9% / 0.08);
-    --shadow-card: 0 1px 3px 0 hsl(220 13% 9% / 0.04), 0 1px 2px -1px hsl(220 13% 9% / 0.04);
-    --shadow-card-hover: 0 4px 12px -2px hsl(220 13% 9% / 0.08), 0 2px 4px -1px hsl(220 13% 9% / 0.04);
+    --border: 32 23% 89%;
+    --input: 32 23% 86%;
+    --ring: 21 90% 48%;
+
+    /* Solid on purpose: the new look has no decorative gradients. The names
+       stay so older pages that still use them render in brand colours. */
+    --gradient-primary: linear-gradient(135deg, hsl(21 90% 48%), hsl(17 88% 40%));
+    --gradient-card: linear-gradient(hsl(0 0% 100%), hsl(0 0% 100%));
+    --gradient-hero: linear-gradient(180deg, hsl(21 90% 48%), hsl(17 88% 40%));
+    --gradient-subtle: linear-gradient(hsl(34 41% 97%), hsl(34 41% 97%));
+    --gradient-surface: linear-gradient(hsl(0 0% 100%), hsl(0 0% 100%));
+
+    --shadow-primary: 0 6px 20px -4px hsl(17 88% 40% / 0.14);
+    --shadow-secondary: 0 6px 20px -4px hsl(0 72% 51% / 0.12);
+    --shadow-elegant: 0 12px 40px -12px hsl(24 10% 10% / 0.12);
+    --shadow-card: 0 1px 2px 0 hsl(24 10% 10% / 0.04);
+    --shadow-card-hover: 0 6px 20px -6px hsl(17 88% 40% / 0.14);
 
     --radius: 0.75rem;
 
-    --sidebar-background: 0 0% 99%;
-    --sidebar-foreground: 220 13% 26%;
-    --sidebar-primary: 280 100% 55%;
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 24 6% 27%;
+    --sidebar-primary: 17 88% 40%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 280 100% 55%;
-    --sidebar-accent-foreground: 0 0% 100%;
-    --sidebar-border: 220 13% 93%;
-    --sidebar-ring: 280 100% 55%;
+    --sidebar-accent: 26 100% 95%;
+    --sidebar-accent-foreground: 15 79% 34%;
+    --sidebar-border: 32 23% 91%;
+    --sidebar-ring: 21 90% 48%;
   }
 
   .dark {
-    --background: 220 15% 6%;
-    --foreground: 0 0% 97%;
+    --background: 24 10% 7%;
+    --foreground: 30 20% 94%;
 
-    --card: 220 15% 9%;
-    --card-foreground: 0 0% 97%;
+    --card: 24 8% 10%;
+    --card-foreground: 30 20% 94%;
 
-    --popover: 220 15% 9%;
-    --popover-foreground: 0 0% 97%;
+    --popover: 24 8% 11%;
+    --popover-foreground: 30 20% 94%;
 
-    --primary: 280 100% 58%;
-    --primary-foreground: 0 0% 98%;
+    /* In the dark the bright orange carries dark text instead of white. */
+    --primary: 24 95% 58%;
+    --primary-foreground: 24 10% 8%;
 
-    --secondary: 25 95% 53%;
-    --secondary-foreground: 0 0% 98%;
+    --brand: 24 95% 55%;
+    --brand-soft: 20 50% 15%;
+    --brand-soft-foreground: 27 96% 72%;
+    --chilli: 0 84% 60%;
 
-    --muted: 220 15% 13%;
-    --muted-foreground: 215 20% 65%;
+    --secondary: 20 50% 15%;
+    --secondary-foreground: 27 96% 72%;
 
-    --accent: 25 95% 53%;
-    --accent-foreground: 0 0% 98%;
+    --muted: 24 8% 14%;
+    --muted-foreground: 30 8% 66%;
 
-    --destructive: 0 63% 31%;
-    --destructive-foreground: 210 40% 98%;
+    --accent: 24 8% 15%;
+    --accent-foreground: 30 20% 94%;
 
-    --success: 142 76% 36%;
-    --success-foreground: 0 0% 100%;
+    --destructive: 0 72% 55%;
+    --destructive-foreground: 0 0% 100%;
 
-    --warning: 38 92% 50%;
-    --warning-foreground: 0 0% 100%;
+    --success: 142 60% 45%;
+    --success-foreground: 24 10% 8%;
 
-    --border: 220 15% 16%;
-    --input: 220 15% 16%;
-    --ring: 280 100% 58%;
-    
-    /* Custom gradients for dark mode */
-    --gradient-primary: linear-gradient(135deg, hsl(280 100% 70%), hsl(25 95% 53%));
-    --gradient-card: linear-gradient(145deg, hsl(280 100% 70% / 0.06), hsl(25 95% 53% / 0.06));
-    --gradient-hero: linear-gradient(180deg, hsl(280 100% 70%), hsl(25 95% 53%));
-    --gradient-subtle: linear-gradient(135deg, hsl(280 100% 12%), hsl(25 95% 12%));
-    --gradient-surface: linear-gradient(180deg, hsl(220 15% 9%), hsl(220 15% 7%));
-    
-    /* Shadows for dark mode */
-    --shadow-primary: 0 4px 20px -2px hsl(280 100% 70% / 0.25);
-    --shadow-secondary: 0 4px 20px -2px hsl(25 95% 53% / 0.25);
-    --shadow-elegant: 0 10px 40px -10px hsl(0 0% 0% / 0.4);
-    --shadow-card: 0 1px 3px 0 hsl(0 0% 0% / 0.2), 0 1px 2px -1px hsl(0 0% 0% / 0.1);
-    --shadow-card-hover: 0 4px 12px -2px hsl(0 0% 0% / 0.3), 0 2px 4px -1px hsl(0 0% 0% / 0.15);
-    
-    --sidebar-background: 220 15% 7%;
-    --sidebar-foreground: 220 14% 80%;
-    --sidebar-primary: 280 100% 58%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 220 15% 13%;
-    --sidebar-accent-foreground: 220 14% 80%;
-    --sidebar-border: 220 15% 14%;
-    --sidebar-ring: 280 100% 58%;
+    --warning: 38 92% 55%;
+    --warning-foreground: 24 10% 8%;
+
+    --border: 24 8% 18%;
+    --input: 24 8% 22%;
+    --ring: 24 95% 58%;
+
+    --gradient-primary: linear-gradient(135deg, hsl(24 95% 58%), hsl(21 90% 50%));
+    --gradient-card: linear-gradient(hsl(24 8% 10%), hsl(24 8% 10%));
+    --gradient-hero: linear-gradient(180deg, hsl(24 95% 58%), hsl(21 90% 50%));
+    --gradient-subtle: linear-gradient(hsl(24 10% 7%), hsl(24 10% 7%));
+    --gradient-surface: linear-gradient(hsl(24 8% 10%), hsl(24 8% 10%));
+
+    --shadow-primary: 0 6px 20px -4px hsl(0 0% 0% / 0.4);
+    --shadow-secondary: 0 6px 20px -4px hsl(0 0% 0% / 0.4);
+    --shadow-elegant: 0 12px 40px -12px hsl(0 0% 0% / 0.5);
+    --shadow-card: 0 1px 2px 0 hsl(0 0% 0% / 0.3);
+    --shadow-card-hover: 0 6px 20px -6px hsl(0 0% 0% / 0.5);
+
+    --sidebar-background: 24 8% 9%;
+    --sidebar-foreground: 30 12% 80%;
+    --sidebar-primary: 24 95% 58%;
+    --sidebar-primary-foreground: 24 10% 8%;
+    --sidebar-accent: 20 50% 15%;
+    --sidebar-accent-foreground: 27 96% 72%;
+    --sidebar-border: 24 8% 16%;
+    --sidebar-ring: 24 95% 58%;
   }
 }
 
@@ -145,7 +153,7 @@ All colors MUST be HSL.
   }
 
   body {
-    @apply bg-background text-foreground antialiased;
+    @apply bg-background text-foreground antialiased font-sans;
     /* A single stray wide element used to make the whole page pan sideways.
        Clip horizontally at the root; vertical scrolling is untouched. */
     overflow-x: clip;
@@ -164,6 +172,11 @@ All colors MUST be HSL.
 }
 
 @layer utilities {
+  .font-display {
+    font-family: 'Bricolage Grotesque', 'Plus Jakarta Sans', system-ui, sans-serif;
+    letter-spacing: -0.015em;
+  }
+
   .text-balance {
     text-wrap: balance;
   }
@@ -178,6 +191,70 @@ All colors MUST be HSL.
   }
 }
 
+/* ── Stacked tables ──────────────────────────────────────────────
+   <Table stack> (or a raw <table class="table-stack"> with useTableStack) on a
+   phone: no header row and no sideways scrolling. Each row becomes a card —
+   the first cell is its title, the first right-aligned cell (usually the
+   amount) sits opposite it, and every other cell is a labelled pair in two
+   columns. Cells hidden on small screens (`hidden md:table-cell`) stay hidden. */
+@media (max-width: 767px) {
+  .table-stack { display: block; }
+  .table-stack thead { display: none; }
+  .table-stack tbody, .table-stack tfoot { display: block; }
+  .table-stack tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem 0.75rem;
+    padding: 0.875rem 0.25rem;
+  }
+  .table-stack td:is(.hidden, .max-md\:hidden) { display: none; }
+  .table-stack td:not(.hidden):not(.max-md\:hidden) {
+    background-color: transparent;
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+    min-width: 0;
+    max-width: none;
+    padding: 0;
+    text-align: left;
+    position: static;
+    white-space: normal;
+  }
+  .table-stack td::before {
+    content: attr(data-label);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: hsl(var(--muted-foreground));
+  }
+  .table-stack td[data-label=""]::before,
+  .table-stack td:first-child::before { display: none; }
+  .table-stack td:first-child {
+    grid-column: 1 / -1;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  /* The headline figure: a cell marked data-headline, else the row's first
+     right-aligned cell. */
+  .table-stack td[data-headline]:not(:first-child),
+  .table-stack tr:not(:has(> td[data-headline])) > td:nth-child(1 of .text-right):not(:first-child) {
+    grid-row: 1;
+    grid-column: 2;
+    align-items: flex-end;
+    text-align: right;
+    font-size: 15px;
+    font-weight: 700;
+  }
+  .table-stack td[data-headline]::before,
+  .table-stack tr:not(:has(> td[data-headline])) > td:nth-child(1 of .text-right)::before { display: none; }
+  .table-stack tr:has(> td[data-headline]:not(:first-child)) > td:first-child,
+  .table-stack tr:has(> td:nth-child(1 of .text-right):not(:first-child)) > td:first-child { grid-column: 1; }
+  /* Actions, notes and summary rows take the full width. */
+  .table-stack td[colspan],
+  .table-stack td[data-label=""]:not(:first-child):not([data-headline]) { grid-column: 1 / -1; }
+}
+
 /* ── Page loader animations ─────────────────────────────────────── */
 
 @keyframes logo-float {
@@ -188,13 +265,13 @@ All colors MUST be HSL.
 @keyframes logo-glow {
   0%, 100% {
     box-shadow:
-      0 0 24px 6px hsl(280 100% 70% / 0.35),
-      0 0 48px 12px hsl(25 95% 53% / 0.18);
+      0 0 24px 6px hsl(21 90% 48% / 0.30),
+      0 0 48px 12px hsl(0 72% 51% / 0.12);
   }
   50% {
     box-shadow:
-      0 0 40px 12px hsl(280 100% 70% / 0.55),
-      0 0 80px 24px hsl(25 95% 53% / 0.30);
+      0 0 40px 12px hsl(21 90% 48% / 0.45),
+      0 0 80px 24px hsl(0 72% 51% / 0.20);
   }
 }
 
@@ -242,10 +319,10 @@ All colors MUST be HSL.
 .loader-fade-in-up  { animation: fade-in-up  0.6s ease both; }
 .loader-shimmer     {
   background: linear-gradient(90deg,
-    hsl(280 100% 70%),
-    hsl(25 95% 53%),
-    hsl(280 100% 75%),
-    hsl(25 95% 60%)
+    hsl(17 88% 40%),
+    hsl(21 90% 48%),
+    hsl(0 72% 51%),
+    hsl(21 90% 48%)
   );
   background-size: 300% 300%;
   -webkit-background-clip: text;

@@ -1,3 +1,4 @@
+import { useNewParam } from '@/hooks/useNewParam';
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -16,7 +17,7 @@ import { ResponsiveTable, type ResponsiveColumn } from "@/components/ui/responsi
 import { usePagination } from "@/hooks/usePagination";
 import { TablePagination } from "@/components/ui/table-pagination";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SearchableSelect, type SelectOption } from "@/components/ui/searchable-select";
 import {
   Tooltip, TooltipContent, TooltipTrigger,
 } from "@/components/ui/tooltip";
@@ -27,6 +28,7 @@ import {
 } from "lucide-react";
 import LPOSheet, { type SourceRequest } from "@/components/procurement/LPOSheet";
 import { formatNairaCompact } from "@/lib/currency";
+import { recordStockMovements } from "@/lib/stockMovements";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -126,7 +128,8 @@ export default function InventoryRequests() {
   const [search, setSearch] = useState("");
 
   // New / edit request — one request can hold many item lines
-  const [showNew, setShowNew] = useState(false);
+  const openOnArrival = !!useNewParam();
+  const [showNew, setShowNew] = useState(openOnArrival);
   const [editId, setEditId] = useState<string | null>(null);
   const [lineItems, setLineItems] = useState<{ sku_id: string; quantity: string }[]>([{ sku_id: "", quantity: "" }]);
   const [miscItems, setMiscItems] = useState<{ description: string; quantity: string; amount: string }[]>([{ description: "", quantity: "", amount: "" }]);
@@ -207,6 +210,21 @@ export default function InventoryRequests() {
     },
     staleTime: 5 * 60_000,
   });
+
+  const skuOptions = useMemo<SelectOption[]>(
+    () => skus.map(s => ({
+      value: s.id,
+      label: s.name,
+      hint: `${s.stock_quantity} ${s.unit_of_measure} in stock`,
+    })),
+    [skus],
+  );
+  // An item already on another line is left out, so a request never lists the
+  // same thing twice — raise that line's quantity instead.
+  const optionsForLine = (i: number) => {
+    const taken = new Set(lineItems.filter((_, idx) => idx !== i).map(l => l.sku_id).filter(Boolean));
+    return skuOptions.filter(o => !taken.has(o.value));
+  };
 
   const nameByUserId = useMemo(
     () => Object.fromEntries(profiles.map(p => [p.user_id, p.full_name])),
@@ -364,26 +382,46 @@ export default function InventoryRequests() {
         throw new Error("This request has nothing to fulfill");
       const today = new Date().toISOString().slice(0, 10);
       const skuQty = skuItems.reduce((s, it) => s + it.requested_quantity, 0);
+      // The cost is what was paid for the stock lines. It becomes the expense
+      // that records the payment, so it can't be left blank.
+      if (skuItems.length > 0 && !(cost && cost > 0))
+        throw new Error("Enter what was paid for the stock items");
 
-      // Stock lines: restock and record a purchase transaction per item.
-      for (const it of skuItems) {
-        const sku = skus.find(s => s.id === it.sku_id);
-        if (sku) {
-          const { error: skuErr } = await supabase.from("skus").update({
-            stock_quantity: sku.stock_quantity + it.requested_quantity,
-          }).eq("id", it.sku_id!);
-          if (skuErr) throw skuErr;
-        }
-        const lineCost = cost != null && skuQty > 0 ? (cost * it.requested_quantity) / skuQty : 0;
-        await supabase.from("transactions").insert({
-          sku_id:           it.sku_id,
-          transaction_type: "PURCHASE",
-          quantity:         it.requested_quantity,
-          unit_price:       it.requested_quantity > 0 ? lineCost / it.requested_quantity : 0,
-          total_amount:     lineCost,
-          notes:            purchaseForm.notes || `Direct purchase from request #${purchaseTarget.id.slice(0, 8)}`,
-          user_id:          user!.id,
+      // Stock lines: restock through the movement ledger (so each item's stock
+      // history shows the receipt) and record a purchase transaction per item —
+      // all lines in one database transaction.
+      if (skuItems.length > 0) {
+        await recordStockMovements({
+          lines: skuItems.map(it => {
+            const lineCost = cost != null && skuQty > 0 ? (cost * it.requested_quantity) / skuQty : 0;
+            return {
+              sku_id:          it.sku_id!,
+              quantity_change: it.requested_quantity,
+              unit_price:      it.requested_quantity > 0 ? lineCost / it.requested_quantity : undefined,
+            };
+          }),
+          type:            "purchase",
+          note:            purchaseForm.notes || `Direct purchase from request #${purchaseTarget.id.slice(0, 8)}`,
+          transactionType: "PURCHASE",
+          referenceType:   "request",
+          referenceId:     purchaseTarget.id,
         });
+
+        // The payment, as an expense (Dr 5000 / Cr Cash once approved). The
+        // stock-in above moves that cost into Inventory until it is used, so
+        // COGS is recognised once — on usage. Don't also log this purchase as
+        // a separate expense.
+        const { error: expErr } = await supabase.from("expenses").insert({
+          amount:       cost!,
+          description:  `Stock purchase — request #${purchaseTarget.id.slice(0, 8)}${purchaseForm.notes ? ` (${purchaseForm.notes})` : ""}`,
+          category:     "Raw Materials",
+          date:         today,
+          budget_id:    null,
+          account_type: "COGS",
+          cost_center:  "Daily Orders",
+          created_by:   user!.id,
+        });
+        if (expErr) throw expErr;
       }
 
       // Miscellaneous lines: capture as expenses (no restock).
@@ -419,7 +457,7 @@ export default function InventoryRequests() {
       if (reqErr) throw reqErr;
     },
     onSuccess: () => {
-      toast({ title: "Purchase recorded", description: "Stock updated and any miscellaneous items recorded as expenses." });
+      toast({ title: "Purchase recorded", description: "Stock updated and the payment recorded as an expense — don't log it again in Expenses." });
       setPurchaseTarget(null);
       setPurchaseForm({ fulfilled_quantity: "", purchase_cost: "", notes: "" });
       qc.invalidateQueries({ queryKey: ["inventory-requests"] });
@@ -711,19 +749,16 @@ export default function InventoryRequests() {
               <TabsContent value="stock" className="mt-3 space-y-2">
                 {lineItems.map((line, i) => (
                   <div key={i} className="flex gap-2 items-start">
-                    <div className="flex-1">
-                      <Select value={line.sku_id || undefined} onValueChange={v => setLine(i, { sku_id: v })}>
-                        <SelectTrigger><SelectValue placeholder="Select an item" /></SelectTrigger>
-                        <SelectContent>
-                          {skus.map(s => (
-                            <SelectItem key={s.id} value={s.id}>
-                              {s.name} — {s.stock_quantity} {s.unit_of_measure} in stock
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                    <div className="flex-1 min-w-0">
+                      <SearchableSelect
+                        options={optionsForLine(i)}
+                        value={line.sku_id}
+                        onChange={v => setLine(i, { sku_id: v })}
+                        placeholder="Search items…"
+                        title="Choose a stock item"
+                      />
                     </div>
-                    <Input className="w-24" type="number" min="1" placeholder="Qty" value={line.quantity}
+                    <Input className="w-20 sm:w-24" type="number" min="1" inputMode="numeric" placeholder="Qty" value={line.quantity}
                       onChange={e => setLine(i, { quantity: e.target.value })} />
                     <Button type="button" variant="ghost" size="icon" className="text-destructive shrink-0"
                       onClick={() => removeLine(i)} disabled={lineItems.length <= 1}>
@@ -825,10 +860,10 @@ export default function InventoryRequests() {
                 </ul>
               </div>
               <div className="space-y-2">
-                <Label>Total Purchase Cost (₦)</Label>
+                <Label>Amount paid for the stock items (₦)</Label>
                 <Input type="number" min="0" step="0.01" value={purchaseForm.purchase_cost}
                   onChange={e => setPurchaseForm(f => ({ ...f, purchase_cost: e.target.value }))}
-                  placeholder="Optional — for cost tracking" />
+                  placeholder="Required — recorded as the expense" />
               </div>
               <div className="space-y-2">
                 <Label>Notes (optional)</Label>

@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { useCommissionCost } from "@/hooks/useCommission";
 import { formatNairaCompact, formatNairaShort } from "@/lib/currency";
 import { format } from "date-fns";
 
@@ -122,6 +123,9 @@ const Reports = () => {
   });
 
   // ── Derived ──
+  // Sales commission accrued in range (ledger 5120); payroll's figure never includes it.
+  const commissionCost = useCommissionCost(start, end);
+
   const r = useMemo(() => {
     // Revenue net of VAT — the tax portion is a FIRS liability, not income
     const invNet = (i: any) => Number(i.total_amount) - Number(i.tax_amount ?? 0);
@@ -137,7 +141,8 @@ const Reports = () => {
     const expenseTotal = expenses.reduce((s: number, e: any) => s + Number(e.amount), 0);
     // Gross + employer pension — matches the general ledger's staff cost
     const payrollCost = payroll.reduce(
-      (s: number, p: any) => s + Number(p.basic_salary ?? p.net_pay) + Number(p.allowances ?? 0) + Number(p.pension_employer ?? 0), 0);
+      (s: number, p: any) => s + Number(p.basic_salary ?? p.net_pay) + Number(p.allowances ?? 0) + Number(p.pension_employer ?? 0), 0)
+      + commissionCost.total;
 
     const grossProfit = grossRevenue - cogs;
     const totalCosts = expenseTotal + payrollCost;
@@ -160,7 +165,7 @@ const Reports = () => {
       cogs, opex, otherExp, expenseTotal, payrollCost, totalCosts,
       grossProfit, netProfit, margin, cashCollected, receivables, expenseByCategory,
     };
-  }, [invoices, sales, expenses, payroll, salePayments, invoiceReceipts, outstanding]);
+  }, [invoices, sales, expenses, payroll, salePayments, invoiceReceipts, outstanding, commissionCost.total]);
 
   const rangeLabel = RANGE_LABELS[timeRange] ?? "This Month";
 

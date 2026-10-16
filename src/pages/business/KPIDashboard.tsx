@@ -2,6 +2,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useTableStack } from "@/components/ui/table";
 import { ArrowLeft, Users, CalendarCheck, AlertTriangle, Clock, TrendingUp, Award, Building2, UserCheck, LayoutDashboard, CalendarRange, Tag, ClipboardList, Star, BarChart2, MessageSquare } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -27,6 +28,8 @@ const statusColors: Record<string, string> = {
 };
 
 const KPIDashboard = () => {
+  // Staff overview reads as one card per person on a phone.
+  const staffTableRef = useTableStack<HTMLTableElement>();
   const navigate = useNavigate();
   const { isAdmin, isManager, isHR } = useRoles();
   const canManageKPI = isAdmin || isManager;
@@ -36,7 +39,8 @@ const KPIDashboard = () => {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('staff_profiles')
-        .select('id, full_name, position, employment_type, employment_date, year_of_joining, linked_user_id, departments(name)');
+        .select('id, full_name, position, employment_type, employment_date, year_of_joining, linked_user_id, departments(name)')
+        .eq('employment_status', 'active');
       if (error) throw error;
       return data || [];
     },
@@ -420,7 +424,7 @@ const KPIDashboard = () => {
             </CardHeader>
             <CardContent>
               <div className="overflow-auto">
-                <table className="w-full text-sm">
+                <table ref={staffTableRef} className="table-stack w-full text-sm">
                   <thead>
                     <tr className="border-b text-muted-foreground text-left">
                       <th className="pb-2 font-medium">Name</th>

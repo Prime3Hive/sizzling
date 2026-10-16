@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { format } from 'date-fns';
+import { format, isToday, isYesterday, parseISO } from 'date-fns';
 import {
   ArrowDown, ArrowUp, ArrowUpDown, Check, Download, Eye, Paperclip,
   Pencil, Plus, Trash2, TriangleAlert, X,
@@ -144,6 +144,27 @@ export default function ExpenseTable({
   }, [expenses, sort, nameOf]);
 
   const total = sumMinor(sorted.map(minorOf));
+
+  // Phone list: a day heading with that day's total when sorted by date.
+  const mobileGroups = useMemo(() => {
+    if (sort.key !== 'date') return [{ key: 'all', label: null as string | null, total: total, rows: sorted }];
+    const groups: { key: string; label: string | null; total: bigint; rows: typeof sorted }[] = [];
+    for (const e of sorted) {
+      const day = String(e.date).slice(0, 10);
+      let g = groups[groups.length - 1];
+      if (!g || g.key !== day) {
+        const d = parseISO(day);
+        const label = isToday(d) ? `Today · ${format(d, 'EEE d MMM')}`
+          : isYesterday(d) ? `Yesterday · ${format(d, 'EEE d MMM')}`
+          : format(d, 'EEE d MMM yyyy');
+        g = { key: day, label, total: BigInt(0), rows: [] };
+        groups.push(g);
+      }
+      g.rows.push(e);
+    }
+    for (const g of groups) g.total = sumMinor(g.rows.map(minorOf));
+    return groups;
+  }, [sorted, sort.key, total]);
 
   const viewReceipt = async (path: string) => {
     try {
@@ -356,75 +377,86 @@ export default function ExpenseTable({
           </Table>
         </div>
 
-        {/* ── Mobile: cards, not a scrolling table ── */}
-        <div className="sm:hidden divide-y divide-border -mx-2">
-          {sorted.map((e) => (
-            <article key={e.id} className="px-2 py-3 space-y-1.5">
-              <div className="flex items-baseline justify-between gap-3">
-                <span className="text-sm text-muted-foreground">{format(new Date(e.date), 'dd MMM yyyy')}</span>
-                <span className="font-bold tabular-nums text-right">{formatMinor(minorOf(e))}</span>
-              </div>
-
-              <p className="font-medium text-sm">{payeeOf(e)}</p>
-              <TruncatedText text={e.description ?? ''} max={70} className="text-sm text-muted-foreground block" />
-
-              <p className="text-xs text-muted-foreground">
-                {[e.category, e.budgets?.title, e.expense_account_code].filter(Boolean).join(' · ')}
-              </p>
-
-              <div className="flex items-center justify-between gap-2 pt-1">
-                <div className="flex items-center gap-2 text-xs">
-                  {e.receipt_path ? (
-                    <button
-                      type="button"
-                      onClick={() => viewReceipt(e.receipt_path!)}
-                      className="inline-flex items-center gap-1 text-muted-foreground min-h-[44px]"
-                    >
-                      <Paperclip className="h-3.5 w-3.5" aria-hidden />
-                      receipt
-                    </button>
-                  ) : minorOf(e) >= RECEIPT_THRESHOLD_MINOR ? (
-                    <span className="inline-flex items-center gap-1 text-amber-600 min-h-[44px]">
-                      <TriangleAlert className="h-3.5 w-3.5" aria-hidden />
-                      no receipt
-                    </span>
-                  ) : null}
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <Badge variant="outline" className={cn('capitalize text-xs', STATUS_BADGE[e.status ?? 'approved'])}>
-                    {e.status ?? 'approved'}
-                  </Badge>
-                  {e.approved_by && nameOf && (
-                    <span className="text-xs text-muted-foreground">· {nameOf(e.approved_by)}</span>
-                  )}
-                </div>
-              </div>
-
-              {(onEdit || onDelete || (onSetStatus && (e.status ?? 'approved') === 'pending')) && (
-                <div className="flex gap-2 pt-1">
-                  {onSetStatus && (e.status ?? 'approved') === 'pending' && (
-                    <>
-                      <Button variant="outline" className="h-11 flex-1 text-emerald-600" onClick={() => onSetStatus(e.id, 'approved')}>
-                        <Check className="h-4 w-4 mr-1.5" aria-hidden />Approve
-                      </Button>
-                      <Button variant="outline" className="h-11 flex-1 text-destructive" onClick={() => onSetStatus(e.id, 'rejected')}>
-                        <X className="h-4 w-4 mr-1.5" aria-hidden />Reject
-                      </Button>
-                    </>
-                  )}
-                  {onEdit && (
-                    <Button variant="ghost" className="h-11 w-11 p-0" aria-label="Edit expense" onClick={() => onEdit(e)}>
-                      <Pencil className="h-4 w-4" aria-hidden />
-                    </Button>
-                  )}
-                  {onDelete && (
-                    <Button variant="ghost" className="h-11 w-11 p-0 text-destructive" aria-label="Cancel expense" onClick={() => onDelete(e.id)}>
-                      <Trash2 className="h-4 w-4" aria-hidden />
-                    </Button>
-                  )}
-                </div>
+        {/* ── Mobile: cards grouped by day, not a scrolling table ──
+            Grouping only applies to the date sort, where it reads as a
+            diary; any other sort is one plain list in that order. */}
+        <div className="sm:hidden -mx-2">
+          {mobileGroups.map((g) => (
+            <section key={g.key} aria-label={g.label ?? undefined}>
+              {g.label && (
+                <h3 className="flex justify-between px-2 pb-1.5 pt-4 text-xs font-extrabold uppercase tracking-[0.08em] text-muted-foreground first:pt-1">
+                  <span>{g.label}</span>
+                  <span className="tabular-nums">{formatMinor(g.total)}</span>
+                </h3>
               )}
-            </article>
+              <div className="divide-y divide-border">
+                {g.rows.map((e) => {
+                  const st = e.status ?? 'approved';
+                  return (
+                    <article key={e.id} className="space-y-2 px-2 py-3">
+                      <div className="flex items-start gap-3">
+                        <div className="min-w-0 flex-1">
+                          <TruncatedText text={e.description || payeeOf(e)} max={60} className="block text-[15px] font-semibold leading-snug" />
+                          <p className="mt-0.5 truncate text-[12.5px] text-muted-foreground">
+                            {[g.label ? null : format(new Date(e.date), 'd MMM'), payeeOf(e), e.category].filter(Boolean).join(' · ')}
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 flex-col items-end gap-1">
+                          <span className="font-bold tabular-nums">{formatMinor(minorOf(e))}</span>
+                          <Badge variant="outline" className={cn('capitalize text-[11px]', STATUS_BADGE[st])}>{st}</Badge>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                        <span className="truncate">
+                          {[e.budgets?.title, e.expense_account_code, e.approved_by && nameOf ? `by ${nameOf(e.approved_by)}` : null].filter(Boolean).join(' · ')}
+                        </span>
+                        {e.receipt_path ? (
+                          <button
+                            type="button"
+                            onClick={() => viewReceipt(e.receipt_path!)}
+                            className="inline-flex min-h-[44px] shrink-0 items-center gap-1 font-semibold text-primary"
+                          >
+                            <Paperclip className="h-3.5 w-3.5" aria-hidden />
+                            Receipt
+                          </button>
+                        ) : minorOf(e) >= RECEIPT_THRESHOLD_MINOR ? (
+                          <span className="inline-flex min-h-[44px] shrink-0 items-center gap-1 text-amber-700 dark:text-amber-400">
+                            <TriangleAlert className="h-3.5 w-3.5" aria-hidden />
+                            No receipt
+                          </span>
+                        ) : null}
+                      </div>
+
+                      {(onEdit || onDelete || (onSetStatus && st === 'pending')) && (
+                        <div className="flex gap-2">
+                          {onSetStatus && st === 'pending' && (
+                            <>
+                              <Button variant="outline" className="h-11 flex-1" onClick={() => onSetStatus(e.id, 'rejected')}>
+                                <X className="h-4 w-4" aria-hidden />Reject
+                              </Button>
+                              <Button className="h-11 flex-1" onClick={() => onSetStatus(e.id, 'approved')}>
+                                <Check className="h-4 w-4" aria-hidden />Approve
+                              </Button>
+                            </>
+                          )}
+                          {onEdit && (
+                            <Button variant="ghost" className="h-11 w-11 p-0" aria-label="Edit expense" onClick={() => onEdit(e)}>
+                              <Pencil className="h-4 w-4" aria-hidden />
+                            </Button>
+                          )}
+                          {onDelete && (
+                            <Button variant="ghost" className="h-11 w-11 p-0 text-destructive" aria-label="Cancel expense" onClick={() => onDelete(e.id)}>
+                              <Trash2 className="h-4 w-4" aria-hidden />
+                            </Button>
+                          )}
+                        </div>
+                      )}
+                    </article>
+                  );
+                })}
+              </div>
+            </section>
           ))}
         </div>
       </CardContent>

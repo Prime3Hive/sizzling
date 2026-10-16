@@ -24,6 +24,8 @@ import {
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
+import { useCommissionCost } from '@/hooks/useCommission';
+import { useStockLedgerCost } from '@/hooks/useStockLedgerCost';
 import { formatNairaCompact } from '@/lib/currency';
 import { format } from 'date-fns';
 import {
@@ -50,6 +52,8 @@ interface MonthlyPL {
   totalSales: number;
   dailyCOGS: number;
   eventCOGS: number;
+  /** Stock used, from the ledger (company-wide, like payroll). */
+  stockCOGS: number;
   totalCOGS: number;
   dailyGrossProfit: number;
   eventGrossProfit: number;
@@ -57,6 +61,8 @@ interface MonthlyPL {
   dailyOpEX: number;
   eventOpEX: number;
   payrollOpEX: number;
+  /** Stock-take shrinkage and write-downs, from the ledger. */
+  stockLosses: number;
   totalOpEX: number;
   dailyNetProfit: number;
   eventNetProfit: number;
@@ -184,7 +190,16 @@ const ProfitLoss = () => {
     },
   });
 
-  const isLoading = salesLoading || expensesLoading || payrollLoading || invoiceLedgerLoading;
+  // Sales commission, recognised in the month it was earned (ledger 5120).
+  const commissionCost = useCommissionCost(yearStart, yearEnd);
+
+  // Stock cost is recognised when stock is used, not when it is bought. The
+  // expenses above carry the purchase; the ledger's stock postings move cost
+  // into inventory on stock-in and back out on usage/sale, so adding them here
+  // makes COGS match account 5000.
+  const stockCost = useStockLedgerCost(yearStart, yearEnd);
+
+  const isLoading = salesLoading || expensesLoading || payrollLoading || invoiceLedgerLoading || commissionCost.isLoading || stockCost.isLoading;
 
   // ── Monthly P&L Computation ────────────────────────────────────────────────
   const monthlyData: MonthlyPL[] = useMemo(() => {
@@ -227,7 +242,10 @@ const ProfitLoss = () => {
       const eventCOGS = monthExpenses
         .filter(e => (e.account_type || 'COGS') === 'COGS' && e.cost_center === 'Event Account')
         .reduce((sum, e) => sum + Number(e.amount), 0);
-      const totalCOGS = dailyCOGS + eventCOGS;
+      // Not attributable to a cost centre, so (like payroll) it counts in the
+      // "All P&L" figures only.
+      const { cogs: stockCOGS, losses: stockLosses } = stockCost.forMonth(index);
+      const totalCOGS = dailyCOGS + eventCOGS + stockCOGS;
 
       const dailyGrossProfit = dailyRevenue - dailyCOGS;
       const eventGrossProfit = eventRevenue - eventCOGS;
@@ -241,8 +259,11 @@ const ProfitLoss = () => {
         .reduce((sum, e) => sum + Number(e.amount), 0);
       // Gross + employer pension — the employer's true staff cost, matching the ledger
       const payrollOpEX = monthPayroll.reduce(
-        (sum, p: any) => sum + Number(p.basic_salary ?? p.net_pay) + Number(p.allowances ?? 0) + Number(p.pension_employer ?? 0), 0);
-      const totalOpEX = dailyOpEX + eventOpEX + payrollOpEX;
+        (sum, p: any) => sum + Number(p.basic_salary ?? p.net_pay) + Number(p.allowances ?? 0) + Number(p.pension_employer ?? 0), 0)
+        // Commission is staff cost too. Payroll's figure above never includes
+        // it (it sits in its own column), so it is counted here exactly once.
+        + commissionCost.forMonth(index);
+      const totalOpEX = dailyOpEX + eventOpEX + payrollOpEX + stockLosses;
 
       // Payroll isn't attributable to a cost centre, so segment Net Profit
       // (Daily/Event) excludes it — only "All P&L" (totalOpEX) carries it.
@@ -255,14 +276,14 @@ const ProfitLoss = () => {
         month, monthIndex: index,
         dailySales, eventSales, dailyInvoiceRevenue, eventInvoiceRevenue,
         invoiceRevenue, dailyRevenue, eventRevenue, totalSales,
-        dailyCOGS, eventCOGS, totalCOGS,
+        dailyCOGS, eventCOGS, stockCOGS, totalCOGS,
         dailyGrossProfit, eventGrossProfit, totalGrossProfit,
-        dailyOpEX, eventOpEX, payrollOpEX, totalOpEX,
+        dailyOpEX, eventOpEX, payrollOpEX, stockLosses, totalOpEX,
         dailyNetProfit, eventNetProfit, totalNetProfit,
         profitMargin,
       };
     });
-  }, [sales, expenses, payrollRecords, invoiceRevenueRows]);
+  }, [sales, expenses, payrollRecords, invoiceRevenueRows, commissionCost.rows, stockCost.rows]);
 
   const totals = useMemo(() => monthlyData.reduce((acc, m) => ({
     dailySales: acc.dailySales + m.dailySales,
@@ -275,6 +296,7 @@ const ProfitLoss = () => {
     totalSales: acc.totalSales + m.totalSales,
     dailyCOGS: acc.dailyCOGS + m.dailyCOGS,
     eventCOGS: acc.eventCOGS + m.eventCOGS,
+    stockCOGS: acc.stockCOGS + m.stockCOGS,
     totalCOGS: acc.totalCOGS + m.totalCOGS,
     dailyGrossProfit: acc.dailyGrossProfit + m.dailyGrossProfit,
     eventGrossProfit: acc.eventGrossProfit + m.eventGrossProfit,
@@ -282,6 +304,7 @@ const ProfitLoss = () => {
     dailyOpEX: acc.dailyOpEX + m.dailyOpEX,
     eventOpEX: acc.eventOpEX + m.eventOpEX,
     payrollOpEX: acc.payrollOpEX + m.payrollOpEX,
+    stockLosses: acc.stockLosses + m.stockLosses,
     totalOpEX: acc.totalOpEX + m.totalOpEX,
     dailyNetProfit: acc.dailyNetProfit + m.dailyNetProfit,
     eventNetProfit: acc.eventNetProfit + m.eventNetProfit,
@@ -289,9 +312,9 @@ const ProfitLoss = () => {
   }), {
     dailySales: 0, eventSales: 0, dailyInvoiceRevenue: 0, eventInvoiceRevenue: 0,
     invoiceRevenue: 0, dailyRevenue: 0, eventRevenue: 0, totalSales: 0,
-    dailyCOGS: 0, eventCOGS: 0, totalCOGS: 0,
+    dailyCOGS: 0, eventCOGS: 0, stockCOGS: 0, totalCOGS: 0,
     dailyGrossProfit: 0, eventGrossProfit: 0, totalGrossProfit: 0,
-    dailyOpEX: 0, eventOpEX: 0, payrollOpEX: 0, totalOpEX: 0,
+    dailyOpEX: 0, eventOpEX: 0, payrollOpEX: 0, stockLosses: 0, totalOpEX: 0,
     dailyNetProfit: 0, eventNetProfit: 0, totalNetProfit: 0,
   }), [monthlyData]);
 
@@ -343,7 +366,7 @@ const ProfitLoss = () => {
   const costPieData = [
     { name: 'COGS', value: totals.totalCOGS },
     { name: 'OpEX', value: totals.dailyOpEX + totals.eventOpEX },
-    { name: 'Payroll', value: totals.payrollOpEX },
+    { name: 'Payroll & commission', value: totals.payrollOpEX },
   ].filter(d => d.value > 0);
 
   // ── Exports ────────────────────────────────────────────────────────────────
@@ -570,7 +593,7 @@ const ProfitLoss = () => {
       {/* ── Header ──────────────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold bg-gradient-primary bg-clip-text text-transparent">
+          <h1 className="text-2xl sm:text-3xl font-bold font-display text-foreground">
             Profit & Loss
           </h1>
           <p className="text-muted-foreground mt-0.5">
@@ -838,7 +861,7 @@ const ProfitLoss = () => {
             </CardHeader>
             <CardContent className="p-0">
               <div className="overflow-x-auto">
-                <Table>
+                <Table stack>
                   <TableHeader>
                     <TableRow className="bg-muted/30 hover:bg-muted/30 border-b border-border/50">
                       <TableHead className="sticky left-0 bg-muted/30 z-10 font-semibold pl-4 w-[110px]">Month</TableHead>
@@ -887,7 +910,7 @@ const ProfitLoss = () => {
                           <TableCell className="text-right"><ValueCell value={m.totalGrossProfit} /></TableCell>
                           <TableCell className="text-right text-sm">{formatNairaCompact(m.dailyOpEX + m.eventOpEX)}</TableCell>
                           <TableCell className="text-right text-sm">{formatNairaCompact(m.payrollOpEX)}</TableCell>
-                          <TableCell className="text-right"><ValueCell value={m.totalNetProfit} /></TableCell>
+                          <TableCell className="text-right" data-headline><ValueCell value={m.totalNetProfit} /></TableCell>
                           <TableCell className="text-right">
                             {m.totalSales > 0 ? (
                               <Badge
@@ -904,7 +927,7 @@ const ProfitLoss = () => {
                               <span className="text-muted-foreground text-xs">—</span>
                             )}
                           </TableCell>
-                          <TableCell>
+                          <TableCell className="max-md:hidden">
                             {hasData && <ChevronRight className="h-4 w-4 text-muted-foreground" />}
                           </TableCell>
                         </TableRow>
@@ -922,7 +945,7 @@ const ProfitLoss = () => {
                       <TableCell className="text-right"><ValueCell value={totals.totalGrossProfit} /></TableCell>
                       <TableCell className="text-right">{formatNairaCompact(totals.dailyOpEX + totals.eventOpEX)}</TableCell>
                       <TableCell className="text-right">{formatNairaCompact(totals.payrollOpEX)}</TableCell>
-                      <TableCell className="text-right"><ValueCell value={totals.totalNetProfit} /></TableCell>
+                      <TableCell className="text-right" data-headline><ValueCell value={totals.totalNetProfit} /></TableCell>
                       <TableCell className="text-right">
                         <Badge
                           variant={totalProfitMargin >= 0 ? 'default' : 'destructive'}
@@ -931,7 +954,7 @@ const ProfitLoss = () => {
                           {totalProfitMargin.toFixed(1)}%
                         </Badge>
                       </TableCell>
-                      <TableCell />
+                      <TableCell className="max-md:hidden" />
                     </TableRow>
                   </TableBody>
                 </Table>
@@ -1215,10 +1238,15 @@ const ProfitLoss = () => {
                       {[
                         { label: 'Daily COGS', val: detailMonth.dailyCOGS },
                         { label: 'Event COGS', val: detailMonth.eventCOGS },
+                        // Usage and invoiced sales, less stock bought this month
+                        // but not yet used (negative when stock was built up).
+                        { label: 'Stock adjustment (ledger)', val: detailMonth.stockCOGS },
                       ].map(r => (
                         <div key={r.label} className="flex justify-between">
                           <span className="text-muted-foreground">{r.label}</span>
-                          <span className="font-medium text-destructive">-{formatNairaCompact(r.val)}</span>
+                          <span className={`font-medium ${r.val < 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-destructive'}`}>
+                            {r.val < 0 ? '+' : '-'}{formatNairaCompact(Math.abs(r.val))}
+                          </span>
                         </div>
                       ))}
                       <Separator />
@@ -1253,6 +1281,7 @@ const ProfitLoss = () => {
                         { label: 'Daily OpEX', val: detailMonth.dailyOpEX },
                         { label: 'Event OpEX', val: detailMonth.eventOpEX },
                         { label: 'Payroll', val: detailMonth.payrollOpEX },
+                        { label: 'Stock losses (ledger)', val: detailMonth.stockLosses },
                       ].map(r => (
                         <div key={r.label} className="flex justify-between">
                           <span className="text-muted-foreground">{r.label}</span>

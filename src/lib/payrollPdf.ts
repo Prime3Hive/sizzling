@@ -12,6 +12,8 @@ export interface PayrollPdfRecord {
   period_end: string;
   basic_salary: number;
   allowances: number;
+  /** Sales commission — shown with allowances so each row still sums to net. */
+  commission?: number | null;
   deductions: number;
   net_pay: number;
   bank_name: string | null;
@@ -41,7 +43,7 @@ const COLUMNS: Col[] = [
   { key: "department", header: "Department", width: 30, align: "left" },
   { key: "period_start", header: "Period", width: 41, align: "left" },
   { key: "basic_salary", header: "Basic (NGN)", width: 28, align: "right" },
-  { key: "allowances", header: "Allow. (NGN)", width: 22, align: "right" },
+  { key: "allowances", header: "Allow.+Comm.", width: 22, align: "right" },
   { key: "deductions", header: "Deduct. (NGN)", width: 22, align: "right" },
   { key: "net_pay", header: "Net Pay (NGN)", width: 30, align: "right" },
   { key: "status", header: "Status", width: 18, align: "left" },
@@ -81,7 +83,7 @@ export async function exportPayrollRegisterPdf(
   const totals = records.reduce(
     (acc, r) => {
       acc.basic += Number(r.basic_salary) || 0;
-      acc.allow += Number(r.allowances) || 0;
+      acc.allow += (Number(r.allowances) || 0) + (Number(r.commission) || 0);
       acc.deduct += Number(r.deductions) || 0;
       acc.net += Number(r.net_pay) || 0;
       return acc;
@@ -188,7 +190,7 @@ export async function exportPayrollRegisterPdf(
       department: r.department || "—",
       period_start: period,
       basic_salary: money(r.basic_salary),
-      allowances: money(r.allowances),
+      allowances: money(Number(r.allowances) + Number(r.commission ?? 0)),
       deductions: money(r.deductions),
       net_pay: money(r.net_pay),
       status: r.status === "paid" ? "Paid" : "Pending",

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useRoles } from "@/hooks/useRoles";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -29,7 +29,7 @@ import {
   Mail, Phone, Calendar, MapPin, GraduationCap, Briefcase,
   CreditCard, MoreHorizontal, FileText, CheckCircle2,
   Banknote, User, AlertCircle, Clock, Shield, BookOpen,
-  Heart, Home, IdCard,
+  Heart, Home, IdCard, UserMinus, UserCheck, Archive, Cake,
 } from "lucide-react";
 import StaffDocuments from "@/components/staff/StaffDocuments";
 import StaffKPIPanel from "@/components/staff-profiles/StaffKPIPanel";
@@ -37,6 +37,7 @@ import { formatNairaCompact } from "@/lib/currency";
 import { exportStaffProfilePDF, printStaffProfile } from "@/lib/staffProfileExport";
 import StaffProfilePrintable from "@/components/StaffProfilePrintable";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { formatDob, nextBirthday, countdownLabel, formatBirthdayShort } from "@/lib/birthday";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -74,7 +75,13 @@ interface StaffProfile {
   emergency_contact_phone: string | null;
   emergency_contact_relationship: string | null;
   linked_user_id: string | null;
+  employment_status: string;
+  exit_date: string | null;
+  exit_reason: string | null;
+  exit_note: string | null;
 }
+
+type StatusFilter = "active" | "inactive" | "all";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -104,6 +111,15 @@ const employmentTypeOptions = [
   { value: "part_time",   label: "Part Time"   },
   { value: "contract",    label: "Contract"    },
   { value: "internship",  label: "Internship"  },
+];
+
+const exitReasonOptions = [
+  { value: "resigned",       label: "Resigned"       },
+  { value: "terminated",     label: "Terminated"     },
+  { value: "retired",        label: "Retired"        },
+  { value: "contract_ended", label: "Contract ended" },
+  { value: "deceased",       label: "Deceased"       },
+  { value: "other",          label: "Other"          },
 ];
 
 const educationOptions = [
@@ -179,6 +195,47 @@ function empTypeLabel(val: string | null) {
   return employmentTypeOptions.find(e => e.value === val)?.label ?? val ?? "";
 }
 
+function exitReasonLabel(val: string | null) {
+  return exitReasonOptions.find(e => e.value === val)?.label ?? val ?? "";
+}
+
+const isFormer = (p: StaffProfile) => p.employment_status === "inactive";
+
+/** A `YYYY-MM-DD` column as a local date — `new Date(iso)` would read it as UTC. */
+function localDate(iso: string) {
+  const [y, m, d] = iso.slice(0, 10).split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+
+function formatDate(iso: string | null) {
+  return iso ? localDate(iso).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }) : null;
+}
+
+function todayIso() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** "4 October 1995 · turns 31 in 8 days (Sat, 4 Oct)" — countdown for current staff only. */
+function dobLine(p: StaffProfile): string | null {
+  if (!p.date_of_birth) return null;
+  const dob = formatDob(p.date_of_birth);
+  const next = nextBirthday(p.date_of_birth);
+  if (!dob || !next || isFormer(p)) return dob;
+  if (next.daysUntil === 0) return `${dob} · 🎉 turns ${next.turning} today`;
+  return `${dob} · turns ${next.turning} ${countdownLabel(next.daysUntil).toLowerCase()} (${formatBirthdayShort(next.date)})`;
+}
+
+function FormerBadge({ profile, className = "" }: { profile: StaffProfile; className?: string }) {
+  if (!isFormer(profile)) return null;
+  return (
+    <Badge variant="outline" className={`text-[10px] px-2 py-0 gap-1 bg-slate-100 text-slate-600 border-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-600 ${className}`}>
+      <Archive className="h-3 w-3" />
+      Left{profile.exit_date ? ` ${localDate(profile.exit_date).toLocaleDateString("en-GB", { month: "short", year: "numeric" })}` : ""}
+    </Badge>
+  );
+}
+
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 function DetailRow({ icon: Icon, label, value }: { icon: React.ElementType; label: string; value: string | null | undefined }) {
@@ -214,10 +271,12 @@ function ProfileSheet({
   passportUrl,
   isAdmin,
   canScore,
+  canManage,
   onEdit,
   onDelete,
   onExport,
   onPrint,
+  onToggleStatus,
 }: {
   profile: StaffProfile | null;
   open: boolean;
@@ -225,10 +284,12 @@ function ProfileSheet({
   passportUrl: string | null;
   isAdmin: boolean;
   canScore: boolean;
+  canManage: boolean;
   onEdit: (p: StaffProfile) => void;
   onDelete: (id: string) => void;
   onExport: (p: StaffProfile) => void;
   onPrint: (p: StaffProfile) => void;
+  onToggleStatus: (p: StaffProfile) => void;
 }) {
   if (!profile) return null;
   const palette = getDeptPalette(profile.department_id);
@@ -238,7 +299,7 @@ function ProfileSheet({
     <Sheet open={open} onOpenChange={open => !open && onClose()}>
       <SheetContent side="right" className="w-full sm:max-w-xl p-0 flex flex-col">
         {/* Gradient header */}
-        <div className={`relative bg-gradient-to-br ${palette.card} pb-16 pt-8 px-6`}>
+        <div className={`relative bg-gradient-to-br ${isFormer(profile) ? "from-slate-500 to-slate-600" : palette.card} pb-16 pt-8 px-6`}>
           <div className="flex items-start justify-between">
             <SheetHeader className="text-left text-white space-y-0">
               <SheetTitle className="text-white text-xl font-bold leading-tight">
@@ -284,6 +345,7 @@ function ProfileSheet({
             </AvatarFallback>
           </Avatar>
           <div className="pb-1 flex flex-wrap gap-1.5">
+            <FormerBadge profile={profile} className="text-xs" />
             {profile.departments && (
               <Badge variant="outline" className={`text-xs ${palette.chip}`}>
                 {profile.departments.name}
@@ -315,6 +377,22 @@ function ProfileSheet({
         <ScrollArea className="flex-1 px-6 pb-6">
           <div className="space-y-4 pt-4">
 
+            {/* Exit details */}
+            {isFormer(profile) && (
+              <div className="rounded-lg border border-slate-300 bg-slate-50 dark:bg-slate-900/40 dark:border-slate-700 p-3 space-y-2">
+                <p className="flex items-center gap-2 text-sm font-semibold">
+                  <Archive className="h-4 w-4 text-muted-foreground" /> Former staff member
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <DetailRow icon={Calendar}  label="Last working day" value={formatDate(profile.exit_date)} />
+                  <DetailRow icon={UserMinus} label="Reason"           value={exitReasonLabel(profile.exit_reason)} />
+                </div>
+                {profile.exit_note && (
+                  <p className="text-sm text-muted-foreground whitespace-pre-wrap">{profile.exit_note}</p>
+                )}
+              </div>
+            )}
+
             {/* Contact */}
             <SectionHeading>Contact</SectionHeading>
             <div className="space-y-3">
@@ -325,7 +403,7 @@ function ProfileSheet({
             {/* Personal */}
             <SectionHeading>Personal Information</SectionHeading>
             <div className="space-y-3">
-              <DetailRow icon={Calendar} label="Date of Birth"    value={profile.date_of_birth ? new Date(profile.date_of_birth).toLocaleDateString("en-GB", { day:"numeric", month:"long", year:"numeric" }) : null} />
+              <DetailRow icon={Cake}     label="Date of Birth"    value={dobLine(profile)} />
               <DetailRow icon={User}     label="Gender"           value={genderOptions.find(g => g.value === profile.gender)?.label} />
               <DetailRow icon={Heart}    label="Marital Status"   value={maritalStatusOptions.find(m => m.value === profile.marital_status)?.label} />
               <DetailRow icon={MapPin}   label="State of Origin"  value={profile.state_of_origin} />
@@ -341,7 +419,7 @@ function ProfileSheet({
               <DetailRow icon={Briefcase} label="Position"        value={posLabel(profile.position)} />
               <DetailRow icon={Building2} label="Department"      value={profile.departments?.name} />
               <DetailRow icon={Briefcase} label="Employment Type" value={empTypeLabel(profile.employment_type)} />
-              <DetailRow icon={Calendar}  label="Employment Date" value={profile.employment_date ? new Date(profile.employment_date).toLocaleDateString("en-GB", { day:"numeric", month:"long", year:"numeric" }) : null} />
+              <DetailRow icon={Calendar}  label="Employment Date" value={formatDate(profile.employment_date)} />
               <DetailRow icon={Calendar}  label="Year of Joining" value={profile.year_of_joining?.toString()} />
               {profile.skills_experience && (
                 <div className="space-y-1">
@@ -394,18 +472,27 @@ function ProfileSheet({
               <StaffDocuments staffProfileId={profile.id} staffName={profile.full_name} />
             </div>
 
-            {/* Danger zone */}
-            {isAdmin && (
+            {/* Status + danger zone */}
+            {canManage && (
               <>
                 <SectionHeading>Actions</SectionHeading>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  className="gap-2"
-                  onClick={() => { onClose(); onDelete(profile.id); }}
-                >
-                  <Trash2 className="h-4 w-4" /> Delete Profile
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="outline" size="sm" className="gap-2" onClick={() => onToggleStatus(profile)}>
+                    {isFormer(profile)
+                      ? <><UserCheck className="h-4 w-4" /> Reinstate as active</>
+                      : <><UserMinus className="h-4 w-4" /> Mark as left</>}
+                  </Button>
+                  {isAdmin && (
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      className="gap-2"
+                      onClick={() => { onClose(); onDelete(profile.id); }}
+                    >
+                      <Trash2 className="h-4 w-4" /> Delete Profile
+                    </Button>
+                  )}
+                </div>
               </>
             )}
           </div>
@@ -427,6 +514,7 @@ function StaffCard({
   onDelete,
   onExport,
   onPrint,
+  onToggleStatus,
 }: {
   profile: StaffProfile;
   passportUrl: string | null;
@@ -437,6 +525,7 @@ function StaffCard({
   onDelete: (id: string) => void;
   onExport: (p: StaffProfile) => void;
   onPrint: (p: StaffProfile) => void;
+  onToggleStatus: (p: StaffProfile) => void;
 }) {
   const palette = getDeptPalette(profile.department_id);
   const tenure = getTenure(profile.employment_date, profile.year_of_joining);
@@ -444,12 +533,13 @@ function StaffCard({
 
   return (
     <div
-      className="group relative bg-card rounded-2xl border border-border/60 overflow-hidden
-                 hover:shadow-xl hover:-translate-y-1 transition-all duration-300 cursor-pointer flex flex-col"
+      className={`group relative bg-card rounded-2xl border border-border/60 overflow-hidden
+                 hover:shadow-xl hover:-translate-y-1 transition-all duration-300 cursor-pointer flex flex-col
+                 ${isFormer(profile) ? "opacity-75 hover:opacity-100" : ""}`}
       onClick={() => onView(profile)}
     >
       {/* Gradient band */}
-      <div className={`h-20 bg-gradient-to-br ${palette.card} relative`}>
+      <div className={`h-20 bg-gradient-to-br ${isFormer(profile) ? "from-slate-400 to-slate-500" : palette.card} relative`}>
         {/* Linked indicator dot */}
         <div className={`absolute top-3 right-3 w-2.5 h-2.5 rounded-full ring-2 ring-white/40
             ${profile.linked_user_id ? "bg-emerald-300" : "bg-white/30"}`}
@@ -470,9 +560,12 @@ function StaffCard({
       {/* Identity */}
       <div className="px-4 pt-3 pb-2 text-center flex flex-col items-center gap-1.5">
         <p className="font-bold text-sm leading-tight line-clamp-1">{profile.full_name}</p>
-        <Badge variant="outline" className={`text-[10px] px-2 py-0 ${posStyle}`}>
-          {posLabel(profile.position)}
-        </Badge>
+        <div className="flex flex-wrap justify-center gap-1">
+          <Badge variant="outline" className={`text-[10px] px-2 py-0 ${posStyle}`}>
+            {posLabel(profile.position)}
+          </Badge>
+          <FormerBadge profile={profile} />
+        </div>
         {profile.departments && (
           <p className="text-[11px] text-muted-foreground">{profile.departments.name}</p>
         )}
@@ -533,6 +626,13 @@ function StaffCard({
             <DropdownMenuItem onClick={() => onPrint(profile)}>
               <Printer className="h-3.5 w-3.5 mr-2" /> Print
             </DropdownMenuItem>
+            {(isAdmin || isHR) && (
+              <DropdownMenuItem onClick={() => onToggleStatus(profile)}>
+                {isFormer(profile)
+                  ? <><UserCheck className="h-3.5 w-3.5 mr-2" /> Reinstate</>
+                  : <><UserMinus className="h-3.5 w-3.5 mr-2" /> Mark as left</>}
+              </DropdownMenuItem>
+            )}
             {isAdmin && (
               <>
                 <DropdownMenuSeparator />
@@ -554,19 +654,21 @@ function StaffCard({
 // ─── Staff List Row ───────────────────────────────────────────────────────────
 
 function StaffListRow({
-  profile, passportUrl, isAdmin, isHR, onView, onEdit, onDelete, onExport, onPrint,
+  profile, passportUrl, isAdmin, isHR, onView, onEdit, onDelete, onExport, onPrint, onToggleStatus,
 }: {
   profile: StaffProfile; passportUrl: string | null; isAdmin: boolean; isHR: boolean;
   onView: (p: StaffProfile) => void; onEdit: (p: StaffProfile) => void;
   onDelete: (id: string) => void; onExport: (p: StaffProfile) => void; onPrint: (p: StaffProfile) => void;
+  onToggleStatus: (p: StaffProfile) => void;
 }) {
   const palette = getDeptPalette(profile.department_id);
   const posStyle = POSITION_BADGE[profile.position] ?? POSITION_BADGE.staff;
 
   return (
     <div
-      className="flex items-center gap-4 px-4 py-3 rounded-xl border border-border/60 bg-card
-                 hover:shadow-md hover:border-primary/20 transition-all duration-200 cursor-pointer group"
+      className={`flex items-center gap-4 px-4 py-3 rounded-xl border border-border/60 bg-card
+                 hover:shadow-md hover:border-primary/20 transition-all duration-200 cursor-pointer group
+                 ${isFormer(profile) ? "opacity-75 hover:opacity-100" : ""}`}
       onClick={() => onView(profile)}
     >
       <Avatar className="h-10 w-10 shrink-0">
@@ -580,7 +682,10 @@ function StaffListRow({
           same fields stack under the name so nothing is squeezed to ~60px. */}
       <div className="flex-1 min-w-0 md:grid md:grid-cols-4 md:gap-3 md:items-center">
         <div className="min-w-0">
-          <p className="font-semibold text-sm truncate">{profile.full_name}</p>
+          <div className="flex items-center gap-1.5 min-w-0">
+            <p className="font-semibold text-sm truncate">{profile.full_name}</p>
+            <FormerBadge profile={profile} className="shrink-0" />
+          </div>
           <p className="text-xs text-muted-foreground truncate">{profile.email_address}</p>
         </div>
         <Badge variant="outline" className={`mt-1.5 md:mt-0 text-[10px] px-2 py-0 w-fit ${posStyle}`}>
@@ -610,6 +715,13 @@ function StaffListRow({
           <DropdownMenuContent align="end">
             <DropdownMenuItem onClick={() => onExport(profile)}><Download className="h-3.5 w-3.5 mr-2" />Export PDF</DropdownMenuItem>
             <DropdownMenuItem onClick={() => onPrint(profile)}><Printer className="h-3.5 w-3.5 mr-2" />Print</DropdownMenuItem>
+            {(isAdmin || isHR) && (
+              <DropdownMenuItem onClick={() => onToggleStatus(profile)}>
+                {isFormer(profile)
+                  ? <><UserCheck className="h-3.5 w-3.5 mr-2" /> Reinstate</>
+                  : <><UserMinus className="h-3.5 w-3.5 mr-2" /> Mark as left</>}
+              </DropdownMenuItem>
+            )}
             {isAdmin && (
               <>
                 <DropdownMenuSeparator />
@@ -674,6 +786,7 @@ const DEFAULT_FORM = {
 
 const StaffProfiles = () => {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { isAdmin, isHR, isManager, loading: rolesLoading } = useRoles();
   const { toast } = useToast();
 
@@ -694,6 +807,11 @@ const StaffProfiles = () => {
   const [searchQuery, setSearchQuery]         = useState("");
   const [filterDepartment, setFilterDepartment] = useState("all");
   const [filterPosition, setFilterPosition]   = useState("all");
+  const [filterStatus, setFilterStatus]       = useState<StatusFilter>("active");
+  const [exitTarget, setExitTarget]           = useState<StaffProfile | null>(null);
+  const [exitForm, setExitForm]               = useState({ exit_date: "", exit_reason: "resigned", exit_note: "" });
+  const [exitSaving, setExitSaving]           = useState(false);
+  const [reinstateTarget, setReinstateTarget] = useState<StaffProfile | null>(null);
   const [formData, setFormData]               = useState(DEFAULT_FORM);
 
   const canAccess = isAdmin || isHR;
@@ -707,15 +825,20 @@ const StaffProfiles = () => {
       p.phone_number?.includes(q);
     const matchDept = filterDepartment === "all" || p.department_id === filterDepartment;
     const matchPos  = filterPosition === "all"   || p.position === filterPosition;
-    return matchSearch && matchDept && matchPos;
+    const matchStatus = filterStatus === "all" || (filterStatus === "inactive") === isFormer(p);
+    return matchSearch && matchDept && matchPos && matchStatus;
   });
 
   const hasFilters = searchQuery !== "" || filterDepartment !== "all" || filterPosition !== "all";
+  const clearFilters = () => { setSearchQuery(""); setFilterDepartment("all"); setFilterPosition("all"); };
 
-  // Computed stats
-  const uniqueDepts  = new Set(staffProfiles.map(p => p.department_id).filter(Boolean)).size;
-  const linkedCount  = staffProfiles.filter(p => p.linked_user_id).length;
-  const fullTimeCount = staffProfiles.filter(p => p.employment_type === "full_time").length;
+  // Computed stats — headline numbers describe the current workforce only
+  const activeProfiles = staffProfiles.filter(p => !isFormer(p));
+  const formerCount   = staffProfiles.length - activeProfiles.length;
+  const uniqueDepts   = new Set(activeProfiles.map(p => p.department_id).filter(Boolean)).size;
+  const linkedCount   = activeProfiles.filter(p => p.linked_user_id).length;
+  const fullTimeCount = activeProfiles.filter(p => p.employment_type === "full_time").length;
+  const statusScoped  = staffProfiles.filter(p => filterStatus === "all" || (filterStatus === "inactive") === isFormer(p));
 
   useEffect(() => {
     if (!rolesLoading && !canAccess) {
@@ -749,6 +872,8 @@ const StaffProfiles = () => {
         profiles = profiles.filter(p => !p.linked_user_id || !adminIds.has(p.linked_user_id));
       }
       setStaffProfiles(profiles);
+      // Keep an open profile sheet in step with what was just saved.
+      setSelectedProfile(prev => (prev ? profiles.find(p => p.id === prev.id) ?? null : prev));
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "destructive" });
     } finally {
@@ -826,6 +951,40 @@ const StaffProfiles = () => {
 
   const handleDelete = (id: string) => setPendingDeleteId(id);
 
+  const handleToggleStatus = (profile: StaffProfile) => {
+    if (isFormer(profile)) { setReinstateTarget(profile); return; }
+    setExitForm({ exit_date: todayIso(), exit_reason: "resigned", exit_note: "" });
+    setExitTarget(profile);
+  };
+
+  const confirmMarkLeft = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!exitTarget || !exitForm.exit_date) return;
+    setExitSaving(true);
+    const { error } = await supabase.from("staff_profiles").update({
+      employment_status: "inactive",
+      exit_date: exitForm.exit_date,
+      exit_reason: exitForm.exit_reason || null,
+      exit_note: exitForm.exit_note.trim() || null,
+    }).eq("id", exitTarget.id);
+    setExitSaving(false);
+    if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return; }
+    toast({ title: `${exitTarget.full_name} archived`, description: "Moved to Former staff. Their records are kept." });
+    setExitTarget(null);
+    fetchStaffProfiles();
+  };
+
+  const confirmReinstate = async () => {
+    const target = reinstateTarget;
+    setReinstateTarget(null);
+    if (!target) return;
+    const { error } = await supabase.from("staff_profiles").update({
+      employment_status: "active", exit_date: null, exit_reason: null, exit_note: null,
+    }).eq("id", target.id);
+    if (error) toast({ title: "Error", description: error.message, variant: "destructive" });
+    else { toast({ title: `${target.full_name} reinstated` }); fetchStaffProfiles(); }
+  };
+
   const confirmDelete = async () => {
     const id = pendingDeleteId;
     setPendingDeleteId(null);
@@ -868,6 +1027,27 @@ const StaffProfiles = () => {
   };
 
   const resetForm = () => { setEditingProfile(null); setPassportFile(null); setFormData(DEFAULT_FORM); };
+
+  // Deep links from People and the search palette: ?view=<id> opens that
+  // profile, ?new=1 opens the add form. Consumed once, then cleared.
+  useEffect(() => {
+    if (loading) return;
+    const viewId = searchParams.get("view");
+    const wantsNew = searchParams.get("new") === "1";
+    if (!viewId && !wantsNew) return;
+    if (viewId) {
+      const match = staffProfiles.find(p => p.id === viewId);
+      if (match) setSelectedProfile(match);
+    } else {
+      resetForm();
+      setIsDialogOpen(true);
+    }
+    const next = new URLSearchParams(searchParams);
+    next.delete("view");
+    next.delete("new");
+    setSearchParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, staffProfiles]);
 
   const getPassportUrl = (path: string | null) => {
     if (!path) return null;
@@ -937,7 +1117,7 @@ const StaffProfiles = () => {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Staff Profiles</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Sizzling Spices &middot; {staffProfiles.length} member{staffProfiles.length !== 1 ? "s" : ""}
+            Sizzling Spices &middot; {activeProfiles.length} active{formerCount > 0 ? ` · ${formerCount} former` : ""}
           </p>
         </div>
         {(isAdmin || isHR) && (
@@ -949,14 +1129,32 @@ const StaffProfiles = () => {
 
       {/* ── Stat Cards ── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard icon={Users}     label="Total Staff"      value={staffProfiles.length} accent="bg-primary/10 text-primary" />
+        <StatCard icon={Users}     label="Active Staff"     value={activeProfiles.length} accent="bg-primary/10 text-primary" />
         <StatCard icon={Building2} label="Departments"      value={uniqueDepts}           accent="bg-blue-100 text-blue-600 dark:bg-blue-950 dark:text-blue-400" />
         <StatCard icon={Link2}     label="Portal Linked"    value={linkedCount}           accent="bg-emerald-100 text-emerald-600 dark:bg-emerald-950 dark:text-emerald-400" />
         <StatCard icon={Briefcase} label="Full-time"        value={fullTimeCount}         accent="bg-violet-100 text-violet-600 dark:bg-violet-950 dark:text-violet-400" />
       </div>
 
       {/* ── Filter Bar ── */}
-      <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
+      <div className="flex flex-col sm:flex-row flex-wrap gap-3 items-start sm:items-center">
+        <div className="flex rounded-lg border border-border overflow-hidden text-sm shrink-0" role="tablist" aria-label="Employment status">
+          {([
+            ["active",   `Active (${activeProfiles.length})`],
+            ["inactive", `Former (${formerCount})`],
+            ["all",      "All"],
+          ] as const).map(([value, label]) => (
+            <button
+              key={value}
+              role="tab"
+              aria-selected={filterStatus === value}
+              onClick={() => setFilterStatus(value)}
+              className={`px-3 py-1.5 transition-colors ${filterStatus === value ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
@@ -993,7 +1191,7 @@ const StaffProfiles = () => {
         </Select>
 
         {hasFilters && (
-          <Button variant="ghost" size="sm" onClick={() => { setSearchQuery(""); setFilterDepartment("all"); setFilterPosition("all"); }} className="gap-1.5 text-muted-foreground">
+          <Button variant="ghost" size="sm" onClick={clearFilters} className="gap-1.5 text-muted-foreground">
             <X className="h-3.5 w-3.5" /> Clear
           </Button>
         )}
@@ -1018,7 +1216,8 @@ const StaffProfiles = () => {
 
       {/* Results count */}
       <p className="text-xs text-muted-foreground -mt-2">
-        Showing {filteredProfiles.length} of {staffProfiles.length}{hasFilters ? " (filtered)" : ""}
+        Showing {filteredProfiles.length} of {statusScoped.length}
+        {filterStatus === "active" ? " active" : filterStatus === "inactive" ? " former" : ""}{hasFilters ? " (filtered)" : ""}
       </p>
 
       {/* ── Staff Grid ── */}
@@ -1037,6 +1236,7 @@ const StaffProfiles = () => {
                 onDelete={handleDelete}
                 onExport={handleExportPDF}
                 onPrint={handlePrint}
+                onToggleStatus={handleToggleStatus}
               />
             ))}
           </div>
@@ -1058,6 +1258,7 @@ const StaffProfiles = () => {
                 onDelete={handleDelete}
                 onExport={handleExportPDF}
                 onPrint={handlePrint}
+                onToggleStatus={handleToggleStatus}
               />
             ))}
           </div>
@@ -1069,11 +1270,17 @@ const StaffProfiles = () => {
           </div>
           <div>
             <p className="font-semibold text-lg">
-              {staffProfiles.length === 0 ? "No staff profiles yet" : "No results found"}
+              {staffProfiles.length === 0
+                ? "No staff profiles yet"
+                : !hasFilters && filterStatus === "inactive"
+                ? "No former staff"
+                : "No results found"}
             </p>
             <p className="text-sm text-muted-foreground mt-1 max-w-xs">
               {staffProfiles.length === 0
                 ? "Add your first staff member to get started."
+                : !hasFilters && filterStatus === "inactive"
+                ? "Staff marked as left will be archived here."
                 : "Try adjusting your search or filters."}
             </p>
           </div>
@@ -1083,7 +1290,7 @@ const StaffProfiles = () => {
             </Button>
           )}
           {hasFilters && (
-            <Button variant="outline" onClick={() => { setSearchQuery(""); setFilterDepartment("all"); setFilterPosition("all"); }}>
+            <Button variant="outline" onClick={clearFilters}>
               Clear filters
             </Button>
           )}
@@ -1098,10 +1305,12 @@ const StaffProfiles = () => {
         passportUrl={getPassportUrl(selectedProfile?.passport_path ?? null)}
         isAdmin={isAdmin}
         canScore={canScore}
+        canManage={isAdmin || isHR}
         onEdit={p => { setSelectedProfile(null); handleEdit(p); }}
         onDelete={handleDelete}
         onExport={handleExportPDF}
         onPrint={handlePrint}
+        onToggleStatus={handleToggleStatus}
       />
 
       {/* ── Add / Edit Dialog ── */}
@@ -1277,9 +1486,71 @@ const StaffProfiles = () => {
         open={pendingDeleteId !== null}
         onOpenChange={(open) => { if (!open) setPendingDeleteId(null); }}
         title="Delete this staff profile?"
-        description="This cannot be undone."
+        description="This cannot be undone, and it also removes their attendance, KPI and document history. If the person has left, use “Mark as left” instead to archive them."
         confirmLabel="Delete"
         onConfirm={confirmDelete}
+      />
+
+      {/* ── Mark as left ── */}
+      <Dialog open={!!exitTarget} onOpenChange={open => { if (!open) setExitTarget(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Mark {exitTarget?.full_name} as left</DialogTitle>
+            <DialogDescription>
+              They move to Former staff and drop off attendance, KPI and birthday lists, and out of
+              payroll runs for periods after they left. Their records are kept, and you can reinstate them later.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={confirmMarkLeft} className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <FormField id="exit_date" label="Last working day" required>
+                <Input
+                  id="exit_date"
+                  type="date"
+                  required
+                  value={exitForm.exit_date}
+                  onChange={e => setExitForm(prev => ({ ...prev, exit_date: e.target.value }))}
+                />
+              </FormField>
+              <FormField label="Reason">
+                <Select value={exitForm.exit_reason} onValueChange={v => setExitForm(prev => ({ ...prev, exit_reason: v }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>{exitReasonOptions.map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
+                </Select>
+              </FormField>
+            </div>
+            <FormField id="exit_note" label="Note (optional)">
+              <Textarea
+                id="exit_note"
+                rows={3}
+                value={exitForm.exit_note}
+                onChange={e => setExitForm(prev => ({ ...prev, exit_note: e.target.value }))}
+                placeholder="e.g. Handover completed, company property returned"
+              />
+            </FormField>
+            {exitTarget?.linked_user_id && (
+              <p className="flex items-start gap-2 text-xs text-muted-foreground">
+                <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                This person still has a portal login. Remove their access in User Management if they should no longer sign in.
+              </p>
+            )}
+            <div className="flex justify-end gap-3 pt-2">
+              <Button type="button" variant="outline" onClick={() => setExitTarget(null)}>Cancel</Button>
+              <Button type="submit" disabled={exitSaving} className="gap-2">
+                <UserMinus className="h-4 w-4" />{exitSaving ? "Saving…" : "Mark as left"}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <ConfirmDialog
+        open={reinstateTarget !== null}
+        onOpenChange={(open) => { if (!open) setReinstateTarget(null); }}
+        title={`Reinstate ${reinstateTarget?.full_name ?? ""}?`}
+        description="They return to Active staff and their exit date, reason and note are cleared."
+        confirmLabel="Reinstate"
+        onConfirm={confirmReinstate}
       />
     </div>
   );

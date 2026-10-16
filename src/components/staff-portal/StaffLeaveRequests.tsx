@@ -1,3 +1,4 @@
+import { useNewParam } from '@/hooks/useNewParam';
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
@@ -15,6 +16,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Plus, Send, Eye, CalendarDays, User, Clock, CheckCircle2, XCircle } from 'lucide-react';
 import { format, differenceInCalendarDays, parseISO } from 'date-fns';
+import { SICK_LIMIT, CASUAL_LIMIT } from '@/lib/leave';
 
 const leaveTypes = [
   { value: 'casual', label: 'Casual Leave' },
@@ -22,8 +24,6 @@ const leaveTypes = [
   { value: 'unpaid', label: 'Unpaid Leave (Absence)' },
 ];
 
-const SICK_LIMIT = 4;       // occurrences per year
-const CASUAL_LIMIT = 14;    // days per year
 
 const statusColors: Record<string, string> = {
   pending: 'bg-warning/10 text-warning border-warning/20',
@@ -36,7 +36,8 @@ export default function StaffLeaveRequests() {
   const { isAdmin, isHR } = useRoles();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [open, setOpen] = useState(false);
+  const openOnArrival = !!useNewParam();
+  const [open, setOpen] = useState(openOnArrival);
   const [viewRequest, setViewRequest] = useState<any | null>(null);
   const [responseText, setResponseText] = useState('');
   const [responseStatus, setResponseStatus] = useState('approved');

@@ -1,3 +1,4 @@
+import { useNewParam } from '@/hooks/useNewParam';
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -42,7 +43,8 @@ export default function Invoices() {
   const { user } = useAuth();
 
   // Dialog state
-  const [formOpen, setFormOpen] = useState(false);
+  const openOnArrival = !!useNewParam();
+  const [formOpen, setFormOpen] = useState(openOnArrival);
   const [formType, setFormType] = useState<InvoiceType | undefined>(undefined);
   const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null);
   const [viewingInvoice, setViewingInvoice] = useState<Invoice | null>(null);

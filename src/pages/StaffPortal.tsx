@@ -22,7 +22,7 @@ const StaffPortal = () => {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl sm:text-3xl font-bold bg-gradient-primary bg-clip-text text-transparent">Staff Portal</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold font-display text-foreground">Staff Portal</h1>
         <p className="text-muted-foreground mt-1">Submit leave requests, log complaints, and communicate with management</p>
       </div>
 

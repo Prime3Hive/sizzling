@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Card, CardHeader, CardContent } from '@/components/ui/card';
@@ -13,6 +14,12 @@ import ExpenseFilters from '@/components/expenses/ExpenseFilters';
 import ExpenseTable, { type ExpenseRow } from '@/components/expenses/ExpenseTable';
 import ExpenseSummary from '@/components/expenses/ExpenseSummary';
 import { useExpenseCategories } from '@/hooks/useExpenseReference';
+import { formatMinor, sumMinor } from '@/lib/money';
+import { FilterChips, PageHeader, StatTile } from '@/components/shell/ui';
+
+type StatusFilter = 'all' | 'pending' | 'approved' | 'rejected';
+const minorOf = (e: ExpenseRow): bigint =>
+  BigInt(e.amount_minor ?? Math.round((Number(e.amount) || 0) * 100));
 
 const db = supabase as any;
 
@@ -30,6 +37,19 @@ const Expenses = () => {
   const [filterEndDate, setFilterEndDate] = useState<Date | undefined>();
   const [filterCategory, setFilterCategory] = useState('all');
   const [filterBudget, setFilterBudget] = useState('all');
+  const [status, setStatus] = useState<StatusFilter>('all');
+
+  // "New expense" from Home or the search palette lands here with ?new=1.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [openNew] = useState(() => searchParams.get('new') === '1');
+  React.useEffect(() => {
+    if (searchParams.get('new')) {
+      const next = new URLSearchParams(searchParams);
+      next.delete('new');
+      setSearchParams(next, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const { data: categories = [] } = useExpenseCategories();
 
@@ -85,14 +105,32 @@ const Expenses = () => {
         if (filterEndDate && new Date(e.date) > filterEndDate) return false;
         if (filterCategory !== 'all' && e.category !== filterCategory) return false;
         if (filterBudget !== 'all' && e.budget_id !== filterBudget) return false;
+        if (status !== 'all' && (e.status ?? 'approved') !== status) return false;
         return true;
       }),
-    [expenses, filterStartDate, filterEndDate, filterCategory, filterBudget],
+    [expenses, filterStartDate, filterEndDate, filterCategory, filterBudget, status],
   );
+
+  const statusOf = (e: ExpenseRow) => e.status ?? 'approved';
+  const monthKey = new Date().toISOString().slice(0, 7);
+  const tiles = useMemo(() => {
+    const pending = expenses.filter((e) => statusOf(e) === 'pending');
+    const thisMonth = expenses.filter((e) => (e.date ?? '').startsWith(monthKey));
+    const approved = thisMonth.filter((e) => statusOf(e) === 'approved');
+    const rejected = thisMonth.filter((e) => statusOf(e) === 'rejected');
+    return {
+      pending: formatMinor(sumMinor(pending.map(minorOf))), pendingN: pending.length,
+      approved: formatMinor(sumMinor(approved.map(minorOf))), approvedN: approved.length,
+      rejected: formatMinor(sumMinor(rejected.map(minorOf))), rejectedN: rejected.length,
+    };
+  }, [expenses, monthKey]);
+  const countOf = (s: StatusFilter) => (s === 'all' ? expenses.length : expenses.filter((e) => statusOf(e) === s).length);
+  const monthName = new Date().toLocaleDateString('en-GB', { month: 'long' });
 
   const activeCount =
     (filterStartDate ? 1 : 0) + (filterEndDate ? 1 : 0) +
-    (filterCategory !== 'all' ? 1 : 0) + (filterBudget !== 'all' ? 1 : 0);
+    (filterCategory !== 'all' ? 1 : 0) + (filterBudget !== 'all' ? 1 : 0) +
+    (status !== 'all' ? 1 : 0);
   const hasActiveFilters = activeCount > 0;
 
   const clearFilters = () => {
@@ -100,6 +138,7 @@ const Expenses = () => {
     setFilterEndDate(undefined);
     setFilterCategory('all');
     setFilterBudget('all');
+    setStatus('all');
   };
 
   const refresh = () => {
@@ -161,16 +200,34 @@ const Expenses = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-foreground">Expenses</h1>
-          <p className="text-muted-foreground">View and manage all registered expenses</p>
-        </div>
-        <div className="flex gap-2 flex-wrap">
+      <PageHeader
+        title="Expenses"
+        description="Money out, and what still needs sign-off."
+        actions={<>
           <BulkExpenseDialog onDone={refresh} />
-          <ExpenseFormDialog onExpenseAdded={refresh} />
-        </div>
+          <ExpenseFormDialog onExpenseAdded={refresh} openOnMount={openNew} />
+        </>}
+      />
+
+      {/* A swipeable strip on a phone, so three totals don't push the list a
+          full screen down. */}
+      <div className="-mx-4 flex snap-x scroll-px-4 gap-3 overflow-x-auto px-4 scrollbar-none sm:mx-0 sm:grid sm:grid-cols-3 sm:gap-4 sm:overflow-visible sm:px-0 [&>*]:min-w-[220px] [&>*]:snap-start sm:[&>*]:min-w-0">
+        <StatTile label="Waiting for approval" value={tiles.pending}
+          sub={`${tiles.pendingN} expense${tiles.pendingN === 1 ? '' : 's'}${isAdmin && tiles.pendingN ? ' · approve below or in Inbox' : ''}`} />
+        <StatTile label={`Approved in ${monthName}`} value={tiles.approved}
+          sub={`${tiles.approvedN} expense${tiles.approvedN === 1 ? '' : 's'}`} />
+        <StatTile label={`Rejected in ${monthName}`} value={tiles.rejected}
+          sub={`${tiles.rejectedN} expense${tiles.rejectedN === 1 ? '' : 's'}`} />
       </div>
+
+      <FilterChips<StatusFilter>
+        label="Status"
+        value={status}
+        onChange={setStatus}
+        options={(['all', 'pending', 'approved', 'rejected'] as StatusFilter[]).map((v) => ({
+          value: v, label: v === 'all' ? 'All' : v[0].toUpperCase() + v.slice(1), count: countOf(v),
+        }))}
+      />
 
       <ExpenseFilters
         filterStartDate={filterStartDate}

@@ -52,6 +52,13 @@ export interface StatutoryInput {
   basic: number;
   /** Allowances for the same pay period. */
   allowances: number;
+  /**
+   * Sales commission paid in this period. A one-off: it is not pensionable
+   * and not annualised — PAYE on it is the extra annual tax it causes on top
+   * of the regular salary (the marginal method), so a single month's
+   * commission is not taxed as if it recurred every month.
+   */
+  commission?: number;
   /** Pay periods per year (12 = monthly, 52 = weekly…). Default 12. */
   periodsPerYear?: number;
   /** Annual rent relief already validated by HR (NTA 2025). Default 0. */
@@ -86,15 +93,19 @@ export function computeStatutory(input: StatutoryInput): StatutoryResult {
   const basic = Math.max(0, Number(input.basic) || 0);
   const allowances = Math.max(0, Number(input.allowances) || 0);
   const other = Math.max(0, Number(input.otherDeductions) || 0);
-  const gross = basic + allowances;
+  const commission = Math.max(0, Number(input.commission) || 0);
+  const regular = basic + allowances;
+  const gross = regular + commission;
 
-  const pensionEmployee = input.applyPension === false ? 0 : round2(gross * PENSION_EMPLOYEE_RATE);
-  const pensionEmployer = input.applyPension === false ? 0 : round2(gross * PENSION_EMPLOYER_RATE);
+  const pensionEmployee = input.applyPension === false ? 0 : round2(regular * PENSION_EMPLOYEE_RATE);
+  const pensionEmployer = input.applyPension === false ? 0 : round2(regular * PENSION_EMPLOYER_RATE);
   const nhf = input.applyNhf === false ? 0 : round2(basic * NHF_RATE);
 
   const annualTaxable =
-    (gross - pensionEmployee - nhf) * periods - Math.max(0, input.annualRentRelief ?? 0);
-  const paye = round2(annualPaye(annualTaxable) / periods);
+    (regular - pensionEmployee - nhf) * periods - Math.max(0, input.annualRentRelief ?? 0);
+  const regularTax = annualPaye(annualTaxable);
+  const commissionTax = commission > 0 ? annualPaye(annualTaxable + commission) - regularTax : 0;
+  const paye = round2(regularTax / periods + commissionTax);
 
   const totalDeductions = round2(paye + pensionEmployee + nhf + other);
   const netPay = round2(gross - totalDeductions);
@@ -113,8 +124,8 @@ export function computeStatutory(input: StatutoryInput): StatutoryResult {
 }
 
 /** A zeroed statutory result for manual (non-statutory) payroll entries. */
-export function manualDeductions(basic: number, allowances: number, deductions: number): StatutoryResult {
-  const gross = round2(Math.max(0, basic) + Math.max(0, allowances));
+export function manualDeductions(basic: number, allowances: number, deductions: number, commission = 0): StatutoryResult {
+  const gross = round2(Math.max(0, basic) + Math.max(0, allowances) + Math.max(0, commission));
   const other = round2(Math.max(0, deductions));
   return {
     gross,

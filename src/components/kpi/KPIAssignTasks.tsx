@@ -150,7 +150,7 @@ export default function KPIAssignTasks() {
     queryKey: ["staff-profiles-select"],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("staff_profiles").select("id, full_name, department_id").order("full_name");
+        .from("staff_profiles").select("id, full_name, department_id").eq("employment_status", "active").order("full_name");
       if (error) throw error;
       return (data || []) as unknown as StaffMember[];
     },

@@ -1,7 +1,6 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogTrigger,
@@ -12,9 +11,13 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ArrowLeftRight, Loader2 } from "lucide-react";
+import { SearchableSelect, type SelectOption } from "@/components/ui/searchable-select";
+import { recordStockMovements, type MovementType } from "@/lib/stockMovements";
 
 interface Props {
   onDone?: () => void;
+  /** Inventory setup: may a stock-out take an item below zero? */
+  allowNegative?: boolean;
 }
 
 const TYPES: Record<string, { label: string; movement: string; sign: number }> = {
@@ -24,8 +27,7 @@ const TYPES: Record<string, { label: string; movement: string; sign: number }> =
   adjust_out: { label: "Adjustment — decrease",           movement: "adjustment", sign: -1 },
 };
 
-export default function RecordMovementDialog({ onDone }: Props) {
-  const { user } = useAuth();
+export default function RecordMovementDialog({ onDone, allowNegative = false }: Props) {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [productId, setProductId] = useState("");
@@ -60,29 +62,22 @@ export default function RecordMovementDialog({ onDone }: Props) {
     const cfg = TYPES[type];
     const delta = amount * cfg.sign;
 
+    if (delta < 0 && product.stock + delta < 0 && !allowNegative) {
+      toast({
+        title: "Insufficient stock",
+        description: `${product.name} has ${product.stock} ${product.uom} on hand. Negative stock is turned off in Inventory setup.`,
+        variant: "destructive",
+      });
+      return;
+    }
+
     setSaving(true);
     try {
-      // resolve the warehouse holding the most stock for this product, else the first
-      const { data: invRow } = await supabase.from("inventory")
-        .select("id, warehouse_id, quantity").eq("product_id", product.id)
-        .order("quantity", { ascending: false }).limit(1).maybeSingle();
-      let warehouseId = invRow?.warehouse_id ?? null;
-      if (invRow) {
-        await supabase.from("inventory").update({ quantity: Number(invRow.quantity) + delta }).eq("id", invRow.id);
-      } else {
-        const { data: wh } = await supabase.from("warehouses").select("id").limit(1).maybeSingle();
-        if (wh) {
-          warehouseId = wh.id;
-          await supabase.from("inventory").insert({ product_id: product.id, warehouse_id: wh.id, quantity: Math.max(delta, 0), reorder_level: 10 });
-        }
-      }
-      const { error } = await (supabase as any).from("inventory_movements").insert({
-        product_id: product.id, warehouse_id: warehouseId, movement_type: cfg.movement,
-        quantity_change: delta, reference_type: "manual",
-        occurred_on: new Date().toISOString().split("T")[0],
-        note: note.trim() || cfg.label, created_by: user?.id,
+      await recordStockMovements({
+        lines: [{ product_id: product.id, quantity_change: delta }],
+        type: cfg.movement as MovementType,
+        note: note.trim() || cfg.label,
       });
-      if (error) throw error;
 
       toast({ title: "Stock movement recorded", description: `${product.name}: ${delta > 0 ? "+" : ""}${delta} ${product.uom}` });
       setOpen(false); reset(); onDone?.();
@@ -94,6 +89,11 @@ export default function RecordMovementDialog({ onDone }: Props) {
   };
 
   const selected = products.find((p: any) => p.id === productId);
+  const productOptions = useMemo<SelectOption[]>(() => products.map((p: any) => ({
+    value: p.id,
+    label: p.name,
+    hint: `${p.stock} ${p.uom} on hand${p.item_type === "non_sellable" ? " · non-sellable" : ""}`,
+  })), [products]);
 
   return (
     <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (o) reset(); }}>
@@ -110,16 +110,13 @@ export default function RecordMovementDialog({ onDone }: Props) {
         <div className="space-y-3">
           <div className="space-y-1.5">
             <Label>Item</Label>
-            <Select value={productId} onValueChange={setProductId}>
-              <SelectTrigger><SelectValue placeholder="Select an item…" /></SelectTrigger>
-              <SelectContent>
-                {products.map((p: any) => (
-                  <SelectItem key={p.id} value={p.id}>
-                    {p.name} · {p.stock} {p.uom}{p.item_type === "non_sellable" ? " · non-sellable" : ""}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              options={productOptions}
+              value={productId}
+              onChange={setProductId}
+              placeholder="Search items…"
+              title="Choose an item"
+            />
           </div>
           <div className="space-y-1.5">
             <Label>Movement type</Label>

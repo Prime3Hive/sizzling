@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -56,10 +57,6 @@ interface ProfileData {
 export default function UserManagement() {
   const { isAdmin } = useRoles();
   const { user } = useAuth();
-  const [users, setUsers] = useState<UserItem[]>([]);
-  const [departments, setDepartments] = useState<Department[]>([]);
-  const [staffProfiles, setStaffProfiles] = useState<StaffProfile[]>([]);
-  const [loading, setLoading] = useState(true);
   const [assignDialogOpen, setAssignDialogOpen] = useState(false);
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState<string>('');
@@ -71,34 +68,29 @@ export default function UserManagement() {
   const [newDeptDescription, setNewDeptDescription] = useState('');
   const [deptDialogOpen, setDeptDialogOpen] = useState(false);
 
-  useEffect(() => {
-    if (isAdmin) fetchData();
-  }, [isAdmin]);
+  const qc = useQueryClient();
 
-  const fetchData = async () => {
-    try {
-      setLoading(true);
-
+  // Cached, and refreshed when a sign-up is approved from the Inbox.
+  const { data, isPending: loading, error: loadError } = useQuery({
+    queryKey: ['user-management'],
+    enabled: isAdmin,
+    queryFn: async () => {
       const [profilesRes, rolesRes, deptRes, staffRes] = await Promise.all([
         supabase.from('profiles').select('user_id, full_name'),
         supabase.from('user_roles').select('id, user_id, role, role_status, department_id, departments(name)'),
         supabase.from('departments').select('*').order('name'),
         supabase.from('staff_profiles').select('id, full_name, linked_user_id, position'),
       ]);
-
-      if (profilesRes.error) {
-        toast({ title: 'Error', description: 'Failed to fetch users', variant: 'destructive' });
-        return;
-      }
+      if (profilesRes.error) throw profilesRes.error;
 
       const rolesData = (rolesRes.data || []) as unknown as UserRoleData[];
       const staffData = (staffRes.data || []) as unknown as StaffProfile[];
       const profilesData = (profilesRes.data || []) as unknown as ProfileData[];
-      
+
       const rolesMap = new Map(rolesData.map((r) => [r.user_id, r]));
       const staffLinkMap = new Map(staffData.filter((s) => s.linked_user_id).map((s) => [s.linked_user_id, s.full_name]));
 
-      const formattedUsers = profilesData.map((profile) => {
+      const users: UserItem[] = profilesData.map((profile) => {
         const roleData = rolesMap.get(profile.user_id);
         return {
           id: roleData?.id || profile.user_id,
@@ -112,16 +104,21 @@ export default function UserManagement() {
           linked_staff_profile: staffLinkMap.get(profile.user_id) || null,
         };
       });
+      return {
+        users,
+        departments: (deptRes.data || []) as Department[],
+        staffProfiles: staffData,
+      };
+    },
+  });
+  const users = data?.users ?? [];
+  const departments = data?.departments ?? [];
+  const staffProfiles = data?.staffProfiles ?? [];
+  const fetchData = () => qc.invalidateQueries({ queryKey: ['user-management'] });
 
-      setUsers(formattedUsers);
-      setDepartments(deptRes.data || []);
-      setStaffProfiles(staffRes.data || []);
-    } catch (error) {
-      toast({ title: 'Error', description: 'Failed to fetch user data', variant: 'destructive' });
-    } finally {
-      setLoading(false);
-    }
-  };
+  useEffect(() => {
+    if (loadError) toast({ title: 'Error', description: 'Failed to fetch user data', variant: 'destructive' });
+  }, [loadError]);
 
   const handleAssignRole = async () => {
     if (!selectedUserId || !user?.id) return;

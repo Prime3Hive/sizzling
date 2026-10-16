@@ -1,3 +1,5 @@
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNewParam } from '@/hooks/useNewParam';
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -43,22 +45,19 @@ interface Sale {
 const Payments = () => {
   const { user } = useAuth();
   const { toast } = useToast();
-  const [payments, setPayments] = useState<Payment[]>([]);
-  const [sales, setSales] = useState<Sale[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [showAddPayment, setShowAddPayment] = useState(false);
+  const openOnArrival = !!useNewParam();
+  const [showAddPayment, setShowAddPayment] = useState(openOnArrival);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const qc = useQueryClient();
 
-  useEffect(() => {
-    if (user) {
-      fetchData();
-    }
-  }, [user]);
-
-  const fetchData = async () => {
-    try {
-      // Fetch payments with sale details
+  // Cached, so coming back to this page shows the last list at once and
+  // refreshes behind it instead of starting from a spinner.
+  const { data, isPending: loading, error: loadError } = useQuery({
+    queryKey: ['payments-page', user?.id],
+    enabled: !!user,
+    queryFn: async () => {
+      // Payments with their sale
       const { data: paymentsData, error: paymentsError } = await supabase
         .from('payments')
         .select(`
@@ -66,31 +65,28 @@ const Payments = () => {
           sale:sales(sale_number, customer_name, total_amount)
         `)
         .order('created_at', { ascending: false });
-
       if (paymentsError) throw paymentsError;
 
-      // Fetch sales for payment creation (only unpaid or partially paid)
+      // Sales a payment can be recorded against
       const { data: salesData, error: salesError } = await supabase
         .from('sales')
         .select('id, sale_number, customer_name, total_amount')
-        .eq('user_id', user.id)
+        .eq('user_id', user!.id)
         .neq('status', 'cancelled');
-
       if (salesError) throw salesError;
 
-      setPayments(paymentsData || []);
-      setSales(salesData || []);
-    } catch (error) {
-      console.error('Error fetching data:', error);
-      toast({
-        title: "Error",
-        description: "Failed to fetch payments data",
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
+      return { payments: (paymentsData || []) as Payment[], sales: (salesData || []) as Sale[] };
+    },
+  });
+  const payments = data?.payments ?? [];
+  const sales = data?.sales ?? [];
+  const fetchData = () => qc.invalidateQueries({ queryKey: ['payments-page'] });
+
+  useEffect(() => {
+    if (!loadError) return;
+    console.error('Error fetching data:', loadError);
+    toast({ title: "Error", description: "Failed to fetch payments data", variant: "destructive" });
+  }, [loadError, toast]);
 
   const addPayment = async (formData: FormData) => {
     try {

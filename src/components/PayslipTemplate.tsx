@@ -12,6 +12,7 @@ interface PayslipRecord {
   period_end: string;
   basic_salary: number;
   allowances: number;
+  commission?: number | null;
   deductions: number;
   paye?: number | null;
   pension_employee?: number | null;
@@ -35,7 +36,8 @@ const fmt = (n: number) =>
   `₦${Number(n).toLocaleString("en-NG", { minimumFractionDigits: 2 })}`;
 
 const PayslipTemplate = ({ record }: PayslipTemplateProps) => {
-  const grossPay = Number(record.basic_salary) + Number(record.allowances);
+  const commission = Number(record.commission ?? 0);
+  const grossPay = Number(record.basic_salary) + Number(record.allowances) + commission;
   const totalDeductions = Number(record.deductions);
   const netPay = Number(record.net_pay);
   const docRef = `PAY-${record.id.slice(0, 6).toUpperCase()}`;
@@ -131,6 +133,7 @@ const PayslipTemplate = ({ record }: PayslipTemplateProps) => {
             <p style={{ fontSize: "8px", fontWeight: 700, color: "#16a34a", textTransform: "uppercase", letterSpacing: "1.5px", borderBottom: "1.5px solid #dcfce7", paddingBottom: "4px", margin: "0 0 8px" }}>Earnings</p>
             <EarningsRow label="Basic Salary" value={fmt(record.basic_salary)} />
             <EarningsRow label="Allowances" value={fmt(record.allowances)} muted={Number(record.allowances) === 0} />
+            {commission > 0 && <EarningsRow label="Sales Commission" value={fmt(commission)} />}
             <div style={{ borderTop: "1.5px solid #f1f5f9", marginTop: "6px", paddingTop: "6px" }}>
               <EarningsRow label="Gross Pay" value={fmt(grossPay)} bold />
             </div>

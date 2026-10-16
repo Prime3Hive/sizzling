@@ -31,7 +31,9 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useRoles } from '@/hooks/useRoles';
+import { useCommissionCost } from '@/hooks/useCommission';
 import { formatNairaCompact, formatNairaShort } from '@/lib/currency';
+import { nextBirthday, countdownLabel, formatBirthdayShort } from '@/lib/birthday';
 import { Banknote, FileText, CreditCard, Briefcase, Activity, PiggyBank } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip,
@@ -138,6 +140,7 @@ const Dashboard = () => {
     },
     enabled: !!user && isAdmin,
   });
+  const ytdCommission = useCommissionCost(yearStart, yearEnd, !!user && isAdmin);
 
   // Budgets. The date range matters: the expense KPI compares month-to-date
   // spend against the budget FOR THAT PERIOD, not against the sum of every
@@ -180,21 +183,13 @@ const Dashboard = () => {
       const { data } = await supabase
         .from('staff_profiles')
         .select('full_name, date_of_birth')
+        .eq('employment_status', 'active')
         .not('date_of_birth', 'is', null);
       if (!data) return [];
-      const today = new Date();
-      return data.filter(s => {
-        const dob = new Date(s.date_of_birth!);
-        const next = new Date(today.getFullYear(), dob.getMonth(), dob.getDate());
-        if (next < today) next.setFullYear(today.getFullYear() + 1);
-        const diff = (next.getTime() - today.getTime()) / (1000 * 60 * 60 * 24);
-        return diff <= 7;
-      }).map(s => {
-        const dob = new Date(s.date_of_birth!);
-        const next = new Date(today.getFullYear(), dob.getMonth(), dob.getDate());
-        if (next < today) next.setFullYear(today.getFullYear() + 1);
-        return { name: s.full_name, date: next };
-      }).sort((a, b) => a.date.getTime() - b.date.getTime());
+      return data
+        .map(s => ({ name: s.full_name, next: nextBirthday(s.date_of_birth!) }))
+        .filter((s): s is { name: string; next: NonNullable<typeof s.next> } => !!s.next && s.next.daysUntil <= 7)
+        .sort((a, b) => a.next.daysUntil - b.next.daysUntil);
     },
     enabled: !!user && isAdmin,
   });
@@ -328,7 +323,7 @@ const Dashboard = () => {
     queryKey: ['dash-headcount'],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from('staff_profiles').select('id, departments(name)');
+        .from('staff_profiles').select('id, departments(name)').eq('employment_status', 'active');
       if (error) throw error;
       return data || [];
     },
@@ -440,7 +435,9 @@ const Dashboard = () => {
   const ytdOpEX = ytdExpenses.filter(e => e.account_type === 'OpEX').reduce((sum, e) => sum + Number(e.amount), 0);
   // Staff cost at gross + employer pension (matches the general ledger)
   const ytdPayrollOpEX = paidPayroll.reduce(
-    (sum, r: any) => sum + Number(r.basic_salary ?? r.net_pay) + Number(r.allowances ?? 0) + Number(r.pension_employer ?? 0), 0);
+    (sum, r: any) => sum + Number(r.basic_salary ?? r.net_pay) + Number(r.allowances ?? 0) + Number(r.pension_employer ?? 0), 0)
+    // Sales commission accrued this year (ledger 5120) — never in payroll's figure.
+    + ytdCommission.total;
   const ytdGrossProfit = ytdRevenue - ytdCOGS;
   const ytdTotalOpEX = ytdOpEX + ytdPayrollOpEX;
   const ytdNetProfit = ytdGrossProfit - ytdTotalOpEX;
@@ -545,7 +542,7 @@ const Dashboard = () => {
       <div className="space-y-8">
         <div>
           <p className="text-xs text-muted-foreground uppercase tracking-widest font-medium mb-1">{currentDate}</p>
-          <h1 className="text-2xl sm:text-4xl font-bold bg-gradient-primary bg-clip-text text-transparent">
+          <h1 className="text-2xl sm:text-4xl font-bold font-display text-foreground">
             {greeting}{staffProfile?.full_name ? `, ${staffProfile.full_name.split(' ')[0]}` : ''}!
           </h1>
           <p className="text-muted-foreground sm:text-lg mt-1">Here's your staff overview.</p>
@@ -644,7 +641,7 @@ const Dashboard = () => {
       <div className="space-y-8">
         <div>
           <p className="text-xs text-muted-foreground uppercase tracking-widest font-medium mb-1">{currentDate}</p>
-          <h1 className="text-2xl sm:text-4xl font-bold bg-gradient-primary bg-clip-text text-transparent">HR Dashboard</h1>
+          <h1 className="text-2xl sm:text-4xl font-bold font-display text-foreground">HR Dashboard</h1>
           <p className="text-muted-foreground sm:text-lg mt-1">Manage staff profiles and personnel records.</p>
         </div>
         <div className="grid gap-6 md:grid-cols-2">
@@ -685,10 +682,8 @@ const Dashboard = () => {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-xs text-muted-foreground uppercase tracking-widest font-medium mb-1">{currentDate}</p>
-          <h1 className="text-2xl sm:text-4xl font-bold bg-gradient-primary bg-clip-text text-transparent">
-            {greeting}, {firstName}!
-          </h1>
-          <p className="text-muted-foreground sm:text-lg mt-1">Here's your business at a glance.</p>
+          <h1 className="font-display text-2xl sm:text-[2rem] font-bold">Finance overview</h1>
+          <p className="text-muted-foreground mt-1">Profit, cash, receivables and spend, year to date.</p>
         </div>
         <div className="flex gap-2 shrink-0">
           <Link to="/business/invoices">
@@ -750,7 +745,10 @@ const Dashboard = () => {
                     <p className="text-sm font-semibold text-pink-800 dark:text-pink-400">
                       {upcomingBirthdays[0].name.split(' ')[0]}{upcomingBirthdays.length > 1 ? ` +${upcomingBirthdays.length - 1} more` : ''}
                     </p>
-                    <p className="text-xs text-pink-600 dark:text-pink-500">Birthday{upcomingBirthdays.length !== 1 ? 's' : ''} in 7 days</p>
+                    <p className="text-xs text-pink-600 dark:text-pink-500">
+                      Birthday {countdownLabel(upcomingBirthdays[0].next.daysUntil).toLowerCase()}
+                      {upcomingBirthdays[0].next.daysUntil > 0 ? ` · ${formatBirthdayShort(upcomingBirthdays[0].next.date)}` : ''}
+                    </p>
                   </div>
                 </div>
               </Link>

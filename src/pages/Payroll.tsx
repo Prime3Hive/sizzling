@@ -36,7 +36,24 @@ interface StaffProfile {
   account_name: string | null;
   linked_user_id: string | null;
   departments?: { name: string } | null;
+  employment_status: string;
+  exit_date: string | null;
 }
+
+/** Payable for a period: still employed, or left on/after the period began (final pay). */
+const payableFor = (s: StaffProfile, periodStart: string) =>
+  !!s.salary && s.salary > 0 &&
+  (s.employment_status === 'active' || (!!s.exit_date && s.exit_date >= periodStart));
+
+// The single-staff picker has no period yet when it renders; anyone who left
+// from the start of last month on can still be picked for a final payslip.
+const FINAL_PAY_CUTOFF = (() => {
+  const d = new Date();
+  const first = new Date(d.getFullYear(), d.getMonth() - 1, 1);
+  return `${first.getFullYear()}-${String(first.getMonth() + 1).padStart(2, '0')}-01`;
+})();
+
+interface PendingPayout { id: string; staff_profile_id: string; amount: number; period_end: string }
 
 interface PayrollRecord {
   id: string;
@@ -50,6 +67,8 @@ interface PayrollRecord {
   period_end: string;
   basic_salary: number;
   allowances: number;
+  /** Sales commission paid with this run (accrued earlier; see Commission page). */
+  commission?: number;
   deductions: number;
   paye?: number;
   pension_employee?: number;
@@ -82,10 +101,10 @@ const Payroll = () => {
   // Statutory (PAYE / pension / NHF) auto-computation — NTA 2025 / PRA 2014
   const [autoStatutory, setAutoStatutory] = useState(true);
 
-  const statFor = (basic: number, allow: number, other: number): StatutoryResult =>
+  const statFor = (basic: number, allow: number, other: number, commission = 0): StatutoryResult =>
     autoStatutory
-      ? computeStatutory({ basic, allowances: allow, otherDeductions: other })
-      : manualDeductions(basic, allow, other);
+      ? computeStatutory({ basic, allowances: allow, otherDeductions: other, commission })
+      : manualDeductions(basic, allow, other, commission);
   // Individual payslip → PDF (rendered off-screen via PayslipTemplate)
   const [payslipRecord, setPayslipRecord] = useState<PayrollRecord | null>(null);
   const payslipRef = useRef<HTMLDivElement>(null);
@@ -95,12 +114,43 @@ const Payroll = () => {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('staff_profiles')
-        .select('id, full_name, salary, position, department_id, bank_name, account_number, account_name, linked_user_id, departments(name)')
+        .select('id, full_name, salary, position, department_id, bank_name, account_number, account_name, linked_user_id, employment_status, exit_date, departments(name)')
         .order('full_name');
       if (error) throw error;
       return (data || []) as StaffProfile[];
     },
   });
+
+  // Approved commission not yet on a payroll run. Each run picks up everything
+  // accrued for a person up to the run's period end.
+  const { data: pendingCommission = [] } = useQuery({
+    queryKey: ['payroll-pending-commission'],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from('commission_payouts')
+        .select('id, staff_profile_id, amount, commission_periods!inner(status, period_end)')
+        .is('payroll_record_id', null)
+        .eq('commission_periods.status', 'approved');
+      // Before the commission migration is applied there is nothing to add.
+      if (error) return [] as PendingPayout[];
+      return (data ?? []).map((r: any) => ({
+        id: r.id, staff_profile_id: r.staff_profile_id, amount: Number(r.amount), period_end: r.commission_periods.period_end,
+      })) as PendingPayout[];
+    },
+  });
+
+  /** Commission owed to a person for months ending on or before `periodEnd` ('' = all). */
+  const commissionFor = (staffId: string, periodEnd: string) => {
+    const rows = pendingCommission.filter(p => p.staff_profile_id === staffId && (!periodEnd || p.period_end <= periodEnd));
+    return { ids: rows.map(r => r.id), amount: Math.round(rows.reduce((t, r) => t + r.amount, 0) * 100) / 100 };
+  };
+
+  /** Link a new payroll record to the commission it pays. */
+  const attachCommission = async (payrollId: string, payoutIds: string[]) => {
+    if (payoutIds.length === 0) return;
+    const { error } = await (supabase as any).rpc('fn_attach_commission', { p_payroll_id: payrollId, p_payout_ids: payoutIds });
+    if (error) throw error;
+  };
 
   const { data: payrollRecords = [], isLoading } = useQuery({
     queryKey: ['payroll-records', periodFilter],
@@ -129,7 +179,9 @@ const Payroll = () => {
   const generatePayrollMutation = useMutation({
     mutationFn: async (formData: { salary_period: string; period_start: string; period_end: string; allowances: number; deductions: number }) => {
       if (!user) throw new Error('Not authenticated');
-      const staffWithSalary = staffProfiles.filter(s => s.salary && s.salary > 0);
+      // Salaried staff, plus anyone owed commission even without a salary.
+      const staffWithSalary = staffProfiles.filter(s =>
+        payableFor(s, formData.period_start) || commissionFor(s.id, formData.period_end).amount > 0);
       if (staffWithSalary.length === 0) throw new Error('No staff with salary found');
 
       // Check for duplicates
@@ -147,8 +199,11 @@ const Payroll = () => {
       // Statutory deductions (PAYE / pension / NHF) are computed per staff
       // member from their own salary — the manual "deductions" input is only
       // the non-statutory portion (loans, cooperative, etc.).
-      const records = newStaff.map(staff => {
-        const stat = statFor(staff.salary!, formData.allowances, formData.deductions);
+      const commissions = newStaff.map(staff => commissionFor(staff.id, formData.period_end));
+      const records = newStaff.map((staff, i) => {
+        const basic = staff.salary || 0;
+        const commission = commissions[i].amount;
+        const stat = statFor(basic, formData.allowances, formData.deductions, commission);
         return {
           user_id: user.id,
           staff_profile_id: staff.id,
@@ -159,8 +214,9 @@ const Payroll = () => {
           salary_period: formData.salary_period,
           period_start: formData.period_start,
           period_end: formData.period_end,
-          basic_salary: staff.salary!,
+          basic_salary: basic,
           allowances: formData.allowances,
+          commission,
           deductions: stat.totalDeductions,
           paye: stat.paye,
           pension_employee: stat.pensionEmployee,
@@ -175,8 +231,14 @@ const Payroll = () => {
         };
       });
 
-      const { error } = await supabase.from('payroll_records').insert(records);
+      const { data: inserted, error } = await (supabase as any).from('payroll_records').insert(records).select('id, staff_profile_id');
       if (error) throw error;
+
+      // Link each record to the commission it pays (clears 2350 when paid).
+      for (const row of (inserted ?? []) as { id: string; staff_profile_id: string }[]) {
+        const i = newStaff.findIndex(s => s.id === row.staff_profile_id);
+        if (i >= 0) await attachCommission(row.id, commissions[i].ids);
+      }
 
       // Notify each staff member
       for (let i = 0; i < newStaff.length; i++) {
@@ -186,7 +248,7 @@ const Payroll = () => {
         await supabase.from('notifications').insert({
           user_id: staff.linked_user_id,
           title: '💰 Payslip Ready',
-          message: `Your payslip for ${formData.period_start} – ${formData.period_end} has been generated. Basic: ₦${Number(rec.basic_salary).toLocaleString()}, Allowances: ₦${Number(rec.allowances).toLocaleString()}, Deductions: ₦${Number(rec.deductions).toLocaleString()}, Net Pay: ₦${Number(rec.net_pay).toLocaleString()}. View details in My Payslip.`,
+          message: `Your payslip for ${formData.period_start} – ${formData.period_end} has been generated. Basic: ₦${Number(rec.basic_salary).toLocaleString()}, Allowances: ₦${Number(rec.allowances).toLocaleString()}${rec.commission > 0 ? `, Commission: ₦${Number(rec.commission).toLocaleString()}` : ''}, Deductions: ₦${Number(rec.deductions).toLocaleString()}, Net Pay: ₦${Number(rec.net_pay).toLocaleString()}. View details in My Payslip.`,
           type: 'payroll',
         });
       }
@@ -194,6 +256,7 @@ const Payroll = () => {
     },
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ['payroll-records'] });
+      queryClient.invalidateQueries({ queryKey: ['payroll-pending-commission'] });
       setShowDialog(false);
       setAllowances(0);
       setDeductions(0);
@@ -202,7 +265,11 @@ const Payroll = () => {
         : `Payroll generated for ${result.created} staff`;
       toast({ title: 'Success', description: msg });
     },
-    onError: (error: any) => toast({ title: 'Error', description: error.message, variant: 'destructive' }),
+    onError: (error: any) => {
+      queryClient.invalidateQueries({ queryKey: ['payroll-records'] });
+      queryClient.invalidateQueries({ queryKey: ['payroll-pending-commission'] });
+      toast({ title: 'Error', description: error.message, variant: 'destructive' });
+    },
   });
 
   const generateSingleMutation = useMutation({
@@ -216,9 +283,10 @@ const Payroll = () => {
         throw new Error(`Payroll for ${staff.full_name} already exists for this period (${formData.period_start} to ${formData.period_end}).`);
       }
 
-      const stat = statFor(formData.basic_salary, formData.allowances, formData.deductions);
+      const comm = commissionFor(staff.id, formData.period_end);
+      const stat = statFor(formData.basic_salary, formData.allowances, formData.deductions, comm.amount);
       const netPay = stat.netPay;
-      const { error } = await supabase.from('payroll_records').insert({
+      const { data: inserted, error } = await (supabase as any).from('payroll_records').insert({
         user_id: user.id,
         staff_profile_id: staff.id,
         staff_name: staff.full_name,
@@ -230,6 +298,7 @@ const Payroll = () => {
         period_end: formData.period_end,
         basic_salary: formData.basic_salary,
         allowances: formData.allowances,
+        commission: comm.amount,
         deductions: stat.totalDeductions,
         paye: stat.paye,
         pension_employee: stat.pensionEmployee,
@@ -241,21 +310,23 @@ const Payroll = () => {
         account_number: staff.account_number,
         account_name: staff.account_name,
         status: 'pending',
-      });
+      }).select('id').single();
       if (error) throw error;
+      await attachCommission(inserted.id, comm.ids);
 
       // Notify the staff member
       if (staff.linked_user_id) {
         await supabase.from('notifications').insert({
           user_id: staff.linked_user_id,
           title: '💰 Payslip Ready',
-          message: `Your payslip for ${formData.period_start} – ${formData.period_end} has been generated. Basic: ₦${Number(formData.basic_salary).toLocaleString()}, Allowances: ₦${Number(formData.allowances).toLocaleString()}, Deductions: ₦${Number(stat.totalDeductions).toLocaleString()}, Net Pay: ₦${Number(netPay).toLocaleString()}. View details in My Payslip.`,
+          message: `Your payslip for ${formData.period_start} – ${formData.period_end} has been generated. Basic: ₦${Number(formData.basic_salary).toLocaleString()}, Allowances: ₦${Number(formData.allowances).toLocaleString()}${comm.amount > 0 ? `, Commission: ₦${comm.amount.toLocaleString()}` : ''}, Deductions: ₦${Number(stat.totalDeductions).toLocaleString()}, Net Pay: ₦${Number(netPay).toLocaleString()}. View details in My Payslip.`,
           type: 'payroll',
         });
       }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['payroll-records'] });
+      queryClient.invalidateQueries({ queryKey: ['payroll-pending-commission'] });
       setShowDialog(false);
       setSelectedStaffId('');
       setAllowances(0);
@@ -269,10 +340,12 @@ const Payroll = () => {
   // statutory amounts are recomputed from the edited salary so the record
   // stays internally consistent (records created without statutory keep none).
   const editMutation = useMutation({
-    mutationFn: async (data: { id: string; allowances: number; other_deductions: number; basic_salary: number; notes: string | null; statutory: boolean }) => {
+    mutationFn: async (data: { id: string; allowances: number; other_deductions: number; basic_salary: number; commission: number; notes: string | null; statutory: boolean }) => {
+      // Commission is fixed by the payouts linked to the record; it is carried
+      // through unchanged so PAYE and net pay stay consistent with it.
       const stat = data.statutory
-        ? computeStatutory({ basic: data.basic_salary, allowances: data.allowances, otherDeductions: data.other_deductions })
-        : manualDeductions(data.basic_salary, data.allowances, data.other_deductions);
+        ? computeStatutory({ basic: data.basic_salary, allowances: data.allowances, otherDeductions: data.other_deductions, commission: data.commission })
+        : manualDeductions(data.basic_salary, data.allowances, data.other_deductions, data.commission);
       const { error } = await supabase.from('payroll_records')
         .update({
           basic_salary: data.basic_salary,
@@ -310,7 +383,8 @@ const Payroll = () => {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['payroll-records'] });
-      toast({ title: 'Cancelled', description: 'Payroll record cancelled and its posting reversed' });
+      queryClient.invalidateQueries({ queryKey: ['payroll-pending-commission'] });
+      toast({ title: 'Cancelled', description: 'Payroll record cancelled and its posting reversed. Any commission on it returns to the next run.' });
     },
     onError: (error: any) => toast({ title: 'Error', description: error.message, variant: 'destructive' }),
   });
@@ -369,10 +443,10 @@ const Payroll = () => {
 
   const exportToExcel = async () => {
     const [XLSX, { saveAs }] = await Promise.all([import('xlsx'), import('file-saver')]);
-    const headers = ['S/N', 'Staff ID', 'Staff Name', 'Department', 'Position', 'Salary Period', 'Period Start', 'Period End', 'Basic Salary', 'Allowances', 'PAYE', 'Pension (8%)', 'NHF', 'Other Deductions', 'Total Deductions', 'Net Pay', 'Employer Pension (10%)', 'Bank Name', 'Account Number', 'Account Name', 'Status', 'Paid Date'];
+    const headers = ['S/N', 'Staff ID', 'Staff Name', 'Department', 'Position', 'Salary Period', 'Period Start', 'Period End', 'Basic Salary', 'Allowances', 'Commission', 'PAYE', 'Pension (8%)', 'NHF', 'Other Deductions', 'Total Deductions', 'Net Pay', 'Employer Pension (10%)', 'Bank Name', 'Account Number', 'Account Name', 'Status', 'Paid Date'];
     const rows = filteredRecords.map((r, i) => [
       i + 1, r.staff_id_number, r.staff_name, r.department, r.position, r.salary_period,
-      r.period_start, r.period_end, r.basic_salary, r.allowances,
+      r.period_start, r.period_end, r.basic_salary, r.allowances, Number(r.commission ?? 0),
       r.paye ?? 0, r.pension_employee ?? 0, r.nhf ?? 0, r.other_deductions ?? r.deductions,
       r.deductions, r.net_pay, r.pension_employer ?? 0,
       r.bank_name, r.account_number, r.account_name, r.status,
@@ -380,6 +454,7 @@ const Payroll = () => {
     ]);
     rows.push(['', '', '', '', '', '', '', 'TOTAL', totalBasic,
       filteredRecords.reduce((s, r) => s + Number(r.allowances), 0),
+      filteredRecords.reduce((s, r) => s + Number(r.commission ?? 0), 0),
       filteredRecords.reduce((s, r) => s + Number(r.paye ?? 0), 0),
       filteredRecords.reduce((s, r) => s + Number(r.pension_employee ?? 0), 0),
       filteredRecords.reduce((s, r) => s + Number(r.nhf ?? 0), 0),
@@ -401,19 +476,21 @@ const Payroll = () => {
   const exportStatutorySchedules = async () => {
     const [XLSX, { saveAs }] = await Promise.all([import('xlsx'), import('file-saver')]);
     const rows = filteredRecords;
+    // Pensionable pay excludes commission; taxable pay includes it.
     const gross = (r: PayrollRecord) => Number(r.basic_salary) + Number(r.allowances);
+    const taxable = (r: PayrollRecord) => gross(r) + Number(r.commission ?? 0);
 
     const payeSheet = XLSX.utils.aoa_to_sheet([
       ['PAYE REMITTANCE SCHEDULE (State IRS — due 10th of following month)'],
       ['S/N', 'Employee Name', 'Employee ID', 'Period Start', 'Period End', 'Gross Pay', 'Pension (8%)', 'NHF (2.5%)', 'Taxable Base', 'PAYE Deducted'],
       ...rows.map((r, i) => [
         i + 1, r.staff_name, r.staff_id_number, r.period_start, r.period_end,
-        gross(r), Number(r.pension_employee ?? 0), Number(r.nhf ?? 0),
-        gross(r) - Number(r.pension_employee ?? 0) - Number(r.nhf ?? 0),
+        taxable(r), Number(r.pension_employee ?? 0), Number(r.nhf ?? 0),
+        taxable(r) - Number(r.pension_employee ?? 0) - Number(r.nhf ?? 0),
         Number(r.paye ?? 0),
       ]),
       ['', '', '', '', 'TOTAL',
-        rows.reduce((s, r) => s + gross(r), 0),
+        rows.reduce((s, r) => s + taxable(r), 0),
         rows.reduce((s, r) => s + Number(r.pension_employee ?? 0), 0),
         rows.reduce((s, r) => s + Number(r.nhf ?? 0), 0), '',
         rows.reduce((s, r) => s + Number(r.paye ?? 0), 0)],
@@ -528,6 +605,10 @@ const Payroll = () => {
     },
     { key: "basic", header: "Basic Salary", align: "right", cell: (r) => formatNairaCompact(Number(r.basic_salary)) },
     { key: "allow", header: "Allowances", align: "right", cell: (r) => <span className="text-green-600">{formatNairaCompact(Number(r.allowances))}</span> },
+    ...(filteredRecords.some(r => Number(r.commission ?? 0) > 0) ? [{
+      key: "comm", header: "Commission", align: "right" as const,
+      cell: (r: PayrollRecord) => <span className="text-green-600">{formatNairaCompact(Number(r.commission ?? 0))}</span>,
+    }] : []),
     { key: "deduct", header: "Deductions", align: "right", cell: (r) => <span className="text-destructive">{formatNairaCompact(Number(r.deductions))}</span> },
     { key: "net", header: "Net Pay", align: "right", cell: (r) => <span className="font-bold">{formatNairaCompact(Number(r.net_pay))}</span> },
     { key: "bank", header: "Bank Details", hideOnMobile: true, cell: (r) => <span className="text-xs text-muted-foreground">{r.bank_name ? `${r.bank_name} - ${r.account_number}` : '-'}</span> },
@@ -630,8 +711,10 @@ const Payroll = () => {
                       <SelectTrigger><SelectValue placeholder="All Staff" /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="all">All Staff</SelectItem>
-                        {staffProfiles.filter(s => s.salary && s.salary > 0).map(s => (
-                          <SelectItem key={s.id} value={s.id}>{s.full_name} — {formatNairaCompact(s.salary || 0)}</SelectItem>
+                        {staffProfiles.filter(s => payableFor(s, FINAL_PAY_CUTOFF) || commissionFor(s.id, '').amount > 0).map(s => (
+                          <SelectItem key={s.id} value={s.id}>
+                            {s.full_name} — {formatNairaCompact(s.salary || 0)}{s.employment_status !== 'active' ? ' (left)' : ''}
+                          </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -647,6 +730,15 @@ const Payroll = () => {
                     <div className="grid gap-2"><Label>Period Start</Label><Input name="period_start" type="date" required /></div>
                     <div className="grid gap-2"><Label>Period End</Label><Input name="period_end" type="date" required /></div>
                   </div>
+                  {pendingCommission.length > 0 && (
+                    <div className="rounded-md border border-green-200 bg-green-50 p-3 text-xs text-green-900 dark:border-green-500/30 dark:bg-green-500/10 dark:text-green-200">
+                      {selectedStaff
+                        ? (commissionFor(selectedStaff.id, '').amount > 0
+                            ? <>Approved sales commission of <strong>{formatNairaCompact(commissionFor(selectedStaff.id, '').amount)}</strong> is owed and will be added for months ending on or before the period end, taxed through PAYE.</>
+                            : <>No sales commission is owed to this person.</>)
+                        : <>Approved sales commission of <strong>{formatNairaCompact(pendingCommission.reduce((t, p) => t + p.amount, 0))}</strong> is owed to {new Set(pendingCommission.map(p => p.staff_profile_id)).size} staff and will be added to their payslips for months ending on or before the period end, taxed through PAYE.</>}
+                    </div>
+                  )}
                   {selectedStaff && (
                     <div className="p-3 rounded-md bg-muted/50 text-sm">
                       <p><strong>Basic Salary:</strong> {formatNairaCompact(selectedStaff.salary || 0)}</p>
@@ -667,7 +759,7 @@ const Payroll = () => {
                     <Switch id="auto_statutory" checked={autoStatutory} onCheckedChange={setAutoStatutory} />
                   </div>
                   {selectedStaff && autoStatutory && (() => {
-                    const preview = computeStatutory({ basic: selectedStaff.salary || 0, allowances, otherDeductions: deductions });
+                    const preview = computeStatutory({ basic: selectedStaff.salary || 0, allowances, otherDeductions: deductions, commission: commissionFor(selectedStaff.id, '').amount });
                     return (
                       <div className="rounded-md bg-muted/50 p-3 text-xs space-y-1">
                         <div className="flex justify-between"><span>Gross</span><span className="font-medium">{formatNairaCompact(preview.gross)}</span></div>
@@ -698,7 +790,7 @@ const Payroll = () => {
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2"><CardTitle className="text-sm font-medium">Total Staff</CardTitle><Users className="h-4 w-4 text-muted-foreground" /></CardHeader>
-          <CardContent><div className="text-2xl font-bold">{staffProfiles.filter(s => s.salary && s.salary > 0).length}</div><p className="text-xs text-muted-foreground">With salary on profile</p></CardContent>
+          <CardContent><div className="text-2xl font-bold">{staffProfiles.filter(s => s.employment_status === 'active' && s.salary && s.salary > 0).length}</div><p className="text-xs text-muted-foreground">With salary on profile</p></CardContent>
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2"><CardTitle className="text-sm font-medium">Total Net Pay</CardTitle><DollarSign className="h-4 w-4 text-muted-foreground" /></CardHeader>
@@ -747,6 +839,9 @@ const Payroll = () => {
                 <span className="mr-auto">TOTAL</span>
                 <span>Basic: {formatNairaCompact(totalBasic)}</span>
                 <span className="text-green-600">Allow: {formatNairaCompact(filteredRecords.reduce((s, r) => s + Number(r.allowances), 0))}</span>
+                {filteredRecords.some(r => Number(r.commission ?? 0) > 0) && (
+                  <span className="text-green-600">Comm: {formatNairaCompact(filteredRecords.reduce((s, r) => s + Number(r.commission ?? 0), 0))}</span>
+                )}
                 <span className="text-destructive">Deduct: {formatNairaCompact(filteredRecords.reduce((s, r) => s + Number(r.deductions), 0))}</span>
                 <span>Net: {formatNairaCompact(totalNetPay)}</span>
               </div>
@@ -771,6 +866,7 @@ const Payroll = () => {
                 basic_salary: parseFloat(fd.get('edit_basic') as string),
                 allowances: parseFloat(fd.get('edit_allowances') as string),
                 other_deductions: parseFloat(fd.get('edit_deductions') as string) || 0,
+                commission: Number(editRecord.commission ?? 0),
                 notes: (fd.get('edit_notes') as string) || null,
                 statutory: hadStatutory,
               });

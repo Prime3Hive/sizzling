@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from './useAuth';
+import { isBirthdayToday } from '@/lib/birthday';
 
 const BIRTHDAY_MESSAGE = (name: string) =>
   `🎂 Happy Birthday, ${name}! Today is your special day and the whole Sizzling Spices team celebrates you. Your dedication and energy make such a difference to us all. Wishing you a wonderful day filled with joy, laughter, and everything you love. Many happy returns! 🎉🥳`;
@@ -16,23 +17,19 @@ export const useBirthdayNotifications = () => {
   const checkAndSendBirthdayNotifications = async () => {
     try {
       const now = new Date();
-      const todayMonth = now.getMonth() + 1; // 1-12
-      const todayDay = now.getDate();
 
       // Fetch all staff with a date_of_birth and a linked_user_id
       const { data: profiles, error } = await supabase
         .from('staff_profiles')
         .select('id, full_name, date_of_birth, linked_user_id')
+        .eq('employment_status', 'active')
         .not('date_of_birth', 'is', null)
         .not('linked_user_id', 'is', null);
 
       if (error || !profiles?.length) return;
 
-      // Filter to today's birthdays (month + day match only)
-      const todayBirthdays = profiles.filter((p) => {
-        const dob = new Date(p.date_of_birth!);
-        return dob.getMonth() + 1 === todayMonth && dob.getDate() === todayDay;
-      });
+      // Filter to today's birthdays (29 Feb celebrates on 28 Feb in common years)
+      const todayBirthdays = profiles.filter((p) => isBirthdayToday(p.date_of_birth!, now));
 
       if (!todayBirthdays.length) return;
 

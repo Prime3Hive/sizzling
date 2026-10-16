@@ -5,6 +5,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ChevronLeft, ChevronRight, Cake, PartyPopper, Gift } from "lucide-react";
+import {
+  nextBirthday, isBirthdayOn, parseDob, countdownLabel, formatBirthdayShort,
+  type NextBirthday,
+} from "@/lib/birthday";
 
 interface BirthdayProfile {
   id: string;
@@ -72,36 +76,12 @@ const BirthdayCalendar = () => {
   };
 
   const profilesByMonthDay = (month: number, day: number) =>
-    profiles.filter((p) => {
-      const d = new Date(p.date_of_birth);
-      return d.getMonth() + 1 === month && d.getDate() === day;
-    });
+    profiles.filter((p) => isBirthdayOn(p.date_of_birth, year, month - 1, day));
 
   const isToday = (month: number, day: number) =>
     today.getMonth() + 1 === month &&
     today.getDate() === day &&
     today.getFullYear() === viewDate.getFullYear();
-
-  const isTodayBirthday = (p: BirthdayProfile) => {
-    const d = new Date(p.date_of_birth);
-    return d.getMonth() === today.getMonth() && d.getDate() === today.getDate();
-  };
-
-  const getAge = (dob: string) => {
-    const d = new Date(dob);
-    const age = today.getFullYear() - d.getFullYear();
-    const hasHad = today.getMonth() > d.getMonth() ||
-      (today.getMonth() === d.getMonth() && today.getDate() >= d.getDate());
-    return hasHad ? age : age - 1;
-  };
-
-  const getDaysUntilBirthday = (dob: string) => {
-    const d = new Date(dob);
-    const next = new Date(today.getFullYear(), d.getMonth(), d.getDate());
-    if (next < today) next.setFullYear(today.getFullYear() + 1);
-    const diff = Math.round((next.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-    return diff;
-  };
 
   // ── Calendar grid ──────────────────────────────────────────
   const year = viewDate.getFullYear();
@@ -120,13 +100,16 @@ const BirthdayCalendar = () => {
   const nextMonth = () => setViewDate(new Date(year, month, 1));
 
   // ── Upcoming birthdays (next 60 days) ─────────────────────
-  const upcoming = profiles
-    .map((p) => ({ ...p, daysUntil: getDaysUntilBirthday(p.date_of_birth) }))
-    .filter((p) => p.daysUntil <= 60)
-    .sort((a, b) => a.daysUntil - b.daysUntil);
+  const withNext = profiles
+    .map((p) => ({ ...p, next: nextBirthday(p.date_of_birth, today) }))
+    .filter((p): p is BirthdayProfile & { next: NextBirthday } => p.next !== null);
+
+  const upcoming = withNext
+    .filter((p) => p.next.daysUntil <= 60)
+    .sort((a, b) => a.next.daysUntil - b.next.daysUntil);
 
   // ── Today's birthdays ──────────────────────────────────────
-  const todaysBirthdays = profiles.filter(isTodayBirthday);
+  const todaysBirthdays = upcoming.filter((p) => p.next.daysUntil === 0);
 
   return (
     <div className="space-y-6">
@@ -163,7 +146,7 @@ const BirthdayCalendar = () => {
                 <div>
                   <p className="font-semibold text-gray-900">{p.full_name}</p>
                   <p className="text-xs text-pink-500 font-medium">
-                    🎂 Turns {getAge(p.date_of_birth)} today!
+                    🎂 Turns {p.next.turning} today!
                   </p>
                 </div>
               </div>
@@ -225,31 +208,41 @@ const BirthdayCalendar = () => {
                   return (
                     <div
                       key={day}
-                      className={`min-h-[64px] rounded-lg p-1.5 border transition-colors ${
-                        todayFlag
-                          ? "bg-primary text-primary-foreground border-primary"
-                          : dayBirthdays.length
-                          ? "bg-pink-50 border-pink-200 hover:bg-pink-100"
+                      title={dayBirthdays.map((p) => p.full_name).join(", ") || undefined}
+                      className={`min-h-[52px] sm:min-h-[72px] rounded-lg p-1 sm:p-1.5 border transition-colors ${
+                        dayBirthdays.length
+                          ? "bg-pink-50 border-pink-200 hover:bg-pink-100 dark:bg-pink-950/40 dark:border-pink-900"
                           : "border-transparent hover:bg-muted/50"
-                      }`}
+                      } ${todayFlag ? "ring-2 ring-primary ring-offset-1 ring-offset-background" : ""}`}
                     >
-                      <p className={`text-xs font-semibold mb-1 ${todayFlag ? "text-primary-foreground" : "text-foreground"}`}>
+                      <p
+                        className={`text-xs font-semibold mb-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 ${
+                          todayFlag ? "bg-primary text-primary-foreground" : "text-foreground"
+                        }`}
+                      >
                         {day}
                       </p>
-                      {dayBirthdays.slice(0, 2).map((p) => (
-                        <div
-                          key={p.id}
-                          className="text-[9px] leading-tight truncate bg-white/80 rounded px-1 py-0.5 mb-0.5 text-pink-700 font-medium border border-pink-100"
-                          title={p.full_name}
-                        >
-                          🎂 {p.full_name.split(" ")[0]}
-                        </div>
-                      ))}
-                      {dayBirthdays.length > 2 && (
-                        <div className="text-[9px] text-pink-500 font-medium px-1">
-                          +{dayBirthdays.length - 2} more
+                      {/* Phones: a cake with a count — names don't fit a 40px cell. */}
+                      {dayBirthdays.length > 0 && (
+                        <div className="sm:hidden text-[11px] leading-none text-pink-700 dark:text-pink-300 font-semibold">
+                          🎂{dayBirthdays.length > 1 ? ` ${dayBirthdays.length}` : ""}
                         </div>
                       )}
+                      <div className="hidden sm:block">
+                        {dayBirthdays.slice(0, 2).map((p) => (
+                          <div
+                            key={p.id}
+                            className="text-[11px] leading-tight truncate bg-white/90 dark:bg-background/60 rounded px-1 py-0.5 mb-0.5 text-pink-700 dark:text-pink-300 font-medium border border-pink-100 dark:border-pink-900"
+                          >
+                            🎂 {p.full_name.split(" ")[0]}
+                          </div>
+                        ))}
+                        {dayBirthdays.length > 2 && (
+                          <div className="text-[11px] text-pink-600 dark:text-pink-300 font-medium px-1">
+                            +{dayBirthdays.length - 2} more
+                          </div>
+                        )}
+                      </div>
                     </div>
                   );
                 })}
@@ -274,13 +267,13 @@ const BirthdayCalendar = () => {
                 </p>
               )}
               {upcoming.map((p) => {
-                const dob = new Date(p.date_of_birth);
-                const isNow = p.daysUntil === 0;
+                const isNow = p.next.daysUntil === 0;
+                const isSoon = p.next.daysUntil <= 7;
                 return (
                   <div
                     key={p.id}
                     className={`flex items-center gap-3 p-2 rounded-lg transition-colors ${
-                      isNow ? "bg-pink-50 border border-pink-200" : "hover:bg-muted/50"
+                      isNow ? "bg-pink-50 border border-pink-200 dark:bg-pink-950/40 dark:border-pink-900" : "hover:bg-muted/50"
                     }`}
                   >
                     <div className="w-9 h-9 rounded-full bg-pink-100 flex items-center justify-center text-pink-600 font-bold text-sm flex-shrink-0 overflow-hidden">
@@ -292,16 +285,31 @@ const BirthdayCalendar = () => {
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-semibold truncate">{p.full_name}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {MONTHS[dob.getMonth()].slice(0, 3)} {dob.getDate()} · {positionLabels[p.position] || p.position}
+                      <p className="text-xs text-muted-foreground truncate">
+                        {formatBirthdayShort(p.next.date)} · turns {p.next.turning}
+                      </p>
+                      <p className="text-[11px] text-muted-foreground/80 truncate">
+                        {positionLabels[p.position] || p.position}
+                        {p.department_name ? ` · ${p.department_name}` : ""}
                       </p>
                     </div>
-                    <Badge
-                      variant={isNow ? "default" : "secondary"}
-                      className={isNow ? "bg-pink-500 hover:bg-pink-600 text-white text-xs" : "text-xs"}
-                    >
-                      {isNow ? "Today!" : p.daysUntil === 1 ? "Tomorrow" : `${p.daysUntil}d`}
-                    </Badge>
+                    <div className="flex flex-col items-end shrink-0">
+                      <Badge
+                        variant={isNow ? "default" : "secondary"}
+                        className={`text-xs whitespace-nowrap ${
+                          isNow
+                            ? "bg-pink-500 hover:bg-pink-600 text-white"
+                            : isSoon
+                            ? "bg-pink-100 text-pink-700 hover:bg-pink-100 dark:bg-pink-950 dark:text-pink-300"
+                            : ""
+                        }`}
+                      >
+                        {isNow ? "🎉 Today" : countdownLabel(p.next.daysUntil)}
+                      </Badge>
+                      {p.next.daysUntil >= 14 && (
+                        <span className="text-[10px] text-muted-foreground mt-0.5">{p.next.daysUntil} days</span>
+                      )}
+                    </div>
                   </div>
                 );
               })}
@@ -318,25 +326,31 @@ const BirthdayCalendar = () => {
             </CardHeader>
             <CardContent>
               {(() => {
-                const monthBirthdays = profiles
-                  .filter((p) => new Date(p.date_of_birth).getMonth() + 1 === month)
-                  .sort((a, b) => new Date(a.date_of_birth).getDate() - new Date(b.date_of_birth).getDate());
+                const monthBirthdays = withNext
+                  .map((p) => ({ ...p, dob: parseDob(p.date_of_birth)! }))
+                  .filter((p) => p.dob.month === month - 1)
+                  .sort((a, b) => a.dob.day - b.dob.day);
                 if (!monthBirthdays.length)
                   return <p className="text-sm text-muted-foreground text-center py-3">No birthdays this month.</p>;
                 return (
                   <div className="space-y-2">
-                    {monthBirthdays.map((p) => {
-                      const dob = new Date(p.date_of_birth);
-                      return (
-                        <div key={p.id} className="flex items-center justify-between text-sm">
-                          <div className="flex items-center gap-2">
-                            <span className="text-pink-400">🎂</span>
-                            <span className="font-medium">{p.full_name}</span>
-                          </div>
-                          <span className="text-muted-foreground text-xs">{MONTHS[dob.getMonth()].slice(0, 3)} {dob.getDate()}</span>
+                    {monthBirthdays.map((p) => (
+                      <div key={p.id} className="flex items-center justify-between gap-2 text-sm">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="w-12 shrink-0 text-xs font-semibold text-pink-600 dark:text-pink-300">
+                            {MONTHS[p.dob.month].slice(0, 3)} {p.dob.day}
+                          </span>
+                          <span className="font-medium truncate">{p.full_name}</span>
                         </div>
-                      );
-                    })}
+                        <span className="text-muted-foreground text-xs whitespace-nowrap">
+                          {p.next.daysUntil === 0
+                            ? "🎉 Today"
+                            : p.next.daysUntil > 300
+                            ? "Celebrated"
+                            : countdownLabel(p.next.daysUntil)}
+                        </span>
+                      </div>
+                    ))}
                   </div>
                 );
               })()}

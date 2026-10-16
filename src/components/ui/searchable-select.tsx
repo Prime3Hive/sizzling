@@ -230,7 +230,11 @@ export function SearchableSelect({
   // Desktop: the same search, in a popover.
   if (isDesktop) {
     return (
+      // modal: inside a Dialog, the Dialog's scroll lock swallows wheel and
+      // touch events on anything portalled outside it, so the list can't
+      // scroll past its first screenful. A modal popover takes the lock over.
       <Popover
+        modal
         open={open}
         onOpenChange={(o) => {
           setOpen(o);

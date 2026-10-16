@@ -36,15 +36,16 @@ const DialogContent = React.forwardRef<
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        // Sizing: never touch the screen edge on a phone (1rem gutter each side),
-        // and never grow past the visual viewport — svh accounts for mobile
-        // browser chrome, so the header/footer stay reachable when the URL bar
-        // is showing. Content scrolls inside the dialog instead of being clipped.
-        "fixed left-[50%] top-[50%] z-50 grid w-[calc(100%-2rem)] max-w-lg max-h-[calc(100svh-2rem)] overflow-y-auto overscroll-contain translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border bg-background p-4 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%] sm:w-full sm:max-h-[90svh] sm:p-6",
+        // Phone: a bottom sheet — full width, rising from the thumb's end of the
+        // screen, never taller than the visual viewport (svh allows for browser
+        // chrome) and clear of the home indicator. From sm up: the centred
+        // dialog. Content scrolls inside instead of being clipped.
+        "fixed inset-x-0 bottom-0 z-50 mx-auto grid w-full max-w-lg max-sm:max-w-none max-h-[92svh] overflow-y-auto overscroll-contain gap-4 rounded-t-3xl border-t bg-background px-5 pt-8 pb-[max(1.25rem,env(safe-area-inset-bottom))] shadow-lg duration-300 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom sm:inset-x-auto sm:bottom-auto sm:left-[50%] sm:top-[50%] sm:translate-x-[-50%] sm:translate-y-[-50%] sm:rounded-lg sm:border sm:p-6 sm:duration-200 sm:data-[state=closed]:fade-out-0 sm:data-[state=open]:fade-in-0 sm:data-[state=closed]:zoom-out-95 sm:data-[state=open]:zoom-in-95 sm:data-[state=closed]:slide-out-to-left-1/2 sm:data-[state=closed]:slide-out-to-top-[48%] sm:data-[state=open]:slide-in-from-left-1/2 sm:data-[state=open]:slide-in-from-top-[48%]",
         className,
       )}
       {...props}
     >
+      <span aria-hidden className="absolute left-1/2 top-2.5 h-1.5 w-10 -translate-x-1/2 rounded-full bg-border sm:hidden" />
       {children}
       {/* 40×40 tap target (icon stays 16px) so the close control clears the
           44px-ish minimum without visually growing. */}
@@ -68,7 +69,9 @@ DialogHeader.displayName = "DialogHeader";
 const DialogFooter = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
   <div
     className={cn(
-      "flex flex-col-reverse gap-2 [&>*]:w-full sm:flex-row sm:justify-end sm:[&>*]:w-auto",
+      // On a phone the actions stick to the bottom of the sheet, so Save is in
+      // reach however long the form is.
+      "flex flex-col-reverse gap-2 [&>*]:w-full max-sm:sticky max-sm:bottom-0 max-sm:z-10 max-sm:-mx-5 max-sm:border-t max-sm:bg-background max-sm:px-5 max-sm:pt-3 max-sm:pb-[max(1rem,env(safe-area-inset-bottom))] max-sm:-mb-[max(1.25rem,env(safe-area-inset-bottom))] max-sm:[&>*]:h-12 sm:flex-row sm:justify-end sm:[&>*]:w-auto",
       className,
     )}
     {...props}

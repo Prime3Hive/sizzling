@@ -21,7 +21,7 @@ interface Notification {
   related_id: string | null;
 }
 
-const getNotificationRoute = (type: string): string => {
+const getNotificationRoute = (type: string, relatedId?: string | null): string => {
   switch (type) {
     case 'message': return '/staff-portal?tab=messages';
     case 'payroll': return '/my-payslip';
@@ -32,6 +32,11 @@ const getNotificationRoute = (type: string): string => {
     // The list of weekly reports, not the marking grid — the grid opens on the
     // current week, which is rarely the week that was just submitted.
     case 'attendance_report': return '/attendance?tab=weeks';
+    // Sent by decisions made in the Inbox.
+    case 'expense': return '/inbox';
+    case 'inventory': return '/business/inventory-requests';
+    // Stock went negative: related_id is the item's sku id.
+    case 'inventory_stock': return relatedId ? `/business/inventory/item/${relatedId}` : '/business/inventory';
     default: return '';
   }
 };
@@ -91,6 +96,7 @@ export default function NotificationBell() {
       case 'salary_slip':  return <FileText     className="h-4 w-4 text-blue-600"   aria-hidden="true" />;
       case 'leave_request':return <CalendarDays className="h-4 w-4 text-orange-500" aria-hidden="true" />;
       case 'complaint':    return <AlertTriangle className="h-4 w-4 text-yellow-600" aria-hidden="true" />;
+      case 'inventory_stock': return <AlertTriangle className="h-4 w-4 text-destructive" aria-hidden="true" />;
       case 'message':      return <MessageSquare className="h-4 w-4 text-primary"    aria-hidden="true" />;
       case 'attendance':
       case 'attendance_report':
@@ -111,7 +117,7 @@ export default function NotificationBell() {
           <Bell className="h-5 w-5" aria-hidden="true" />
           {unreadCount > 0 && (
             <span
-              className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-destructive text-destructive-foreground text-xs flex items-center justify-center font-bold"
+              className="absolute -top-1 -right-1 h-5 min-w-5 px-1 rounded-full bg-chilli text-white text-xs flex items-center justify-center font-bold"
               aria-hidden="true"
             >
               {unreadCount > 9 ? '9+' : unreadCount}
@@ -138,7 +144,7 @@ export default function NotificationBell() {
                 className={`w-full text-left px-4 py-3 border-b last:border-0 hover:bg-muted/50 transition-colors ${!n.read ? 'bg-primary/5' : ''}`}
                 onClick={() => {
                   if (!n.read) markReadMutation.mutate(n.id);
-                  const route = getNotificationRoute(n.type);
+                  const route = getNotificationRoute(n.type, n.related_id);
                   if (route) { setOpen(false); navigate(route); }
                 }}
               >

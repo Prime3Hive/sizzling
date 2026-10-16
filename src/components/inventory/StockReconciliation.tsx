@@ -13,6 +13,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { toast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import { getCategoryColor, getCategoryLabel } from "@/lib/inventoryConstants";
+import { recordStockMovements } from "@/lib/stockMovements";
 
 interface SKU {
   id: string;
@@ -134,29 +135,29 @@ export function StockReconciliation({ skus, stockTakes, onComplete }: StockRecon
 
       if (itemsError) throw itemsError;
 
-      // Update SKU quantities if there are variances
-      for (const sku of skus) {
-        const countedQty = stockCounts[sku.id] ?? sku.stock_quantity;
-        if (countedQty !== sku.stock_quantity) {
-          const { error: updateError } = await supabase
-            .from('skus')
-            .update({ stock_quantity: countedQty })
-            .eq('id', sku.id);
-
-          if (updateError) throw updateError;
-
-          // Record adjustment transaction
-          await supabase
-            .from('transactions')
-            .insert({
-              transaction_type: 'ADJUSTMENT',
-              sku_id: sku.id,
-              quantity: countedQty - sku.stock_quantity,
-              notes: `Stock reconciliation adjustment. Original: ${sku.stock_quantity}, Counted: ${countedQty}`,
-              user_id: user.id,
-              created_by: user.id,
-              reference_id: stockTake.id
-            });
+      // Book the variances through the stock ledger in one transaction:
+      // inventory moves to the counted figure, each item gets a 'stock_take'
+      // movement on its history, and the gain/loss posts to 5900 against 1200.
+      // (Writing skus.stock_quantity directly — the old way — changed only the
+      // mirror, which the next movement silently overwrote.)
+      const variances = skus
+        .map(sku => ({ sku, diff: (stockCounts[sku.id] ?? sku.stock_quantity) - sku.stock_quantity }))
+        .filter(v => v.diff !== 0);
+      if (variances.length > 0) {
+        try {
+          await recordStockMovements({
+            lines: variances.map(v => ({ sku_id: v.sku.id, quantity_change: v.diff })),
+            type: 'stock_take',
+            referenceType: 'stock_take',
+            referenceId: stockTake.id,
+            note: `Stock take ${stockTake.take_date}${notes ? ` — ${notes}` : ''}`,
+            occurredOn: stockTake.take_date,
+            transactionType: 'ADJUSTMENT',
+          });
+        } catch (e) {
+          // Nothing was adjusted; don't leave a "completed" count behind.
+          await supabase.from('stock_takes').delete().eq('id', stockTake.id);
+          throw e;
         }
       }
 
@@ -165,7 +166,7 @@ export function StockReconciliation({ skus, stockTakes, onComplete }: StockRecon
       onComplete();
     } catch (error) {
       console.error('Error saving reconciliation:', error);
-      toast({ title: 'Failed to save stock reconciliation', variant: "destructive" });
+      toast({ title: 'Failed to save stock reconciliation', description: (error as Error).message, variant: "destructive" });
     } finally {
       setSaving(false);
     }

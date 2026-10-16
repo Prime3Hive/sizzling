@@ -64,8 +64,11 @@ export function ResponsiveTable<T>({
 
   const primary = columns.find((c) => c.primary) ?? columns[0];
   const footerCols = columns.filter((c) => c.mobileFooter);
+  const trailing = columns.find(
+    (c) => c !== primary && c.align === "right" && !c.mobileFooter && !c.hideOnMobile,
+  );
   const bodyCols = columns.filter(
-    (c) => !c.primary && !c.mobileFooter && !c.hideOnMobile,
+    (c) => c !== primary && c !== trailing && !c.mobileFooter && !c.hideOnMobile,
   );
 
   return (
@@ -100,49 +103,64 @@ export function ResponsiveTable<T>({
         </Table>
       </div>
 
-      {/* ── Mobile: stacked cards ── */}
+      {/* ── Mobile: one card per row ──
+          The title leads, the row's headline figure (its first right-aligned
+          column — usually the amount) sits opposite it where the eye expects
+          a number, and the rest follow as labelled pairs. */}
       <div className="md:hidden divide-y divide-border">
-        {data.map((row, i) => (
-          <div
-            key={rowKey(row, i)}
-            className={cn(
-              "py-3 px-1 first:pt-1",
-              onRowClick && "active:bg-muted/40",
-              rowClassName?.(row),
-            )}
-            onClick={onRowClick ? () => onRowClick(row) : undefined}
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="font-medium text-sm">{primary.cell(row)}</div>
-                {mobileSubtitle && (
-                  <div className="text-xs text-muted-foreground mt-0.5">{mobileSubtitle(row)}</div>
+        {data.map((row, i) => {
+          const open = onRowClick ? () => onRowClick(row) : undefined;
+          return (
+            <div
+              key={rowKey(row, i)}
+              className={cn(
+                "py-3.5 px-1 first:pt-1",
+                open && "cursor-pointer active:bg-muted/40",
+                rowClassName?.(row),
+              )}
+              onClick={open}
+              role={open ? "button" : undefined}
+              tabIndex={open ? 0 : undefined}
+              onKeyDown={open ? (e) => {
+                if (e.target !== e.currentTarget) return;
+                if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
+              } : undefined}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="text-[15px] font-semibold leading-snug">{primary.cell(row)}</div>
+                  {mobileSubtitle && (
+                    <div className="mt-0.5 text-[12.5px] text-muted-foreground">{mobileSubtitle(row)}</div>
+                  )}
+                </div>
+                {trailing && (
+                  <div className="shrink-0 text-right text-[15px] font-bold tabular-nums">{trailing.cell(row)}</div>
                 )}
               </div>
+
+              {bodyCols.length > 0 && (
+                <dl className="mt-2.5 grid grid-cols-2 gap-x-3 gap-y-2">
+                  {bodyCols.map((c) => (
+                    <div key={c.key} className="flex min-w-0 flex-col">
+                      <dt className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        {c.header}
+                      </dt>
+                      <dd className="text-sm">{c.cell(row)}</dd>
+                    </div>
+                  ))}
+                </dl>
+              )}
+
+              {footerCols.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
+                  {footerCols.map((c) => (
+                    <div key={c.key} className="w-full">{c.cell(row)}</div>
+                  ))}
+                </div>
+              )}
             </div>
-
-            {bodyCols.length > 0 && (
-              <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1.5">
-                {bodyCols.map((c) => (
-                  <div key={c.key} className="flex flex-col">
-                    <dt className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                      {c.header}
-                    </dt>
-                    <dd className="text-sm">{c.cell(row)}</dd>
-                  </div>
-                ))}
-              </dl>
-            )}
-
-            {footerCols.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
-                {footerCols.map((c) => (
-                  <div key={c.key} className="w-full">{c.cell(row)}</div>
-                ))}
-              </div>
-            )}
-          </div>
-        ))}
+          );
+        })}
       </div>
     </>
   );

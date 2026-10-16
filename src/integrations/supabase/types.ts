@@ -1210,6 +1210,10 @@ export type Database = {
           emergency_contact_relationship: string | null
           employment_date: string | null
           employment_type: string | null
+          employment_status: string
+          exit_date: string | null
+          exit_note: string | null
+          exit_reason: string | null
           full_name: string
           gender: string | null
           id: string
@@ -1243,6 +1247,10 @@ export type Database = {
           emergency_contact_relationship?: string | null
           employment_date?: string | null
           employment_type?: string | null
+          employment_status?: string
+          exit_date?: string | null
+          exit_note?: string | null
+          exit_reason?: string | null
           full_name: string
           gender?: string | null
           id?: string
@@ -1276,6 +1284,10 @@ export type Database = {
           emergency_contact_relationship?: string | null
           employment_date?: string | null
           employment_type?: string | null
+          employment_status?: string
+          exit_date?: string | null
+          exit_note?: string | null
+          exit_reason?: string | null
           full_name?: string
           gender?: string | null
           id?: string

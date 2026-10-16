@@ -28,6 +28,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { usePagination } from "@/hooks/usePagination";
+import { useCommissionCost } from "@/hooks/useCommission";
 import { TablePagination } from "@/components/ui/table-pagination";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -435,6 +436,10 @@ export default function Finance() {
     },
   });
 
+  // Sales commission accrued in the period (ledger 5120) — staff cost that
+  // payroll's own figure never includes.
+  const commissionCost = useCommissionCost(periodStart, periodEnd);
+
   const payrollGross = (p: { basic_salary: number; allowances: number; pension_employer?: number | null }) =>
     Number(p.basic_salary) + Number(p.allowances) + Number(p.pension_employer ?? 0);
 
@@ -505,7 +510,7 @@ export default function Finance() {
 
     // Costs: expense records + paid payroll (payroll is a real operating cost).
     const expenseTotal = periodExpenses.reduce((s, e) => s + Number(e.amount), 0);
-    const payrollCost  = periodPayroll.reduce((s, p) => s + payrollGross(p), 0);
+    const payrollCost  = periodPayroll.reduce((s, p) => s + payrollGross(p), 0) + commissionCost.total;
     const totalExpenses = expenseTotal + payrollCost;
 
     // Net profit = revenue − (expenses + payroll)
@@ -541,7 +546,7 @@ export default function Finance() {
       totalOutstanding, overdueCount, receivableCount, salesOutstanding,
       totalBudgeted, totalSpent, budgetPct, activeBudgetCount: activeBudgets.length,
     };
-  }, [periodSales, periodPayments, periodInvoiceReceipts, periodPayroll, periodExpenses, periodInvoices, outstandingInvoices, salesReceivables, allBudgets, periodStart, periodEnd]);
+  }, [periodSales, periodPayments, periodInvoiceReceipts, periodPayroll, periodExpenses, periodInvoices, outstandingInvoices, salesReceivables, allBudgets, periodStart, periodEnd, commissionCost.total]);
 
   // ── 6-month Chart Data ───────────────────────────────────────────────────────
 
@@ -575,8 +580,9 @@ export default function Finance() {
     });
     const payroll = periodPayroll.reduce((s, p) => s + payrollGross(p), 0);
     if (payroll > 0) map["payroll"] = (map["payroll"] ?? 0) + payroll;
+    if (commissionCost.total > 0) map["sales commission"] = (map["sales commission"] ?? 0) + commissionCost.total;
     return Object.entries(map).sort((a, b) => b[1] - a[1]);
-  }, [periodExpenses, periodPayroll]);
+  }, [periodExpenses, periodPayroll, commissionCost.total]);
 
   // ── Budget utilization per budget ────────────────────────────────────────────
 
@@ -923,7 +929,7 @@ export default function Finance() {
                 <p className="text-sm text-muted-foreground text-center py-10">No payments recorded this period.</p>
               ) : (
                 <div className="rounded-lg border overflow-hidden">
-                  <Table>
+                  <Table stack>
                     <TableHeader>
                       <TableRow>
                         <TableHead>Date</TableHead>
@@ -1035,7 +1041,7 @@ export default function Finance() {
                 <p className="text-sm text-muted-foreground text-center py-10">No expenses recorded this period.</p>
               ) : (
                 <div className="rounded-lg border overflow-hidden">
-                  <Table>
+                  <Table stack>
                     <TableHeader>
                       <TableRow>
                         <TableHead>Date</TableHead>
@@ -1090,7 +1096,7 @@ export default function Finance() {
                 <p className="text-sm text-muted-foreground text-center py-10">No outstanding receivables. Everything is paid.</p>
               ) : (
                 <div className="rounded-lg border overflow-hidden">
-                  <Table>
+                  <Table stack>
                     <TableHeader>
                       <TableRow>
                         <TableHead>Invoice</TableHead>
@@ -1186,7 +1192,7 @@ export default function Finance() {
                 </p>
               ) : (
                 <div className="rounded-lg border overflow-hidden">
-                  <Table>
+                  <Table stack>
                     <TableHeader>
                       <TableRow>
                         <TableHead>Date</TableHead>

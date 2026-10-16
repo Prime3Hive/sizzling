@@ -16,6 +16,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Scale, BookOpen, ListTree, Plus, Trash2, Loader2, CheckCircle2, AlertTriangle, TrendingUp, Landmark, Receipt, Banknote } from "lucide-react";
 import { formatNairaCompact } from "@/lib/currency";
 import { safeFormat } from "@/lib/safeDate";
+import { useCommissionCost } from "@/hooks/useCommission";
 import AmountCorrectionScreen from "@/components/expenses/AmountCorrectionScreen";
 
 interface Account {
@@ -375,6 +376,9 @@ export default function Accounting() {
     },
   });
 
+  // Commission accruals, dated the same as their 5120 journal (period end).
+  const bcCommission = useCommissionCost(bcFrom, bcTo);
+
   const booksCheck = useMemo(() => {
     const { byAccount } = aggregate(bcFrom, bcTo);
     let glRevenue = 0, glExpense = 0;
@@ -389,7 +393,7 @@ export default function Accounting() {
     const opsExpenses = bcExpenses.reduce((s, e) => s + Number(e.amount), 0);
     const opsPayrollGross = bcPayroll.reduce(
       (s, p) => s + Number(p.basic_salary) + Number(p.allowances) + Number(p.pension_employer ?? 0), 0);
-    const opsCosts = opsExpenses + opsPayrollGross;
+    const opsCosts = opsExpenses + opsPayrollGross + bcCommission.total;
 
     return {
       glRevenue, glExpense,
@@ -399,7 +403,7 @@ export default function Accounting() {
       revDelta: glRevenue - opsRevenue,
       expDelta: glExpense - opsCosts,
     };
-  }, [allLines, bcFrom, bcTo, bcInvoices, bcSales, bcExpenses, bcPayroll]);
+  }, [allLines, bcFrom, bcTo, bcInvoices, bcSales, bcExpenses, bcPayroll, bcCommission.total]);
 
   // ── Bank reconciliation ──────────────────────────────────────────────────────
   const [recAccountCode, setRecAccountCode] = useState("1010");
@@ -530,7 +534,7 @@ export default function Accounting() {
                   <p>No journal activity yet. Post entries in the Journal tab.</p>
                 </div>
               ) : (
-                <Table>
+                <Table stack>
                   <TableHeader>
                     <TableRow>
                       <TableHead className="w-20">Code</TableHead>
@@ -721,7 +725,7 @@ export default function Accounting() {
               {tbLoading ? (
                 <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
               ) : (
-                <Table>
+                <Table stack>
                   <TableHeader>
                     <TableRow>
                       <TableHead className="w-16">Code</TableHead>
@@ -792,7 +796,7 @@ export default function Accounting() {
               </div>
             </CardHeader>
             <CardContent>
-              <Table>
+              <Table stack>
                 <TableHeader>
                   <TableRow>
                     <TableHead />
@@ -832,6 +836,7 @@ export default function Accounting() {
                 <p className="font-medium text-foreground">Known, expected differences:</p>
                 <p>• COGS on tracked stock hits the ledger at invoice issue; operational reports carry purchase-typed expenses instead (timing/classification).</p>
                 <p>• Payroll: the ledger books gross pay + employer pension; the comparison uses the same gross figure, but legacy pre-statutory records may differ by their deduction treatment.</p>
+                <p>• Sales commission is expensed (5120) when a month is approved, dated to its last Sunday; payroll later clears 2350 Commission Payable, so paying it adds no further cost.</p>
                 <p>• Journal entries posted manually (or remittances) have no counterpart in the operational tables.</p>
                 <p>• Cancelled documents in a locked period may be excluded on one side only.</p>
               </div>

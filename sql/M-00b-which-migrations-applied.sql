@@ -8,7 +8,8 @@
 --
 -- Covers everything from 2026-08-16 onward: the two records-integrity
 -- migrations, the four expense migrations, the two expense fixes, the
--- stock-issue costing migration, and attendance.
+-- stock-issue costing migration, attendance, the two security migrations,
+-- staff exit, and staff sales commission.
 -- ═════════════════════════════════════════════════════════════════════════════
 
 WITH checks(step, migration, what_it_does, marker, applied) AS (
@@ -75,7 +76,43 @@ WITH checks(step, migration, what_it_does, marker, applied) AS (
         'HR marks attendance weekly; admin approves it onto the staff portal',
         'table attendance_records',
         EXISTS (SELECT 1 FROM information_schema.tables
-                 WHERE table_schema = 'public' AND table_name = 'attendance_records'))
+                 WHERE table_schema = 'public' AND table_name = 'attendance_records')),
+
+    (11, '20260922100000_revoke_anon_table_access',
+        'Signed-out visitors can no longer read or call anything in public',
+        'anon cannot SELECT staff_profiles',
+        NOT has_table_privilege('anon', 'public.staff_profiles', 'SELECT')),
+
+    (12, '20260922110000_public_form_rate_limit',
+        'Rate limit on the public contact form',
+        'table public_form_hits',
+        EXISTS (SELECT 1 FROM information_schema.tables
+                 WHERE table_schema = 'public' AND table_name = 'public_form_hits')),
+
+    (13, '20260926100000_staff_exit_status',
+        'Archive staff who have left instead of deleting them',
+        'staff_profiles.employment_status',
+        EXISTS (SELECT 1 FROM information_schema.columns
+                 WHERE table_schema = 'public' AND table_name = 'staff_profiles'
+                   AND column_name = 'employment_status')),
+
+    (14, '20260930100000_staff_commission',
+        'Sales commission from staff sales reports; accrued to 5120/2350, paid via payroll (needs step 13)',
+        'table commission_settings',
+        EXISTS (SELECT 1 FROM information_schema.tables
+                 WHERE table_schema = 'public' AND table_name = 'commission_settings')),
+
+    (15, '20261016100000_inventory_negative_stock',
+        'Inventory setup: negative-stock toggle + alert, multi-item stock movements',
+        'table inventory_settings',
+        EXISTS (SELECT 1 FROM information_schema.tables
+                 WHERE table_schema = 'public' AND table_name = 'inventory_settings')),
+
+    (16, '20261017100000_inventory_finance_fixes',
+        'Inventory/finance audit fixes: invoice cancel, stock-in reclass, moving-average cost (needs step 15)',
+        'function set_product_cost',
+        EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                 WHERE n.nspname = 'public' AND p.proname = 'set_product_cost'))
 )
 SELECT
   step,

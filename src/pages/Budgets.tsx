@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -52,8 +53,6 @@ const budgetTypes = ['week', 'event', 'activity'];
 const expenseCategories = ['proteins', 'staff', 'waiters', 'chef', 'miscellaneous'];
 
 const Budgets = () => {
-  const [budgets, setBudgets] = useState<BudgetWithDetails[]>([]);
-  const [loading, setLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isDetailDialogOpen, setIsDetailDialogOpen] = useState(false);
   const [selectedBudget, setSelectedBudget] = useState<BudgetWithDetails | null>(null);
@@ -76,14 +75,14 @@ const Budgets = () => {
   const { user } = useAuth();
   const { toast } = useToast();
 
-  useEffect(() => {
-    if (user) {
-      fetchBudgets();
-    }
-  }, [user]);
+  const qc = useQueryClient();
 
-  const fetchBudgets = async () => {
-    try {
+  // Cached: a return visit paints the last budgets at once and refreshes
+  // behind them. Approving an expense in the Inbox refreshes this too.
+  const { data: budgets = [], isPending: loading, error: loadError } = useQuery<BudgetWithDetails[]>({
+    queryKey: ['budgets-page', user?.id],
+    enabled: !!user,
+    queryFn: async () => {
       const { data: budgetsData, error: budgetsError } = await supabase
         .from('budgets')
         .select('*')
@@ -91,12 +90,7 @@ const Budgets = () => {
         .order('created_at', { ascending: false });
 
       if (budgetsError) throw budgetsError;
-
-      if (!budgetsData || budgetsData.length === 0) {
-        setBudgets([]);
-        setLoading(false);
-        return;
-      }
+      if (!budgetsData || budgetsData.length === 0) return [];
 
       const budgetIds = budgetsData.map(b => b.id);
 
@@ -119,30 +113,20 @@ const Budgets = () => {
       const items = itemsResult.data || [];
       const expenses = expensesResult.data || [];
 
-      const budgetsWithDetails: BudgetWithDetails[] = budgetsData.map(budget => {
+      return budgetsData.map(budget => {
         const budgetItems = items.filter(item => item.budget_id === budget.id);
         const budgetExpenses = expenses.filter(exp => exp.budget_id === budget.id);
         const totalSpent = budgetExpenses.reduce((sum, exp) => sum + Number(exp.amount), 0);
+        return { ...budget, items: budgetItems, expenses: budgetExpenses, totalSpent };
+      }) as BudgetWithDetails[];
+    },
+  });
+  const fetchBudgets = () => qc.invalidateQueries({ queryKey: ['budgets-page'] });
 
-        return {
-          ...budget,
-          items: budgetItems,
-          expenses: budgetExpenses,
-          totalSpent
-        };
-      });
-
-      setBudgets(budgetsWithDetails);
-    } catch (error: any) {
-      toast({
-        title: 'Error loading budgets',
-        description: error.message,
-        variant: 'destructive',
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
+  useEffect(() => {
+    if (!loadError) return;
+    toast({ title: 'Error loading budgets', description: (loadError as Error).message, variant: 'destructive' });
+  }, [loadError, toast]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -618,7 +602,7 @@ const Budgets = () => {
                 {/* Expenses by Category Comparison */}
                 <div className="space-y-3">
                   <h3 className="font-semibold text-foreground">Expenses by Category</h3>
-                  <Table>
+                  <Table stack>
                     <TableHeader>
                       <TableRow>
                         <TableHead>Category</TableHead>
@@ -660,7 +644,7 @@ const Budgets = () => {
                   <h3 className="font-semibold text-foreground">All Expenses ({selectedBudget.expenses.length})</h3>
                   {selectedBudget.expenses.length > 0 ? (
                     <div className="max-h-64 overflow-y-auto border rounded-lg">
-                      <Table>
+                      <Table stack>
                         <TableHeader>
                           <TableRow>
                             <TableHead>Date</TableHead>

@@ -164,22 +164,15 @@ export default function ReceiveGoodsDialog({ lpo, open, onOpenChange, onSuccess 
       //    receipt therefore hit the P&L and the bank twice over. Do not
       //    reinstate it: one business event posts exactly one journal entry.
 
-      // 6. Update SKU stock quantities and record transactions for every received line
+      // 6. Record the purchase for inventory analytics.
+      //
+      //    Stock itself is NOT touched here: the lpo_receipt_items insert above
+      //    already restocked `inventory` in the database (fn_restock_receipt_item)
+      //    and the sku mirror followed. Adding the quantity to skus again — as
+      //    this step used to — showed every receipt twice until the next
+      //    movement re-synced the mirror.
       for (const line of activeLines) {
         if (!line.sku_id) continue;
-
-        const { data: skuRow } = await supabase
-          .from('skus')
-          .select('stock_quantity')
-          .eq('id', line.sku_id)
-          .single();
-
-        if (skuRow) {
-          await supabase
-            .from('skus')
-            .update({ stock_quantity: skuRow.stock_quantity + line.qty_receiving })
-            .eq('id', line.sku_id);
-        }
 
         await supabase.from('transactions').insert({
           sku_id:           line.sku_id,

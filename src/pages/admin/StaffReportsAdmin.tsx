@@ -476,7 +476,7 @@ export default function StaffReportsAdmin() {
               {staffSummaries.length === 0 ? (
                 <Empty icon={TrendingUp} msg="No reports to summarise yet." />
               ) : (
-                <Table>
+                <Table stack>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Staff</TableHead><TableHead>Reports</TableHead><TableHead>On-time</TableHead>
@@ -511,7 +511,7 @@ export default function StaffReportsAdmin() {
               {assignments.length === 0 ? (
                 <Empty icon={ClipboardCheck} msg="No report assignments yet." />
               ) : (
-                <Table>
+                <Table stack>
                   <TableHeader><TableRow><TableHead>Staff</TableHead><TableHead>Report</TableHead><TableHead>Cadence</TableHead><TableHead>Due</TableHead><TableHead>Active</TableHead></TableRow></TableHeader>
                   <TableBody>
                     {assignments.map(a => (
@@ -537,7 +537,7 @@ export default function StaffReportsAdmin() {
               {payables.length === 0 ? (
                 <Empty icon={Wallet} msg="No credit purchases recorded." />
               ) : (
-                <Table>
+                <Table stack>
                   <TableHeader><TableRow><TableHead>Supplier</TableHead><TableHead>Description</TableHead><TableHead>Amount</TableHead><TableHead>Incurred</TableHead><TableHead>Due</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Action</TableHead></TableRow></TableHeader>
                   <TableBody>
                     {payables.map(p => (
@@ -693,7 +693,7 @@ function ReportTable({ rows, nameOf, emptyMsg, onRow, actionLabel }: {
         {rows.length === 0 ? (
           <Empty icon={ClipboardList} msg={emptyMsg} />
         ) : (
-          <Table>
+          <Table stack>
             <TableHeader>
               <TableRow><TableHead>Staff</TableHead><TableHead>Type</TableHead><TableHead>For date</TableHead><TableHead>Submitted</TableHead><TableHead>Amount</TableHead><TableHead>Status</TableHead><TableHead>Grade</TableHead><TableHead className="text-right">Action</TableHead></TableRow>
             </TableHeader>

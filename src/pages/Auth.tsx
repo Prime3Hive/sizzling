@@ -39,10 +39,16 @@ const Auth = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
 
+  // Turnstile tokens are single-use: Supabase redeems one with Cloudflare per
+  // auth call, so every widget is reset after the request that spent its token.
   const [signInToken, setSignInToken] = useState('');
   const [signUpToken, setSignUpToken] = useState('');
+  const [resetToken, setResetToken] = useState('');
+  const [verifyToken, setVerifyToken] = useState('');
   const signInRef = useRef<TurnstileInstance>(null);
   const signUpRef = useRef<TurnstileInstance>(null);
+  const resetRef = useRef<TurnstileInstance>(null);
+  const verifyRef = useRef<TurnstileInstance>(null);
 
   const navigate = useNavigate();
   const { signIn, signUp, user } = useAuth();
@@ -61,6 +67,10 @@ const Auth = () => {
     setResetSent(false);
     setShowPassword(false);
     setShowConfirm(false);
+    setSignInToken('');
+    setSignUpToken('');
+    setResetToken('');
+    setVerifyToken('');
   };
 
   const handleSignIn = async (e: React.FormEvent) => {
@@ -71,7 +81,7 @@ const Auth = () => {
     }
     setIsLoading(true);
     try {
-      const { error } = await signIn(email, password);
+      const { error } = await signIn(email, password, signInToken);
       if (error) {
         if (error.message?.toLowerCase().includes('email not confirmed')) {
           switchMode('verify', true);
@@ -106,7 +116,7 @@ const Auth = () => {
     }
     setIsLoading(true);
     try {
-      const { error } = await signUp(email, password, fullName);
+      const { error } = await signUp(email, password, fullName, signUpToken);
       if (error) {
         const msg = error.message ?? '';
         toast({
@@ -130,22 +140,44 @@ const Auth = () => {
 
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!resetToken) {
+      toast({ title: 'Security check required', description: 'Please complete the verification challenge.', variant: 'destructive' });
+      return;
+    }
     setIsLoading(true);
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
       redirectTo: `${window.location.origin}/`,
+      captchaToken: resetToken,
     });
     setIsLoading(false);
+    resetRef.current?.reset();
+    setResetToken('');
     if (error) {
-      toast({ title: 'Reset failed', description: error.message, variant: 'destructive' });
+      const msg = error.message ?? '';
+      toast({
+        title: isRateLimit(msg) ? 'Too many requests' : 'Reset failed',
+        description: isRateLimit(msg) ? rateLimitMessage(msg) : msg,
+        variant: 'destructive',
+      });
     } else {
       setResetSent(true);
     }
   };
 
   const handleResendVerification = async () => {
+    if (!verifyToken) {
+      toast({ title: 'Security check required', description: 'Please complete the verification challenge.', variant: 'destructive' });
+      return;
+    }
     setResendLoading(true);
-    const { error } = await supabase.auth.resend({ type: 'signup', email });
+    const { error } = await supabase.auth.resend({
+      type: 'signup',
+      email,
+      options: { captchaToken: verifyToken },
+    });
     setResendLoading(false);
+    verifyRef.current?.reset();
+    setVerifyToken('');
     if (error) {
       const msg = error.message ?? '';
       toast({
@@ -218,7 +250,7 @@ const Auth = () => {
             <div className="w-9 h-9 bg-gradient-primary rounded-xl p-1 shrink-0">
               <img src="/favicon.png" alt="Sizzling Spices Logo" className="w-full h-full object-contain" />
             </div>
-            <span className="text-lg font-bold bg-gradient-primary bg-clip-text text-transparent">
+            <span className="text-lg font-bold font-display text-foreground">
               Sizzling Spices Portal
             </span>
           </div>
@@ -432,10 +464,19 @@ const Auth = () => {
                   <p>Check your spam or junk folder. The link expires after 24 hours.</p>
                 </div>
 
+                <Turnstile
+                  ref={verifyRef}
+                  siteKey={TURNSTILE_SITE_KEY}
+                  onSuccess={setVerifyToken}
+                  onExpire={() => setVerifyToken('')}
+                  onError={() => setVerifyToken('')}
+                  options={{ theme: 'auto', size: 'flexible' }}
+                />
+
                 <Button
                   className="w-full h-11"
                   onClick={handleResendVerification}
-                  disabled={resendLoading}
+                  disabled={resendLoading || !verifyToken}
                   variant="outline"
                 >
                   {resendLoading ? 'Sending…' : 'Resend verification email'}
@@ -511,10 +552,19 @@ const Auth = () => {
                       </div>
                     </div>
 
+                    <Turnstile
+                      ref={resetRef}
+                      siteKey={TURNSTILE_SITE_KEY}
+                      onSuccess={setResetToken}
+                      onExpire={() => setResetToken('')}
+                      onError={() => setResetToken('')}
+                      options={{ theme: 'auto', size: 'flexible' }}
+                    />
+
                     <Button
                       type="submit"
                       className="w-full h-11 bg-gradient-primary hover:shadow-primary transition-all duration-300 font-medium"
-                      disabled={isLoading}
+                      disabled={isLoading || !resetToken}
                     >
                       {isLoading ? 'Sending…' : 'Send Reset Link'}
                     </Button>

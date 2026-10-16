@@ -109,6 +109,8 @@ interface Props {
   isEditOpen?: boolean;
   onEditOpenChange?: (open: boolean) => void;
   onExpenseUpdated?: () => void;
+  /** Open the add form as soon as it mounts (the "New expense" shortcut). */
+  openOnMount?: boolean;
 }
 
 const METHODS_NEEDING_BANK = new Set(['transfer', 'card', 'pos']);
@@ -119,6 +121,7 @@ export default function ExpenseFormDialog({
   isEditOpen,
   onEditOpenChange,
   onExpenseUpdated,
+  openOnMount,
 }: Props) {
   const { user } = useAuth();
   const { isAdmin } = useRoles();
@@ -235,6 +238,12 @@ export default function ExpenseFormDialog({
     setTouched({});
     setDirty(false);
   };
+
+  useEffect(() => {
+    if (openOnMount && !isEditMode) { reset(); setSelfOpen(true); }
+    // Only on mount: the shortcut opens the form once, not on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const uploadReceipt = async (): Promise<string | null> => {
     if (!receiptFile || !user) return null;

@@ -10,6 +10,40 @@ import { Mail, Phone, MapPin, Send, Loader2, CheckCircle2, BellRing } from "luci
 
 const BLANK = { name: "", email: "", phone: "", subject: "", message: "" };
 
+// Mirrors the CHECK constraints in 20260922110000_public_form_rate_limit.sql.
+// The database is what enforces these — anyone can skip this file and POST to
+// PostgREST with the publishable key. Checking here only means an honest
+// visitor sees "Message is too long" instead of a constraint-violation toast.
+const LIMITS = { name: 120, email: 254, phone: 32, subject: 200, message: 5000 } as const;
+const EMAIL_RE = /^[^@\s]+@[^@\s.]+(\.[^@\s.]+)+$/;
+const PHONE_RE = /^[0-9+().\/ -]+$/;
+
+const validateMessage = (f: typeof BLANK): string | null => {
+  if (!f.name.trim()) return "Please tell us your name.";
+  if (f.name.trim().length > LIMITS.name) return "That name is too long.";
+  if (!EMAIL_RE.test(f.email.trim()) || f.email.trim().length > LIMITS.email)
+    return "Please enter a valid email address.";
+  if (f.phone.trim() && (!PHONE_RE.test(f.phone.trim()) || f.phone.trim().length > LIMITS.phone))
+    return "That phone number doesn't look right.";
+  if (f.subject.trim().length > LIMITS.subject) return "That subject is too long.";
+  if (!f.message.trim()) return "Please write a message.";
+  if (f.message.trim().length > LIMITS.message)
+    return `Please keep your message under ${LIMITS.message.toLocaleString()} characters.`;
+  return null;
+};
+
+// PostgREST error bodies carry table, column and constraint names. The rate
+// limiter raises PT429, whose message is written for the visitor, so that one
+// is passed through; everything else becomes a generic line and the detail
+// goes to the console for whoever is debugging.
+const publicErrorMessage = (err: any, fallback: string): string => {
+  if (err?.code === "PT429" || err?.status === 429) {
+    return err.message || "Too many attempts. Please wait a few minutes and try again.";
+  }
+  console.error("[contact]", err);
+  return fallback;
+};
+
 export default function Contact() {
   const { toast } = useToast();
   const [form, setForm] = useState(BLANK);
@@ -25,8 +59,9 @@ export default function Contact() {
 
   const submitMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.name.trim() || !form.email.trim() || !form.message.trim()) {
-      toast({ title: "Please fill in your name, email and message", variant: "destructive" });
+    const problem = validateMessage(form);
+    if (problem) {
+      toast({ title: problem, variant: "destructive" });
       return;
     }
     setSending(true);
@@ -43,7 +78,11 @@ export default function Contact() {
       setSent(true);
       setForm(BLANK);
     } catch (err: any) {
-      toast({ title: "Could not send message", description: err.message, variant: "destructive" });
+      toast({
+        title: "Could not send message",
+        description: publicErrorMessage(err, "Something went wrong on our side. Please try again, or email us directly."),
+        variant: "destructive",
+      });
     } finally {
       setSending(false);
     }
@@ -51,8 +90,12 @@ export default function Contact() {
 
   const subscribe = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!subEmail.trim()) {
-      toast({ title: "Enter your email to subscribe", variant: "destructive" });
+    if (!EMAIL_RE.test(subEmail.trim()) || subEmail.trim().length > LIMITS.email) {
+      toast({ title: "Please enter a valid email address", variant: "destructive" });
+      return;
+    }
+    if (subName.trim().length > LIMITS.name) {
+      toast({ title: "That name is too long", variant: "destructive" });
       return;
     }
     setSubscribing(true);
@@ -73,7 +116,11 @@ export default function Contact() {
       setSubscribed(true);
       setSubEmail(""); setSubName("");
     } catch (err: any) {
-      toast({ title: "Could not subscribe", description: err.message, variant: "destructive" });
+      toast({
+        title: "Could not subscribe",
+        description: publicErrorMessage(err, "Something went wrong on our side. Please try again in a moment."),
+        variant: "destructive",
+      });
     } finally {
       setSubscribing(false);
     }
@@ -135,12 +182,14 @@ export default function Contact() {
                 <form onSubmit={subscribe} className="space-y-3">
                   <Input
                     placeholder="Your name (optional)"
+                    maxLength={LIMITS.name}
                     value={subName}
                     onChange={(e) => setSubName(e.target.value)}
                   />
                   <Input
                     type="email"
                     placeholder="you@example.com"
+                    maxLength={LIMITS.email}
                     value={subEmail}
                     onChange={(e) => setSubEmail(e.target.value)}
                   />
@@ -178,24 +227,24 @@ export default function Contact() {
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-1.5">
                       <Label htmlFor="name">Name *</Label>
-                      <Input id="name" value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="Your full name" />
+                      <Input id="name" maxLength={LIMITS.name} value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="Your full name" />
                     </div>
                     <div className="space-y-1.5">
                       <Label htmlFor="email">Email *</Label>
-                      <Input id="email" type="email" value={form.email} onChange={(e) => set("email", e.target.value)} placeholder="you@example.com" />
+                      <Input id="email" type="email" maxLength={LIMITS.email} value={form.email} onChange={(e) => set("email", e.target.value)} placeholder="you@example.com" />
                     </div>
                     <div className="space-y-1.5">
                       <Label htmlFor="phone">Phone</Label>
-                      <Input id="phone" value={form.phone} onChange={(e) => set("phone", e.target.value)} placeholder="Optional" />
+                      <Input id="phone" maxLength={LIMITS.phone} value={form.phone} onChange={(e) => set("phone", e.target.value)} placeholder="Optional" />
                     </div>
                     <div className="space-y-1.5">
                       <Label htmlFor="subject">Subject</Label>
-                      <Input id="subject" value={form.subject} onChange={(e) => set("subject", e.target.value)} placeholder="What's this about?" />
+                      <Input id="subject" maxLength={LIMITS.subject} value={form.subject} onChange={(e) => set("subject", e.target.value)} placeholder="What's this about?" />
                     </div>
                   </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="message">Message *</Label>
-                    <Textarea id="message" rows={5} value={form.message} onChange={(e) => set("message", e.target.value)} placeholder="How can we help you?" />
+                    <Textarea id="message" rows={5} maxLength={LIMITS.message} value={form.message} onChange={(e) => set("message", e.target.value)} placeholder="How can we help you?" />
                   </div>
                   <Button type="submit" className="w-full gap-2" disabled={sending}>
                     {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}

@@ -1,3 +1,4 @@
+import { useNewParam } from '@/hooks/useNewParam';
 import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
@@ -42,9 +43,10 @@ export default function MyReports() {
   const { toast } = useToast();
   const qc = useQueryClient();
 
-  const [open, setOpen] = useState(false);
+  const newParam = useNewParam();
+  const [open, setOpen] = useState(!!newParam);
   const [viewing, setViewing] = useState<Report | null>(null);
-  const [type, setType] = useState<ReportType>('sales');
+  const [type, setType] = useState<ReportType>(newParam === 'expense' ? 'expense' : 'sales');
   const [form, setForm] = useState({ report_date: today(), title: '', summary: '', amount: '', payment_method: 'cash', sale_type: 'daily', source: '', is_supplier: false, due_date: '', misc_description: '', misc_amount: '', petty_description: '', petty_amount: '' });
   // The expense report is a structured claim now, not free text (§6.1).
   const [claim, setClaim] = useState<ClaimDraft>(emptyDraft);

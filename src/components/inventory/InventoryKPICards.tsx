@@ -19,16 +19,28 @@ interface Transaction {
   created_at: string;
 }
 
+/** A stock movement from the ledger, valued at its own unit cost. */
+export interface KPIMovement {
+  movement_type: string;
+  quantity_change: number;
+  unit_cost: number | null;
+}
+
 interface InventoryKPICardsProps {
   skus: SKU[];
   transactions: Transaction[];
+  /** Last 30 days of stock movements. When given, Purchases/Usage come from
+   *  here — the only record that includes LPO receipts and invoiced sales. */
+  movements30d?: KPIMovement[];
 }
 
-export function InventoryKPICards({ skus, transactions }: InventoryKPICardsProps) {
+export function InventoryKPICards({ skus, transactions, movements30d }: InventoryKPICardsProps) {
   const totalItems = skus.length;
   const lowStockItems = skus.filter(sku => sku.stock_quantity <= sku.reorder_level);
   const outOfStockItems = skus.filter(sku => sku.stock_quantity <= 0);
-  const totalStockValue = skus.reduce((total, sku) => total + (sku.stock_quantity * sku.cost_per_unit), 0);
+  // An item below zero is worth nothing, not a negative amount that quietly
+  // shrinks everything else's value.
+  const totalStockValue = skus.reduce((total, sku) => total + (Math.max(Number(sku.stock_quantity), 0) * Number(sku.cost_per_unit || 0)), 0);
   
   // Calculate transaction trends (last 30 days)
   const thirtyDaysAgo = new Date();
@@ -41,12 +53,19 @@ export function InventoryKPICards({ skus, transactions }: InventoryKPICardsProps
   const purchases = recentTransactions.filter(t => t.transaction_type === 'PURCHASE');
   const sales = recentTransactions.filter(t => t.transaction_type === 'SALE');
   
-  const totalPurchaseValue = purchases.reduce((sum, t) => sum + (t.total_amount || 0), 0);
-  const totalSalesValue = sales.reduce((sum, t) => sum + Math.abs(t.total_amount || 0), 0);
-  
-  // Stock turnover rate (simplified)
-  const avgInventoryValue = totalStockValue > 0 ? totalStockValue : 1;
-  const turnoverRate = totalSalesValue / avgInventoryValue;
+  const valueOf = (m: KPIMovement) => Number(m.quantity_change) * Number(m.unit_cost || 0);
+  const stockIns = movements30d?.filter(m => m.movement_type === 'purchase' && Number(m.quantity_change) > 0);
+  // Kitchen usage and invoiced sales, net of invoice cancellations (reversals).
+  const stockOuts = movements30d?.filter(m => ['usage', 'sale', 'reversal'].includes(m.movement_type));
+
+  const totalPurchaseValue = stockIns
+    ? stockIns.reduce((sum, m) => sum + valueOf(m), 0)
+    : purchases.reduce((sum, t) => sum + (t.total_amount || 0), 0);
+  const totalSalesValue = stockOuts
+    ? -stockOuts.reduce((sum, m) => sum + valueOf(m), 0)
+    : sales.reduce((sum, t) => sum + Math.abs(t.total_amount || 0), 0);
+  const purchaseCount = stockIns ? stockIns.length : purchases.length;
+  const usageCount = stockOuts ? stockOuts.filter(m => Number(m.quantity_change) < 0).length : sales.length;
 
   return (
     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
@@ -105,7 +124,7 @@ export function InventoryKPICards({ skus, transactions }: InventoryKPICardsProps
         </CardHeader>
         <CardContent>
           <div className="text-2xl font-bold text-green-600">{formatNairaCompact(totalPurchaseValue)}</div>
-          <p className="text-xs text-muted-foreground">{purchases.length} transactions</p>
+          <p className="text-xs text-muted-foreground">{purchaseCount} stock-ins</p>
         </CardContent>
       </Card>
 
@@ -116,7 +135,7 @@ export function InventoryKPICards({ skus, transactions }: InventoryKPICardsProps
         </CardHeader>
         <CardContent>
           <div className="text-2xl font-bold text-blue-600">{formatNairaCompact(totalSalesValue)}</div>
-          <p className="text-xs text-muted-foreground">{sales.length} transactions</p>
+          <p className="text-xs text-muted-foreground">{usageCount} issues &amp; sales</p>
         </CardContent>
       </Card>
     </div>

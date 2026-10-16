@@ -6,8 +6,8 @@ interface AuthContextType {
   user: User | null;
   session: Session | null;
   loading: boolean;
-  signUp: (email: string, password: string, fullName?: string) => Promise<{ error: any }>;
-  signIn: (email: string, password: string) => Promise<{ error: any }>;
+  signUp: (email: string, password: string, fullName?: string, captchaToken?: string) => Promise<{ error: any }>;
+  signIn: (email: string, password: string, captchaToken?: string) => Promise<{ error: any }>;
   signOut: () => Promise<void>;
 }
 
@@ -50,7 +50,13 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     return () => subscription.unsubscribe();
   }, []);
 
-  const signUp = async (email: string, password: string, fullName?: string) => {
+  // captchaToken is the Turnstile token from the form. Supabase verifies it
+  // with Cloudflare before it will issue or create a session, which is what
+  // makes the widget a real gate — without passing it through, the challenge
+  // is only drawn in the browser and a script calling /auth/v1/token directly
+  // never sees it. Requires "Enable Captcha protection" (provider: Turnstile)
+  // in Supabase → Authentication → Settings; the token is ignored until then.
+  const signUp = async (email: string, password: string, fullName?: string, captchaToken?: string) => {
     const redirectUrl = `${window.location.origin}/auth`;
 
     const { error } = await supabase.auth.signUp({
@@ -59,15 +65,17 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
       options: {
         emailRedirectTo: redirectUrl,
         data: { full_name: fullName },
+        captchaToken,
       },
     });
     return { error };
   };
 
-  const signIn = async (email: string, password: string) => {
+  const signIn = async (email: string, password: string, captchaToken?: string) => {
     const { error } = await supabase.auth.signInWithPassword({
       email,
       password,
+      options: { captchaToken },
     });
     return { error };
   };

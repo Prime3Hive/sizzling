@@ -9,7 +9,7 @@ export default function PageLoader() {
         <div
           className="loader-ring-ccw absolute inset-0 rounded-full"
           style={{
-            background: "conic-gradient(from 0deg, hsl(280 100% 70% / 0.12), hsl(25 95% 53% / 0.08), hsl(280 100% 70% / 0.12))",
+            background: "conic-gradient(from 0deg, hsl(21 90% 48% / 0.12), hsl(0 72% 51% / 0.08), hsl(21 90% 48% / 0.12))",
             padding: 2,
           }}
         >
@@ -21,7 +21,7 @@ export default function PageLoader() {
           className="loader-ring-cw absolute rounded-full"
           style={{
             inset: 10,
-            background: "conic-gradient(from 180deg, transparent 60%, hsl(280 100% 70%), hsl(25 95% 53%), transparent 100%)",
+            background: "conic-gradient(from 180deg, transparent 60%, hsl(21 90% 48%), hsl(0 72% 51%), transparent 100%)",
           }}
         />
 
@@ -30,7 +30,7 @@ export default function PageLoader() {
           className="absolute rounded-full"
           style={{
             inset: 10,
-            background: "conic-gradient(from 0deg, transparent 60%, hsl(25 95% 53% / 0.7), hsl(280 100% 70% / 0.5), transparent 100%)",
+            background: "conic-gradient(from 0deg, transparent 60%, hsl(21 90% 48% / 0.7), hsl(0 72% 51% / 0.5), transparent 100%)",
             animation: "ring-spin 3.5s linear infinite",
           }}
         />
@@ -41,7 +41,7 @@ export default function PageLoader() {
           style={{
             width: 96,
             height: 96,
-            background: "linear-gradient(135deg, hsl(280 100% 70%), hsl(25 95% 53%))",
+            background: "linear-gradient(135deg, hsl(21 90% 48%), hsl(0 72% 51%))",
           }}
         >
           {/* Inner shine */}
@@ -60,9 +60,9 @@ export default function PageLoader() {
 
         {/* Orbiting particles */}
         {[
-          { color: "hsl(280 100% 70%)", size: 8, r: "58px", start: "0deg",   dur: "2.8s" },
+          { color: "hsl(0 72% 51%)", size: 8, r: "58px", start: "0deg",   dur: "2.8s" },
           { color: "hsl(25 95% 53%)",   size: 6, r: "58px", start: "120deg", dur: "2.8s" },
-          { color: "hsl(280 100% 80%)", size: 5, r: "58px", start: "240deg", dur: "2.8s" },
+          { color: "hsl(26 100% 70%)", size: 5, r: "58px", start: "240deg", dur: "2.8s" },
         ].map((p, i) => (
           <div
             key={i}

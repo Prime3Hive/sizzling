@@ -35,10 +35,12 @@ interface UsageAnalyticsProps {
 }
 
 export function UsageAnalytics({ transactions, skus }: UsageAnalyticsProps) {
-  // Filter only usage/consumption transactions (negative quantities or specific types)
-  const usageTransactions = transactions.filter(
-    (t) => t.transaction_type === "usage" || t.transaction_type === "sale" || t.quantity < 0
-  );
+  // Consumption only. Usage is logged as transaction_type 'SALE'; stock-take
+  // write-downs ('ADJUSTMENT') are losses, not usage, and stay out.
+  const usageTransactions = transactions.filter((t) => {
+    const type = (t.transaction_type || "").toUpperCase();
+    return type === "SALE" || type === "USAGE";
+  });
 
   // Get last 30 days of data
   const last30Days = eachDayOfInterval({

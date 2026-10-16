@@ -14,13 +14,12 @@ const ToastViewport = React.forwardRef<
   <ToastPrimitives.Viewport
     ref={ref}
     className={cn(
-      // pointer-events-none is load-bearing on mobile. Below sm this viewport is
-      // pinned full-width to top-0 at z-[100], directly over the app header, and
-      // its p-4 gives it ~32px of height even with zero toasts — which sat on top
-      // of the sidebar trigger and swallowed every tap, making navigation
-      // impossible on a phone. Individual toasts re-enable pointer events via
-      // `pointer-events-auto` in toastVariants, so they stay interactive.
-      "pointer-events-none fixed top-0 z-[100] flex max-h-screen w-full flex-col-reverse p-4 sm:bottom-0 sm:right-0 sm:top-auto sm:flex-col md:max-w-[420px]",
+      // pointer-events-none is load-bearing: the empty viewport still has
+      // height from its padding and sits over the page at z-[100]. Individual
+      // toasts re-enable pointer events via `pointer-events-auto` in
+      // toastVariants, so they stay interactive. Below lg it sits just above
+      // the tab bar, where an Undo is in reach of the thumb.
+      "pointer-events-none fixed bottom-[calc(76px+env(safe-area-inset-bottom))] z-[100] flex max-h-screen w-full flex-col p-3 sm:right-0 md:max-w-[420px] lg:bottom-0 lg:p-4",
       className,
     )}
     {...props}
@@ -29,7 +28,7 @@ const ToastViewport = React.forwardRef<
 ToastViewport.displayName = ToastPrimitives.Viewport.displayName;
 
 const toastVariants = cva(
-  "group pointer-events-auto relative flex w-full items-center justify-between space-x-4 overflow-hidden rounded-md border p-6 pr-8 shadow-lg transition-all data-[swipe=cancel]:translate-x-0 data-[swipe=end]:translate-x-[var(--radix-toast-swipe-end-x)] data-[swipe=move]:translate-x-[var(--radix-toast-swipe-move-x)] data-[swipe=move]:transition-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[swipe=end]:animate-out data-[state=closed]:fade-out-80 data-[state=closed]:slide-out-to-right-full data-[state=open]:slide-in-from-top-full data-[state=open]:sm:slide-in-from-bottom-full",
+  "group pointer-events-auto relative flex w-full items-center justify-between space-x-4 overflow-hidden rounded-xl border p-4 pr-8 shadow-lg lg:rounded-md lg:p-6 lg:pr-8 transition-all data-[swipe=cancel]:translate-x-0 data-[swipe=end]:translate-x-[var(--radix-toast-swipe-end-x)] data-[swipe=move]:translate-x-[var(--radix-toast-swipe-move-x)] data-[swipe=move]:transition-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[swipe=end]:animate-out data-[state=closed]:fade-out-80 data-[state=closed]:slide-out-to-right-full data-[state=open]:slide-in-from-bottom-full",
   {
     variants: {
       variant: {

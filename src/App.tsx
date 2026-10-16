@@ -8,7 +8,7 @@ import { AuthProvider, useAuth } from "./hooks/useAuth";
 import { RoleProvider, useRoles } from "./hooks/useRoles";
 import { Can } from "./components/Can";
 import * as Sentry from "@sentry/react";
-import Layout from "./components/Layout";
+import AppShell from "./components/shell/AppShell";
 import SessionTimeoutWarning from "./components/SessionTimeoutWarning";
 import PageLoader from "./components/PageLoader";
 
@@ -36,14 +36,22 @@ function lazy<T extends React.ComponentType<any>>(factory: () => Promise<{ defau
   });
 }
 
+const Home              = lazy(() => import("./pages/Home"));
+const Inbox             = lazy(() => import("./pages/Inbox"));
+const People            = lazy(() => import("./pages/People"));
+const Operations        = lazy(() => import("./pages/Operations"));
+const AdminHub          = lazy(() => import("./pages/AdminHub"));
+const Me                = lazy(() => import("./pages/Me"));
+const Work              = lazy(() => import("./pages/Work"));
+// The executive dashboard now lives under Finance › Overview.
 const Dashboard         = lazy(() => import("./pages/Dashboard"));
 const Auth              = lazy(() => import("./pages/Auth"));
 const Expenses          = lazy(() => import("./pages/Expenses"));
 const Budgets           = lazy(() => import("./pages/Budgets"));
 const Reports           = lazy(() => import("./pages/Reports"));
-const BusinessManagement = lazy(() => import("./pages/BusinessManagement"));
 const Inventory         = lazy(() => import("./pages/business/Inventory"));
 const InventoryRequests = lazy(() => import("./pages/business/InventoryRequests"));
+const InventoryItem     = lazy(() => import("./pages/business/InventoryItem"));
 const Payments          = lazy(() => import("./pages/business/Payments"));
 const Analytics         = lazy(() => import("./pages/business/Analytics"));
 const KPIDashboard      = lazy(() => import("./pages/business/KPIDashboard"));
@@ -53,6 +61,7 @@ const UserManagement    = lazy(() => import("./pages/UserManagement"));
 const StaffProfiles     = lazy(() => import("./pages/StaffProfiles"));
 const NJCSupplies       = lazy(() => import("./pages/NJCSupplies"));
 const ProfitLoss        = lazy(() => import("./pages/ProfitLoss"));
+const Commission        = lazy(() => import("./pages/Commission"));
 const Payroll           = lazy(() => import("./pages/Payroll"));
 const Attendance        = lazy(() => import("./pages/Attendance"));
 const MyProfile         = lazy(() => import("./pages/MyProfile"));
@@ -98,19 +107,6 @@ const ProtectedRoute = ({
   return <>{children}</>;
 };
 
-// Business overview: any user with at least one business module permission.
-const BusinessRoute = ({ children }: { children: React.ReactNode }) => {
-  const { user, loading: authLoading } = useAuth();
-  const { isAdmin, isManager, hasPermission, loading: roleLoading } = useRoles();
-  if (authLoading || roleLoading) return <PageLoader />;
-  if (!user) return <Navigate to="/auth" replace />;
-  const hasAny = isAdmin || isManager ||
-    (['sales', 'inventory', 'invoices', 'finance', 'budgets', 'reports'] as const)
-      .some(m => hasPermission(m, 'view'));
-  if (!hasAny) return <Navigate to="/dashboard" replace />;
-  return <>{children}</>;
-};
-
 const App = () => (
   <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
     <QueryClientProvider client={queryClient}>
@@ -125,7 +121,7 @@ const App = () => (
               <Route path="/auth" element={<Auth />} />
               {/* Public, no-login contact + newsletter page */}
               <Route path="/contact" element={<Contact />} />
-              <Route path="/" element={<Layout />}>
+              <Route path="/" element={<AppShell />}>
                 <Route index element={
                   <ProtectedRoute allowPending>
                     <Navigate to="/dashboard" replace />
@@ -140,8 +136,46 @@ const App = () => (
                 {/* Open to all authenticated users (including pending) */}
                 <Route path="dashboard" element={
                   <ProtectedRoute allowPending>
-                    <Dashboard />
+                    <Home />
                   </ProtectedRoute>
+                } />
+                <Route path="me" element={
+                  <ProtectedRoute allowPending>
+                    <Me />
+                  </ProtectedRoute>
+                } />
+                <Route path="work" element={
+                  <ProtectedRoute allowPending>
+                    <Work />
+                  </ProtectedRoute>
+                } />
+                {/* The phone's old "More" tab is now Work. */}
+                <Route path="more" element={<Navigate to="/work" replace />} />
+                <Route path="inbox" element={
+                  <ProtectedRoute>
+                    <Inbox />
+                  </ProtectedRoute>
+                } />
+                <Route path="operations" element={
+                  <ProtectedRoute>
+                    <Operations />
+                  </ProtectedRoute>
+                } />
+                <Route path="people" element={
+                  <Can roles={['admin', 'hr']} redirect="/dashboard">
+                    <People />
+                  </Can>
+                } />
+                <Route path="admin" element={
+                  <Can roles={['admin']} redirect="/dashboard">
+                    <AdminHub />
+                  </Can>
+                } />
+                <Route path="finance" element={<Navigate to="/finance/overview" replace />} />
+                <Route path="finance/overview" element={
+                  <Can roles={['admin']} redirect="/expenses">
+                    <Dashboard />
+                  </Can>
                 } />
                 <Route path="my-profile" element={
                   <ProtectedRoute allowPending>
@@ -190,14 +224,16 @@ const App = () => (
                     <Reports />
                   </Can>
                 } />
-                <Route path="business" element={
-                  <BusinessRoute>
-                    <BusinessManagement />
-                  </BusinessRoute>
-                } />
+                {/* The old business hub is now Operations. */}
+                <Route path="business" element={<Navigate to="/operations" replace />} />
                 <Route path="business/inventory" element={
                   <Can module="inventory" redirect="/dashboard">
                     <Inventory />
+                  </Can>
+                } />
+                <Route path="business/inventory/item/:skuId" element={
+                  <Can module="inventory" redirect="/dashboard">
+                    <InventoryItem />
                   </Can>
                 } />
                 {/* SKU Catalog consolidated into the single Inventory module */}
@@ -278,6 +314,11 @@ const App = () => (
                     <Payroll />
                   </Can>
                 } />
+                <Route path="commission" element={
+                  <Can roles={['admin']} redirect="/dashboard">
+                    <Commission />
+                  </Can>
+                } />
                 {/* HR marks and submits; the page itself shows admin-only
                     approval controls to admins. */}
                 <Route path="attendance" element={
@@ -304,12 +345,18 @@ const App = () => (
 );
 
 const SentryApp = Sentry.withErrorBoundary(App, {
-  fallback: ({ error, resetError }) => (
+  // The message is deliberately fixed. A thrown Error here carries whatever the
+  // failing layer put in it — a PostgREST body with table and constraint names,
+  // a bundler path, a minified frame — and none of that helps the person
+  // looking at the screen. The real error goes to Sentry, which is where anyone
+  // who can act on it is looking.
+  fallback: ({ resetError }) => (
     <div className="min-h-screen flex flex-col items-center justify-center gap-4 p-8 text-center">
       <div className="text-4xl">⚠️</div>
       <h1 className="text-2xl font-bold">Something went wrong</h1>
       <p className="text-muted-foreground max-w-md text-sm">
-        {(error as Error)?.message || "An unexpected error occurred. Our team has been notified."}
+        An unexpected error occurred and has been reported. Try again, and if it
+        keeps happening let an administrator know what you were doing.
       </p>
       <button
         onClick={resetError}

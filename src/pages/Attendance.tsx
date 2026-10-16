@@ -19,8 +19,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
   CalendarCheck, ChevronLeft, ChevronRight, Send, CheckCircle2, XCircle,
-  Lock, Loader2, MessageSquare, Inbox, ClipboardList, Undo2,
+  Lock, Loader2, MessageSquare, Inbox, ClipboardList, Undo2, MoreHorizontal,
 } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import {
   ATTENDANCE_STATUSES, ATTENDANCE_STATUS_LIST, WEEK_STATUS_COLOR, WEEK_STATUS_LABEL,
   REVIEW_STATUS_COLOR, statusLabel, statusColor, summarizeAttendance, rateColor,
@@ -37,6 +38,8 @@ interface StaffRow {
   full_name: string;
   position: string | null;
   departments?: { name: string } | null;
+  employment_status: string;
+  exit_date: string | null;
 }
 
 interface WeekRow {
@@ -134,21 +137,30 @@ export default function Attendance() {
   const [decisionNote, setDecisionNote] = useState('');
   const [reviewDecision, setReviewDecision] = useState<{ req: ReviewRow; approve: boolean } | null>(null);
   const [reviewNote, setReviewNote] = useState('');
+  // Phone marking: the day shown, and the person/day open in the sheet.
+  const [phoneDay, setPhoneDay] = useState<string | null>(null);
+  const [sheetCell, setSheetCell] = useState<{ s: StaffRow; day: string } | null>(null);
 
   const days = useMemo(() => weekDays(weekStart), [weekStart]);
 
   // ── Data ───────────────────────────────────────────────────────────────────
-  const { data: staff = [], isLoading: staffLoading } = useQuery<StaffRow[]>({
+  const { data: allStaff = [], isLoading: staffLoading } = useQuery<StaffRow[]>({
     queryKey: ['attendance-staff'],
     queryFn: async () => {
       const { data, error } = await db
         .from('staff_profiles')
-        .select('id, full_name, position, departments(name)')
+        .select('id, full_name, position, employment_status, exit_date, departments(name)')
         .order('full_name');
       if (error) throw error;
       return (data ?? []) as StaffRow[];
     },
   });
+
+  // Former staff stay on the sheet for weeks they were still employed in.
+  const staff = useMemo(
+    () => allStaff.filter(s => s.employment_status === 'active' || (!!s.exit_date && s.exit_date >= weekStart)),
+    [allStaff, weekStart],
+  );
 
   const { data: week, isLoading: weekLoading } = useQuery<WeekRow | null>({
     queryKey: ['attendance-week', weekStart],
@@ -277,18 +289,43 @@ export default function Attendance() {
       );
       if (error) throw error;
     },
+    // Show the mark straight away; the save settles behind it. Marking a row of
+    // people on a phone shouldn't wait on a round trip per tap.
+    onMutate: async (args) => {
+      if (!week?.id) return undefined;
+      const key = ['attendance-records', week.id];
+      await qc.cancelQueries({ queryKey: key });
+      const prev = qc.getQueryData<RecordRow[]>(key);
+      const next = (prev ?? []).filter(r => !(r.staff_profile_id === args.staffId && r.work_date === args.workDate));
+      next.push({
+        id: `pending-${args.staffId}-${args.workDate}`,
+        week_id: week.id,
+        staff_profile_id: args.staffId,
+        work_date: args.workDate,
+        status: args.draft.status,
+        check_in: args.draft.check_in || null,
+        check_out: args.draft.check_out || null,
+        hr_note: args.draft.hr_note.trim() || null,
+        corrected_from: null,
+      });
+      qc.setQueryData(key, next);
+      return { prev, key };
+    },
     onSuccess: () => { setOpenCell(null); invalidateWeek(); },
-    onError: (e: any) => toast({ title: 'Could not mark that day', description: e.message, variant: 'destructive' }),
+    onError: (e: any, _args, ctx) => {
+      if (ctx?.prev) qc.setQueryData(ctx.key, ctx.prev);
+      toast({ title: 'Could not mark that day', description: e.message, variant: 'destructive' });
+    },
   });
 
-  /** Fill every unmarked working day for one staff member, or for the whole week. */
+  /** Fill every unmarked day for one staff member, one day, or the whole week. */
   const fillMutation = useMutation({
-    mutationFn: async (args: { staffId?: string; status: AttendanceStatus }) => {
+    mutationFn: async (args: { staffId?: string; day?: string; status: AttendanceStatus }) => {
       const weekId = await ensureWeek();
       const targets = args.staffId ? staff.filter(s => s.id === args.staffId) : staff;
       const rows = targets.flatMap(s =>
         days
-          .filter(d => !byCell.has(`${s.id}|${d}`))
+          .filter(d => (!args.day || d === args.day) && !byCell.has(`${s.id}|${d}`))
           .map(d => ({ week_id: weekId, staff_profile_id: s.id, work_date: d, status: args.status })),
       );
       if (rows.length === 0) return 0;
@@ -542,12 +579,239 @@ export default function Attendance() {
     );
   };
 
+  // ── Phone marking: one day at a time ───────────────────────────────────────
+  // Seven 36px cells per person don't fit a phone, and a popover on each is
+  // fiddly with a thumb. Below md the week is a day strip; each person gets
+  // Present / Late / Absent as one tap and everything else in a sheet.
+
+  const QUICK_STATUSES: AttendanceStatus[] = ['present', 'late', 'absent'];
+  const activeDay = phoneDay && days.includes(phoneDay)
+    ? phoneDay
+    : days.includes(todayIso()) ? todayIso() : days[0];
+  const markedOn = (d: string) => staff.filter(s => byCell.has(`${s.id}|${d}`)).length;
+
+  const draftFrom = (rec: RecordRow | undefined, status?: AttendanceStatus): CellDraft => ({
+    status: status ?? rec?.status ?? 'present',
+    check_in: rec?.check_in?.slice(0, 5) ?? '',
+    check_out: rec?.check_out?.slice(0, 5) ?? '',
+    hr_note: rec?.hr_note ?? '',
+  });
+
+  const quickMark = (s: StaffRow, day: string, status: AttendanceStatus) => {
+    const rec = byCell.get(`${s.id}|${day}`);
+    if (rec?.status === status) return;
+    markCell.mutate({ staffId: s.id, workDate: day, draft: draftFrom(rec, status) });
+  };
+
+  const openSheet = (s: StaffRow, day: string) => {
+    setCellDraft(draftFrom(byCell.get(`${s.id}|${day}`)));
+    setSheetCell({ s, day });
+  };
+
+  const phoneMarking = (
+    <div className="space-y-3 md:hidden">
+      <div className="grid grid-cols-7 gap-1.5" role="group" aria-label="Day">
+        {days.map(d => {
+          const n = markedOn(d);
+          const sel = d === activeDay;
+          const done = staff.length > 0 && n === staff.length;
+          return (
+            <button
+              key={d}
+              type="button"
+              aria-pressed={sel}
+              aria-label={`${format(parseISO(d), 'EEEE d MMMM')}, ${n} of ${staff.length} marked`}
+              onClick={() => setPhoneDay(d)}
+              className={cn(
+                'flex h-16 min-w-0 flex-col items-center justify-center gap-0.5 rounded-xl border transition-colors',
+                sel ? 'border-foreground bg-foreground text-background' : 'bg-card',
+              )}
+            >
+              <span className="text-[11px] font-semibold opacity-75">{format(parseISO(d), 'EEE')}</span>
+              <span className="text-base font-extrabold tabular-nums">{format(parseISO(d), 'd')}</span>
+              <span aria-hidden className={cn(
+                'h-1.5 w-1.5 rounded-full',
+                done ? 'bg-emerald-500' : n > 0 ? 'bg-orange-500' : 'bg-transparent',
+              )} />
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-sm font-bold">
+          {format(parseISO(activeDay), 'EEEE d MMM')}
+          <span className="font-semibold text-muted-foreground"> · {markedOn(activeDay)} of {staff.length} marked</span>
+        </p>
+        {editable && markedOn(activeDay) < staff.length && (
+          <Button variant="outline" size="sm" className="h-10 shrink-0" disabled={fillMutation.isPending}
+            onClick={() => fillMutation.mutate({ status: 'present', day: activeDay })}>
+            Rest present
+          </Button>
+        )}
+      </div>
+
+      <ul className="divide-y rounded-2xl border bg-card">
+        {staff.map(s => {
+          const rec = byCell.get(`${s.id}|${activeDay}`);
+          const other = rec && !QUICK_STATUSES.includes(rec.status);
+          return (
+            <li key={s.id} className="flex items-center gap-2 py-2.5 pl-3 pr-2">
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-semibold">{s.full_name}</span>
+                <span className="block truncate text-xs text-muted-foreground">
+                  {other ? statusLabel(rec!.status) : s.departments?.name ?? s.position ?? '—'}
+                  {rec?.hr_note ? ' · note' : ''}
+                </span>
+              </span>
+              {editable ? (
+                <span role="group" aria-label={`Mark ${s.full_name}`} className="flex shrink-0 gap-1">
+                  {QUICK_STATUSES.map(st => {
+                    const on = rec?.status === st;
+                    return (
+                      <button
+                        key={st}
+                        type="button"
+                        aria-pressed={on}
+                        aria-label={ATTENDANCE_STATUSES[st].label}
+                        onClick={() => quickMark(s, activeDay, st)}
+                        className={cn(
+                          'h-11 w-10 rounded-xl border text-sm font-bold transition-colors',
+                          on ? ATTENDANCE_STATUSES[st].color : 'bg-background text-muted-foreground',
+                        )}
+                      >
+                        {ATTENDANCE_STATUSES[st].code}
+                      </button>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    aria-label={`More for ${s.full_name}: other statuses, times and a note`}
+                    onClick={() => openSheet(s, activeDay)}
+                    className={cn(
+                      'inline-flex h-11 w-10 items-center justify-center rounded-xl border text-sm font-bold',
+                      other ? statusColor(rec!.status) : 'bg-background text-muted-foreground',
+                    )}
+                  >
+                    {other ? ATTENDANCE_STATUSES[rec!.status]?.code : <MoreHorizontal className="h-4 w-4" aria-hidden />}
+                  </button>
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  disabled={!rec}
+                  onClick={() => openSheet(s, activeDay)}
+                  className={cn(
+                    'h-9 shrink-0 rounded-full border px-3 text-xs font-bold',
+                    rec ? statusColor(rec.status) : 'border-dashed text-muted-foreground',
+                  )}
+                >
+                  {rec ? statusLabel(rec.status) : 'Not marked'}
+                </button>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+
+  const sheetRec = sheetCell ? byCell.get(`${sheetCell.s.id}|${sheetCell.day}`) : undefined;
+  const daySheet = (
+    <Dialog open={!!sheetCell} onOpenChange={o => { if (!o) setSheetCell(null); }}>
+      <DialogContent>
+        {sheetCell && (
+          <>
+            <DialogHeader>
+              <DialogTitle>{sheetCell.s.full_name}</DialogTitle>
+              <DialogDescription>{format(parseISO(sheetCell.day), 'EEEE d MMM yyyy')}</DialogDescription>
+            </DialogHeader>
+            {editable ? (
+              <>
+                <div className="grid grid-cols-2 gap-2">
+                  {ATTENDANCE_STATUS_LIST.map(st => (
+                    <button
+                      key={st}
+                      type="button"
+                      aria-pressed={cellDraft.status === st}
+                      onClick={() => setCellDraft(d => ({ ...d, status: st }))}
+                      className={cn(
+                        'h-11 rounded-xl border px-3 text-left text-sm font-semibold transition',
+                        cellDraft.status === st ? ATTENDANCE_STATUSES[st].color : 'bg-background hover:bg-muted',
+                      )}
+                    >
+                      {ATTENDANCE_STATUSES[st].label}
+                    </button>
+                  ))}
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="sheet-in">In</Label>
+                    <Input id="sheet-in" type="time" value={cellDraft.check_in}
+                      onChange={e => setCellDraft(d => ({ ...d, check_in: e.target.value }))} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="sheet-out">Out</Label>
+                    <Input id="sheet-out" type="time" value={cellDraft.check_out}
+                      onChange={e => setCellDraft(d => ({ ...d, check_out: e.target.value }))} />
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="sheet-note">Comment (optional)</Label>
+                  <Textarea id="sheet-note" rows={2} value={cellDraft.hr_note}
+                    placeholder="Why this day is marked the way it is."
+                    onChange={e => setCellDraft(d => ({ ...d, hr_note: e.target.value }))} />
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setSheetCell(null)}>Cancel</Button>
+                  <Button
+                    disabled={markCell.isPending}
+                    onClick={() => markCell.mutate(
+                      { staffId: sheetCell.s.id, workDate: sheetCell.day, draft: cellDraft },
+                      { onSuccess: () => setSheetCell(null) },
+                    )}
+                  >
+                    {markCell.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    Save day
+                  </Button>
+                </DialogFooter>
+              </>
+            ) : sheetRec ? (
+              <div className="space-y-4">
+                <div className="flex items-center gap-2">
+                  <Badge variant="outline" className={statusColor(sheetRec.status)}>{statusLabel(sheetRec.status)}</Badge>
+                  {sheetRec.corrected_from && (
+                    <span className="text-xs text-muted-foreground">was {statusLabel(sheetRec.corrected_from)}</span>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div><p className="text-xs text-muted-foreground">In</p><p className="font-semibold">{sheetRec.check_in?.slice(0, 5) ?? '—'}</p></div>
+                  <div><p className="text-xs text-muted-foreground">Out</p><p className="font-semibold">{sheetRec.check_out?.slice(0, 5) ?? '—'}</p></div>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">HR comment</p>
+                  <p className="text-sm">{sheetRec.hr_note || <span className="text-muted-foreground">None.</span>}</p>
+                </div>
+                <p className="border-t pt-3 text-xs text-muted-foreground">
+                  {weekStatus === 'approved'
+                    ? 'This week is approved. A day changes only through an approved review request.'
+                    : 'This week is with the admin. Send it back to HR to have a day changed.'}
+                </p>
+              </div>
+            ) : null}
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+
   const weekLabel = `${format(parseISO(weekStart), 'd MMM')} – ${format(parseISO(days[6]), 'd MMM yyyy')}`;
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl sm:text-3xl font-bold bg-gradient-primary bg-clip-text text-transparent">Attendance</h1>
+      {/* The phone's top bar already names the page. */}
+      <div className="max-lg:hidden">
+        <h1 className="text-2xl sm:text-3xl font-bold font-display text-foreground">Attendance</h1>
         <p className="text-muted-foreground mt-1">
           Mark the week, submit it as a report, and let the admin approve it onto the staff portal.
         </p>
@@ -568,31 +832,33 @@ export default function Attendance() {
         {/* ── Mark the week ── */}
         <TabsContent value="mark" className="space-y-4">
           <Card>
-            <CardHeader className="pb-3">
+            <CardHeader className="pb-3 max-sm:px-3 max-sm:pt-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-2">
-                  <Button variant="outline" size="icon" onClick={() => setWeekStart(w => addWeeks(w, -1))}>
+                <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+                  <Button variant="outline" size="icon" aria-label="Previous week" onClick={() => setWeekStart(w => addWeeks(w, -1))}>
                     <ChevronLeft className="h-4 w-4" />
                   </Button>
-                  <div className="min-w-[190px] text-center">
+                  <div className="min-w-0 flex-1 text-center sm:min-w-[190px] sm:flex-none">
                     <p className="font-semibold">{weekLabel}</p>
                     <Badge variant="outline" className={`text-[10px] ${WEEK_STATUS_COLOR[weekStatus]}`}>
                       {WEEK_STATUS_LABEL[weekStatus]}
                     </Badge>
                   </div>
-                  <Button variant="outline" size="icon" onClick={() => setWeekStart(w => addWeeks(w, 1))}>
+                  <Button variant="outline" size="icon" aria-label="Next week" onClick={() => setWeekStart(w => addWeeks(w, 1))}>
                     <ChevronRight className="h-4 w-4" />
                   </Button>
-                  <Button variant="ghost" size="sm" onClick={() => setWeekStart(weekStartOf(todayIso()))}>
-                    This week
-                  </Button>
+                  {weekStart !== weekStartOf(todayIso()) && (
+                    <Button variant="ghost" size="sm" onClick={() => setWeekStart(weekStartOf(todayIso()))}>
+                      This week
+                    </Button>
+                  )}
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
                   {editable && (
                     <Button variant="outline" size="sm" disabled={fillMutation.isPending}
                       onClick={() => fillMutation.mutate({ status: 'present' })}>
-                      Fill blanks as present
+                      Fill the week as present
                     </Button>
                   )}
                   {editable && week && records.length > 0 && (
@@ -654,7 +920,7 @@ export default function Attendance() {
               )}
             </CardHeader>
 
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-4 max-sm:px-3">
               {staffLoading || weekLoading ? (
                 <div className="space-y-2">
                   {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
@@ -664,7 +930,9 @@ export default function Attendance() {
                   No staff profiles yet. Add staff before marking attendance.
                 </p>
               ) : (
-                <div className="overflow-x-auto -mx-2 px-2">
+                <>
+                {phoneMarking}
+                <div className="hidden overflow-x-auto -mx-2 px-2 md:block">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b">
@@ -706,6 +974,7 @@ export default function Attendance() {
                     </tbody>
                   </table>
                 </div>
+                </>
               )}
 
               <div className="flex flex-wrap gap-3 pt-1 text-[11px] text-muted-foreground">
@@ -750,6 +1019,8 @@ export default function Attendance() {
           </Card>
         </TabsContent>
 
+        {daySheet}
+
         {/* ── Weekly reports ── */}
         <TabsContent value="weeks">
           <Card>
@@ -765,7 +1036,7 @@ export default function Attendance() {
               {weeks.length === 0 ? (
                 <p className="text-sm text-muted-foreground py-6 text-center">No weeks marked yet.</p>
               ) : (
-                <Table>
+                <Table stack>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Week</TableHead>

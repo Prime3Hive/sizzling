@@ -90,6 +90,7 @@ export default function KPIScoreEntry() {
       const { data, error } = await supabase
         .from("staff_profiles")
         .select("id, full_name")
+        .eq("employment_status", "active")
         .order("full_name");
       if (error) throw error;
       return data || [];
