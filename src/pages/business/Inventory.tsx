@@ -1,43 +1,41 @@
-import React, { useState, useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
-import { Textarea } from "@/components/ui/textarea";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
-  Plus, Package, Search, Filter, Edit2, Archive, ArchiveRestore, ShoppingCart,
-  TrendingDown, ArrowRightLeft, ClipboardCheck, History, LineChart, MoreHorizontal,
-  ClipboardList, Boxes, Settings2, X, AlertTriangle, ChevronRight,
+  Plus, Package, Search, Edit2, Archive, ArchiveRestore, ShoppingCart, ArrowRightLeft, ClipboardCheck,
+  History, LineChart, MoreHorizontal, ClipboardList, Settings2, AlertTriangle, CalendarDays, Download, Ruler,
 } from "lucide-react";
 import { format } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useRoles } from "@/hooks/useRoles";
 import { toast } from "@/hooks/use-toast";
+import { usePagination } from "@/hooks/usePagination";
 import { formatNairaCompact } from "@/lib/currency";
-import { INVENTORY_CATEGORIES, UNITS_OF_MEASURE, getCategoryColor, getCategoryLabel, MOVEMENT_META, movementMeta } from "@/lib/inventoryConstants";
+import { cn } from "@/lib/utils";
+import { INVENTORY_CATEGORIES, UNITS_OF_MEASURE, getCategoryLabel, MOVEMENT_META, movementMeta } from "@/lib/inventoryConstants";
 import { ResponsiveTable, type ResponsiveColumn } from "@/components/ui/responsive-table";
+import { TablePagination } from "@/components/ui/table-pagination";
+import { EmptyState, FilterChips, PageHeader, StatusPill } from "@/components/shell/ui";
 import { InventoryKPICards, type KPIMovement } from "@/components/inventory/InventoryKPICards";
-import { LowStockAlerts } from "@/components/inventory/LowStockAlerts";
 import { CategoryBreakdown } from "@/components/inventory/CategoryBreakdown";
 import { StockReconciliation } from "@/components/inventory/StockReconciliation";
-import { TransactionHistory } from "@/components/inventory/TransactionHistory";
 import { UsageAnalytics } from "@/components/inventory/UsageAnalytics";
 import InventoryDailyReport from "@/components/inventory/InventoryDailyReport";
-import RecordMovementDialog from "@/components/inventory/RecordMovementDialog";
-import { SearchableSelect, type SelectOption } from "@/components/ui/searchable-select";
+import RecordStockSheet, { type StockPrefill } from "@/components/inventory/RecordStockSheet";
 import { Switch } from "@/components/ui/switch";
 import { useInventorySettings } from "@/hooks/useInventorySettings";
-import { recordStockMovements, mergeLines, setProductCost } from "@/lib/stockMovements";
+import { recordStockMovements, setProductCost } from "@/lib/stockMovements";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 interface SKU {
@@ -105,37 +103,66 @@ const EMPTY_MOVEMENTS: Movement[] = [];
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
+type StockStatus = "all" | "low" | "out" | "archived";
+
+/** Quantities are stored to 4 places; show them without trailing zeros. */
+const qty = (n: number) => Number(Number(n).toFixed(4)).toLocaleString("en-NG", { maximumFractionDigits: 4 });
+
+const stockState = (s: SKU): "negative" | "out" | "low" | "ok" =>
+  s.stock_quantity < 0 ? "negative" : s.stock_quantity <= 0 ? "out" : s.stock_quantity <= s.reorder_level ? "low" : "ok";
+
+/** A headline figure that also works as a shortcut to the list behind it. */
+function Tile({ label, value, sub, tone = "neutral", onClick }: {
+  label: string; value: React.ReactNode; sub?: React.ReactNode;
+  tone?: "neutral" | "warn" | "bad"; onClick?: () => void;
+}) {
+  const hot = tone !== "neutral";
+  const body = (
+    <>
+      <span className="text-[13px] font-semibold text-muted-foreground">{label}</span>
+      <span className={cn(
+        "font-display text-2xl font-bold tabular-nums sm:text-[1.75rem]",
+        tone === "warn" && "text-amber-700 dark:text-amber-400",
+        tone === "bad" && "text-destructive",
+      )}>{value}</span>
+      {sub && <span className="truncate text-xs text-muted-foreground">{sub}</span>}
+    </>
+  );
+  const cls = cn(
+    "flex min-w-0 flex-col gap-1 rounded-2xl border bg-card p-4 text-left sm:p-5",
+    hot && tone === "warn" && "border-amber-300 bg-amber-50/60 dark:border-amber-500/40 dark:bg-amber-500/5",
+    hot && tone === "bad" && "border-destructive/40 bg-destructive/5",
+  );
+  return onClick
+    ? <button type="button" onClick={onClick} className={cn(cls, "transition-colors hover:border-foreground/30")}>{body}</button>
+    : <div className={cls}>{body}</div>;
+}
+
 export default function Inventory() {
   const { user } = useAuth();
-  const { isAdmin } = useRoles();
+  const { isAdmin, isManager, hasPermission } = useRoles();
   const navigate = useNavigate();
+  // Same rules the database applies (see 20261027120000_inventory_access.sql).
+  const canRecord = hasPermission("inventory", "create") || isManager;
+  const canManage = hasPermission("inventory", "update");
+  const canOrder = isAdmin || isManager;
 
-  const [operationLoading, setOperationLoading] = useState(false);
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showConversionDialog, setShowConversionDialog] = useState(false);
+  const [showDaily, setShowDaily] = useState(false);
   const [editingSKU, setEditingSKU] = useState<SKU | null>(null);
+  const [record, setRecord] = useState<StockPrefill | null>(null);
 
   const [activeTab, setActiveTab] = useState("items");
   const [searchTerm, setSearchTerm] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
-  const [showArchived, setShowArchived] = useState(false);
+  const [status, setStatus] = useState<StockStatus>("all");
   const [movementFilter, setMovementFilter] = useState("all");
 
   const [newSKU, setNewSKU] = useState({
     name: "", category: "proteins", unit_of_measure: "kg",
     stock_quantity: 0, reorder_level: 0, cost_per_unit: 0, notes: "",
   });
-  const [purchaseForm, setPurchaseForm] = useState({ sku_id: "", quantity: 0, unit_price: 0, notes: "" });
-  // Usage is recorded for many items at once: one line per item, one note and
-  // date for the whole batch.
-  const [usageLines, setUsageLines] = useState<{ sku_id: string; quantity: string }[]>([{ sku_id: "", quantity: "" }]);
-  const [usageNotes, setUsageNotes] = useState("");
-  const [usageDate, setUsageDate] = useState(todayISO);
-  const setUsageLine = (i: number, patch: Partial<{ sku_id: string; quantity: string }>) =>
-    setUsageLines(prev => prev.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
-  const addUsageLine = () => setUsageLines(prev => [...prev, { sku_id: "", quantity: "" }]);
-  const removeUsageLine = (i: number) => setUsageLines(prev => (prev.length > 1 ? prev.filter((_, idx) => idx !== i) : prev));
-  const resetUsage = () => { setUsageLines([{ sku_id: "", quantity: "" }]); setUsageNotes(""); setUsageDate(todayISO()); };
 
   const { settings: invSettings, update: updateInvSettings } = useInventorySettings();
   const [showSetup, setShowSetup] = useState(false);
@@ -300,71 +327,6 @@ export default function Inventory() {
     }
   };
 
-  const handlePurchase = async () => {
-    if (!purchaseForm.sku_id || purchaseForm.quantity <= 0) {
-      toast({ title: "Please select an item and enter a valid quantity", variant: "destructive" });
-      return;
-    }
-    try {
-      setOperationLoading(true);
-      await recordStockMovements({
-        lines: [{ sku_id: purchaseForm.sku_id, quantity_change: purchaseForm.quantity, unit_price: purchaseForm.unit_price || 0 }],
-        type: "purchase", note: purchaseForm.notes || "Purchase", transactionType: "PURCHASE",
-      });
-      toast({ title: "Purchase recorded successfully" });
-      setPurchaseForm({ sku_id: "", quantity: 0, unit_price: 0, notes: "" });
-      fetchData();
-    } catch (error) {
-      console.error("Purchase operation failed:", error);
-      toast({ title: "Failed to record purchase", description: (error as Error).message, variant: "destructive" });
-    } finally {
-      setOperationLoading(false);
-    }
-  };
-
-  const handleUsage = async () => {
-    const lines = usageLines
-      .map(l => ({ sku_id: l.sku_id, quantity: parseFloat(l.quantity) || 0 }))
-      .filter(l => l.sku_id && l.quantity > 0);
-    if (lines.length === 0) {
-      toast({ title: "Add at least one item with a quantity", variant: "destructive" });
-      return;
-    }
-    const totals = mergeLines(lines);
-    const goingNegative = [...totals]
-      .map(([id, qty]) => ({ sku: skus.find(s => s.id === id), qty }))
-      .filter((x): x is { sku: SKU; qty: number } => !!x.sku && x.qty > Number(x.sku.stock_quantity));
-    if (goingNegative.length > 0 && !invSettings.allow_negative_stock) {
-      toast({
-        title: "Insufficient stock",
-        description: goingNegative.map(x => `${x.sku.name}: ${x.sku.stock_quantity} on hand, ${x.qty} used`).join(" · "),
-        variant: "destructive",
-      });
-      return;
-    }
-    try {
-      setOperationLoading(true);
-      const n = await recordStockMovements({
-        lines: [...totals].map(([sku_id, qty]) => ({ sku_id, quantity_change: -qty })),
-        type: "usage", note: usageNotes.trim() || "Usage/Consumption",
-        occurredOn: usageDate, transactionType: "SALE",
-      });
-      toast({
-        title: `Usage recorded for ${n} item${n === 1 ? "" : "s"}`,
-        description: goingNegative.length > 0
-          ? `Now below zero: ${goingNegative.map(x => x.sku.name).join(", ")}.`
-          : undefined,
-      });
-      resetUsage();
-      fetchData();
-    } catch (error) {
-      console.error("Usage operation failed:", error);
-      toast({ title: "Failed to record usage", description: (error as Error).message, variant: "destructive" });
-    } finally {
-      setOperationLoading(false);
-    }
-  };
-
   const handleAddConversion = async () => {
     if (!newConversion.from_unit || !newConversion.to_unit || newConversion.conversion_factor <= 0) {
       toast({ title: "Please fill all fields with valid values", variant: "destructive" });
@@ -382,16 +344,15 @@ export default function Inventory() {
     }
   };
 
-  // Reorder: prefill the in-page purchase form and jump to the Purchase tab.
-  const handleReorder = (sku: SKU) => {
-    setPurchaseForm({
-      sku_id: sku.id,
-      quantity: Math.max(sku.reorder_level * 2 - sku.stock_quantity, sku.reorder_level, 1),
-      unit_price: sku.cost_per_unit,
-      notes: `Reorder for ${sku.name}`,
-    });
-    setActiveTab("purchase");
-  };
+  // Restock: open Record stock on "Received", prefilled to bring the item back
+  // comfortably above its reorder level.
+  const handleReorder = (sku: SKU) => setRecord({
+    mode: "in",
+    sku_id: sku.id,
+    quantity: Math.max(sku.reorder_level * 2 - sku.stock_quantity, sku.reorder_level, 1),
+    unit_price: sku.cost_per_unit,
+    note: `Restock of ${sku.name}`,
+  });
 
   // Reorder via formal procurement (LPO) — hands off to the Procurement module.
   const handleOrderViaLPO = (sku: SKU) => {
@@ -415,35 +376,37 @@ export default function Inventory() {
   });
 
   // ── Derived ────────────────────────────────────────────────────────────────
-  const filteredSKUs = useMemo(() => skus.filter(sku => {
-    const matchesSearch = sku.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      sku.category.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesCategory = categoryFilter === "all" || sku.category === categoryFilter;
-    const matchesArchive = showArchived ? sku.is_archived : !sku.is_archived;
-    return matchesSearch && matchesCategory && matchesArchive;
-  }), [skus, searchTerm, categoryFilter, showArchived]);
-
   const activeSkus = useMemo(() => skus.filter(s => !s.is_archived), [skus]);
-  const purchaseOptions = useMemo<SelectOption[]>(() => activeSkus.map(s => ({
-    value: s.id, label: s.name, hint: `${s.stock_quantity} ${s.unit_of_measure} on hand`,
-  })), [activeSkus]);
-  // With negative stock off, an empty item can't be used, so it isn't offered.
-  const usageOptions = useMemo<SelectOption[]>(() => activeSkus
-    .filter(s => invSettings.allow_negative_stock || Number(s.stock_quantity) > 0)
-    .map(s => ({ value: s.id, label: s.name, hint: `${s.stock_quantity} ${s.unit_of_measure} available` })),
-  [activeSkus, invSettings.allow_negative_stock]);
-  // An item already on another line is left out — raise that line's quantity instead.
-  const usageOptionsFor = (i: number) => {
-    const taken = new Set(usageLines.filter((_, idx) => idx !== i).map(l => l.sku_id).filter(Boolean));
-    return usageOptions.filter(o => !taken.has(o.value));
-  };
+  const counts = useMemo(() => ({
+    low: activeSkus.filter(s => stockState(s) === "low").length,
+    out: activeSkus.filter(s => ["out", "negative"].includes(stockState(s))).length,
+    negative: activeSkus.filter(s => stockState(s) === "negative").length,
+    archived: skus.length - activeSkus.length,
+    value: activeSkus.reduce((t, s) => t + Math.max(0, Number(s.stock_quantity)) * Number(s.cost_per_unit || 0), 0),
+  }), [skus, activeSkus]);
+
+  const filteredSKUs = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    return skus.filter(sku => {
+      const st = stockState(sku);
+      const matchesStatus = status === "archived" ? sku.is_archived
+        : !sku.is_archived && (status === "all" || (status === "low" ? st === "low" : st === "out" || st === "negative"));
+      return matchesStatus
+        && (categoryFilter === "all" || sku.category === categoryFilter)
+        && (!q || sku.name.toLowerCase().includes(q) || getCategoryLabel(sku.category).toLowerCase().includes(q));
+    });
+  }, [skus, searchTerm, categoryFilter, status]);
 
   const negativeSkus = useMemo(() => activeSkus.filter(s => Number(s.stock_quantity) < 0), [activeSkus]);
-  const usageLineCount = usageLines.filter(l => l.sku_id && (parseFloat(l.quantity) || 0) > 0).length;
 
   const filteredMovements = useMemo(() =>
     movementFilter === "all" ? movements : movements.filter(m => m.movement_type === movementFilter),
     [movements, movementFilter]);
+
+  const itemPages = usePagination(filteredSKUs, 25);
+  const movementPages = usePagination(filteredMovements, 25);
+
+  const showList = (s: StockStatus) => { setActiveTab("items"); setStatus(s); };
 
   const exportInventoryReport = () => {
     const totalUnits = skus.reduce((s, it) => s + Number(it.stock_quantity), 0);
@@ -481,426 +444,306 @@ export default function Inventory() {
   };
 
   // ── Items table columns ──────────────────────────────────────────────────────
+  const statusPill = (sku: SKU) => {
+    if (sku.is_archived) return <StatusPill tone="neutral" label="Archived" />;
+    const st = stockState(sku);
+    return st === "negative" ? <StatusPill tone="bad" label="Below zero" />
+      : st === "out" ? <StatusPill tone="bad" label="Out of stock" />
+      : st === "low" ? <StatusPill tone="pending" label="Running low" />
+      : <StatusPill tone="good" label="In stock" />;
+  };
+
   const itemColumns: ResponsiveColumn<SKU>[] = [
     {
       key: "name", header: "Item", primary: true,
       cell: (sku) => (
-        <span className="font-medium inline-flex items-center gap-1">
-          {sku.name}
-          <ChevronRight className="h-3.5 w-3.5 text-muted-foreground hidden md:inline" aria-hidden />
+        <div className="min-w-0">
+          <div className="truncate font-semibold">{sku.name}</div>
+          <div className="truncate text-xs text-muted-foreground">{getCategoryLabel(sku.category)}</div>
+        </div>
+      ),
+    },
+    {
+      key: "qty", header: "On hand", align: "right",
+      cell: (sku) => (
+        <span className={cn("tabular-nums font-semibold", sku.stock_quantity < 0 && "text-destructive")}>
+          {qty(sku.stock_quantity)} <span className="font-normal text-muted-foreground">{sku.unit_of_measure}</span>
         </span>
       ),
     },
+    { key: "status", header: "Status", cell: statusPill },
     {
-      key: "category", header: "Category",
-      cell: (sku) => {
-        const c = getCategoryColor(sku.category);
-        return <Badge className={`${c.bg} ${c.text} text-xs`}>{getCategoryLabel(sku.category)}</Badge>;
-      },
+      key: "reorder", header: "Reorder at", align: "right", hideOnMobile: true,
+      cell: (sku) => <span className="tabular-nums text-muted-foreground">{qty(sku.reorder_level)}</span>,
     },
-    { key: "uom", header: "UOM", cell: (sku) => <span className="text-muted-foreground">{sku.unit_of_measure}</span> },
-    { key: "qty", header: "Qty", align: "right", cell: (sku) => <span className={`font-medium ${sku.stock_quantity < 0 ? "text-destructive" : ""}`}>{sku.stock_quantity}</span> },
-    { key: "reorder", header: "Reorder", align: "right", cell: (sku) => sku.reorder_level },
-    { key: "cost", header: "Cost/Unit", align: "right", cell: (sku) => formatNairaCompact(sku.cost_per_unit) },
-    { key: "value", header: "Value", align: "right", cell: (sku) => formatNairaCompact(sku.stock_quantity * sku.cost_per_unit) },
     {
-      key: "status", header: "Status",
-      cell: (sku) =>
-        sku.stock_quantity < 0 ? <Badge variant="destructive">Negative</Badge>
-          : sku.stock_quantity <= 0 ? <Badge variant="destructive">Out of Stock</Badge>
-          : sku.stock_quantity <= sku.reorder_level ? <Badge className="bg-orange-100 text-orange-700">Low Stock</Badge>
-            : <Badge variant="secondary">In Stock</Badge>,
-    },
-    ...(isAdmin ? [{
-      key: "actions", header: "", align: "right" as const, mobileFooter: true,
-      cell: (sku: SKU) => (
-        // The row opens the item page; the menu must not.
-        <div onClick={(e) => e.stopPropagation()}>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="sm" className="w-full md:w-auto justify-center">
-              <MoreHorizontal className="h-4 w-4" />
-              <span className="md:hidden ml-2">Actions</span>
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-44">
-            <DropdownMenuItem onClick={() => navigate(`/business/inventory/item/${sku.id}`)}>
-              <History className="h-3.5 w-3.5 mr-2" />Stock history
-            </DropdownMenuItem>
-            {!sku.is_archived && (
-              <DropdownMenuItem onClick={() => setEditingSKU(sku)}>
-                <Edit2 className="h-3.5 w-3.5 mr-2" />Edit
-              </DropdownMenuItem>
-            )}
-            {!sku.is_archived && (
-              <>
-                <DropdownMenuItem onClick={() => handleReorder(sku)}>
-                  <ShoppingCart className="h-3.5 w-3.5 mr-2" />Quick Restock
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => handleOrderViaLPO(sku)}>
-                  <ClipboardList className="h-3.5 w-3.5 mr-2" />Order via LPO
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-              </>
-            )}
-            {sku.is_archived ? (
-              <DropdownMenuItem onClick={() => handleArchive(sku.id, false)} className="text-green-700 focus:text-green-700">
-                <ArchiveRestore className="h-3.5 w-3.5 mr-2" />Restore
-              </DropdownMenuItem>
-            ) : (
-              <DropdownMenuItem onClick={() => handleArchive(sku.id, true)} className="text-amber-700 focus:text-amber-700">
-                <Archive className="h-3.5 w-3.5 mr-2" />Archive
-              </DropdownMenuItem>
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
+      key: "value", header: "Value", align: "right", hideOnMobile: true,
+      cell: (sku) => (
+        <div className="tabular-nums">
+          <div>{formatNairaCompact(Math.max(0, sku.stock_quantity) * sku.cost_per_unit)}</div>
+          <div className="text-xs text-muted-foreground">{formatNairaCompact(sku.cost_per_unit)}/{sku.unit_of_measure}</div>
         </div>
       ),
-    }] : []),
+    },
+    {
+      key: "actions", header: "", align: "right", mobileFooter: true,
+      cell: (sku: SKU) => {
+        const needs = !sku.is_archived && stockState(sku) !== "ok";
+        return (
+          // The row opens the item page; these must not.
+          <div className="flex gap-2 md:justify-end" onClick={(e) => e.stopPropagation()}>
+            {needs && canRecord && (
+              <Button size="sm" variant="outline" className="flex-1 md:flex-none" onClick={() => handleReorder(sku)}>
+                <ShoppingCart className="mr-1.5 h-3.5 w-3.5" />Restock
+              </Button>
+            )}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="sm" aria-label={`More for ${sku.name}`} className="h-9 w-9 p-0">
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-48">
+                <DropdownMenuItem onClick={() => navigate(`/business/inventory/item/${sku.id}`)}>
+                  <History className="mr-2 h-3.5 w-3.5" />Stock history
+                </DropdownMenuItem>
+                {!sku.is_archived && canRecord && (
+                  <DropdownMenuItem onClick={() => setRecord({ mode: "usage", sku_id: sku.id })}>
+                    <ArrowRightLeft className="mr-2 h-3.5 w-3.5" />Record stock
+                  </DropdownMenuItem>
+                )}
+                {!sku.is_archived && canOrder && (
+                  <DropdownMenuItem onClick={() => handleOrderViaLPO(sku)}>
+                    <ClipboardList className="mr-2 h-3.5 w-3.5" />Order via LPO
+                  </DropdownMenuItem>
+                )}
+                {canManage && <DropdownMenuSeparator />}
+                {canManage && !sku.is_archived && (
+                  <DropdownMenuItem onClick={() => setEditingSKU(sku)}>
+                    <Edit2 className="mr-2 h-3.5 w-3.5" />Edit item
+                  </DropdownMenuItem>
+                )}
+                {canManage && (sku.is_archived ? (
+                  <DropdownMenuItem onClick={() => handleArchive(sku.id, false)} className="text-green-700 focus:text-green-700">
+                    <ArchiveRestore className="mr-2 h-3.5 w-3.5" />Restore
+                  </DropdownMenuItem>
+                ) : (
+                  <DropdownMenuItem onClick={() => handleArchive(sku.id, true)} className="text-amber-700 focus:text-amber-700">
+                    <Archive className="mr-2 h-3.5 w-3.5" />Archive
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        );
+      },
+    },
   ];
 
   // ── Movements table columns ──────────────────────────────────────────────────
   const movementColumns: ResponsiveColumn<Movement>[] = [
     {
       key: "item", header: "Item", primary: true,
-      cell: (m) => <span className="font-medium">{m.products?.name ?? "—"}</span>,
+      cell: (m) => <span className="font-semibold">{m.products?.name ?? "—"}</span>,
+    },
+    {
+      key: "change", header: "Change", align: "right",
+      cell: (m) => (
+        <span className={cn("tabular-nums font-semibold", Number(m.quantity_change) >= 0 ? "text-green-700 dark:text-green-400" : "text-destructive")}>
+          {Number(m.quantity_change) >= 0 ? "+" : "−"}{qty(Math.abs(Number(m.quantity_change)))} {m.products?.uom ?? ""}
+        </span>
+      ),
     },
     {
       key: "type", header: "Type",
       cell: (m) => {
         const meta = movementMeta(m.movement_type);
-        return <Badge variant="outline" className={`text-xs ${meta.cls}`}>{meta.label}</Badge>;
+        return <span className={cn("inline-flex h-6 items-center rounded-md border px-2 text-xs font-semibold", meta.cls)}>{meta.label}</span>;
       },
     },
     {
-      key: "change", header: "Change", align: "right",
-      cell: (m) => (
-        <span className={`font-medium ${Number(m.quantity_change) >= 0 ? "text-green-600" : "text-destructive"}`}>
-          {Number(m.quantity_change) >= 0 ? "+" : ""}{m.quantity_change} {m.products?.uom ?? ""}
-        </span>
-      ),
-    },
-    {
-      key: "date", header: "Date", align: "right",
-      cell: (m) => <span className="text-sm text-muted-foreground">{format(new Date(m.occurred_on), "dd MMM yyyy")}</span>,
+      key: "date", header: "Date",
+      cell: (m) => <span className="text-sm text-muted-foreground">{format(new Date(m.occurred_on), "d MMM yyyy")}</span>,
     },
     {
       key: "note", header: "Note", hideOnMobile: true,
-      cell: (m) => <span className="text-sm text-muted-foreground max-w-xs truncate block">{m.note || "—"}</span>,
+      cell: (m) => <span className="block max-w-xs truncate text-sm text-muted-foreground">{m.note || "—"}</span>,
     },
   ];
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary" />
+      <div className="space-y-6" aria-busy="true">
+        <Skeleton className="h-9 w-48" />
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {[0, 1, 2, 3].map(i => <Skeleton key={i} className="h-[104px] rounded-2xl" />)}
+        </div>
+        <Skeleton className="h-10 w-80" />
+        <Skeleton className="h-96 w-full" />
       </div>
     );
   }
 
   return (
-    <div className="space-y-5 sm:space-y-6">
-      {/* ── Header ── */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-bold flex items-center gap-2">
-            <Boxes className="h-7 w-7 text-primary" /> Inventory
-          </h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            Track stock levels, record movements, manage purchases and monitor usage
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {isAdmin && <RecordMovementDialog onDone={fetchData} allowNegative={invSettings.allow_negative_stock} />}
-          {isAdmin && (
-            <Button variant="outline" size="sm" onClick={() => setShowSetup(true)} className="gap-2">
-              <Settings2 className="h-4 w-4" /> Setup
+    <div className="space-y-6">
+      <PageHeader
+        title="Inventory"
+        description="What’s in stock, what’s running low, and every movement in and out."
+        actions={<>
+          {canRecord && (
+            <Button className="flex-1 sm:flex-none" onClick={() => setRecord({ mode: "usage" })}>
+              <ArrowRightLeft className="mr-2 h-4 w-4" />Record stock
             </Button>
           )}
-          <InventoryDailyReport />
-          <Button variant="outline" size="sm" onClick={() => navigate("/business/inventory-requests")} className="gap-2">
-            <ClipboardList className="h-4 w-4" />
-            Requests
-            {pendingRequests > 0 && <Badge className="ml-0.5 px-1.5">{pendingRequests}</Badge>}
-          </Button>
-          {isAdmin && (
-            <Button size="sm" onClick={() => setShowAddDialog(true)} className="gap-2">
-              <Plus className="h-4 w-4" /> Add Item
+          {canManage && (
+            <Button variant="outline" className="flex-1 sm:flex-none" onClick={() => setShowAddDialog(true)}>
+              <Plus className="mr-2 h-4 w-4" />Add item
             </Button>
           )}
-        </div>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" aria-label="More inventory actions">
+                <MoreHorizontal className="h-4 w-4 sm:mr-2" /><span className="max-sm:sr-only">More</span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuItem onClick={() => navigate("/business/inventory-requests")}>
+                <ClipboardList className="mr-2 h-4 w-4" />Stock requests
+                {pendingRequests > 0 && <span className="ml-auto rounded-full bg-primary px-1.5 text-xs font-bold text-primary-foreground">{pendingRequests}</span>}
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setShowDaily(true)}>
+                <CalendarDays className="mr-2 h-4 w-4" />Daily report
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={exportInventoryReport}>
+                <Download className="mr-2 h-4 w-4" />Export stock list (CSV)
+              </DropdownMenuItem>
+              {(canManage || isAdmin) && <DropdownMenuSeparator />}
+              {(canManage || isAdmin) && <DropdownMenuLabel className="text-xs text-muted-foreground">Setup</DropdownMenuLabel>}
+              {canManage && (
+                <DropdownMenuItem onClick={() => setShowConversionDialog(true)}>
+                  <Ruler className="mr-2 h-4 w-4" />Unit conversions
+                </DropdownMenuItem>
+              )}
+              {isAdmin && (
+                <DropdownMenuItem onClick={() => setShowSetup(true)}>
+                  <Settings2 className="mr-2 h-4 w-4" />Stock rules
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </>}
+      />
+
+      {/* ── What needs attention ── */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <Tile label="Stock value" value={formatNairaCompact(counts.value)} sub={`${activeSkus.length} items in stock list`} />
+        <Tile label="Running low" value={counts.low} tone={counts.low ? "warn" : "neutral"}
+          sub={counts.low ? "Tap to see them" : "Nothing at its reorder level"}
+          onClick={counts.low ? () => showList("low") : undefined} />
+        <Tile label="Out of stock" value={counts.out} tone={counts.out ? "bad" : "neutral"}
+          sub={counts.negative ? `${counts.negative} below zero` : counts.out ? "Tap to see them" : "Everything has stock"}
+          onClick={counts.out ? () => showList("out") : undefined} />
+        <Tile label="Stock requests" value={pendingRequests} tone={pendingRequests ? "warn" : "neutral"}
+          sub={pendingRequests ? "Waiting for approval" : "None waiting"}
+          onClick={() => navigate("/business/inventory-requests")} />
       </div>
 
-      {/* ── KPI dashboard ── */}
-      <InventoryKPICards skus={skus.filter(s => !s.is_archived)} transactions={transactions} movements30d={inventoryData?.movements30d} />
-
-      {/* ── Alerts + category breakdown ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
-        <div className="lg:col-span-2">
-          <LowStockAlerts skus={skus} onReorder={isAdmin ? handleReorder : undefined} />
-        </div>
-        <div>
-          <CategoryBreakdown skus={skus} />
-        </div>
-      </div>
-
-      {/* ── Main tabs ── */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-5">
-        <div>
-          <TabsList>
-            <TabsTrigger value="items" className="gap-1.5"><Package className="h-4 w-4" />Items</TabsTrigger>
-            {isAdmin && <TabsTrigger value="purchase" className="gap-1.5"><ShoppingCart className="h-4 w-4" />Purchase</TabsTrigger>}
-            {isAdmin && <TabsTrigger value="usage" className="gap-1.5"><TrendingDown className="h-4 w-4" />Usage</TabsTrigger>}
-            {isAdmin && <TabsTrigger value="reconciliation" className="gap-1.5"><ClipboardCheck className="h-4 w-4" />Stock Take</TabsTrigger>}
-            <TabsTrigger value="movements" className="gap-1.5"><ArrowRightLeft className="h-4 w-4" />Movements</TabsTrigger>
-            <TabsTrigger value="analytics" className="gap-1.5"><LineChart className="h-4 w-4" />Analytics</TabsTrigger>
-            <TabsTrigger value="history" className="gap-1.5"><History className="h-4 w-4" />History</TabsTrigger>
-          </TabsList>
-        </div>
+        <TabsList>
+          <TabsTrigger value="items" className="gap-1.5"><Package className="h-4 w-4" />Items</TabsTrigger>
+          <TabsTrigger value="movements" className="gap-1.5"><History className="h-4 w-4" />Movements</TabsTrigger>
+          {canManage && <TabsTrigger value="reconciliation" className="gap-1.5"><ClipboardCheck className="h-4 w-4" />Stock take</TabsTrigger>}
+          <TabsTrigger value="analytics" className="gap-1.5"><LineChart className="h-4 w-4" />Analytics</TabsTrigger>
+        </TabsList>
 
         {/* ── Items ── */}
         <TabsContent value="items" className="space-y-4">
-          <div className="flex flex-col sm:flex-row sm:flex-wrap gap-3 sm:items-center">
-            <div className="relative flex-1 min-w-0 sm:min-w-48 sm:max-w-sm">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="Search items..." value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)} className="pl-10" />
-            </div>
-            <div className="flex items-center gap-2">
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+            <FilterChips<StockStatus> label="Filter by stock" value={status} onChange={setStatus} options={[
+              { value: "all", label: "All items", count: activeSkus.length },
+              { value: "low", label: "Running low", count: counts.low },
+              { value: "out", label: "Out of stock", count: counts.out },
+              { value: "archived", label: "Archived", count: counts.archived },
+            ]} />
+            <div className="flex gap-2">
+              <div className="relative min-w-0 flex-1 xl:w-64 xl:flex-none">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+                <Input aria-label="Search items" placeholder="Search items" value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)} className="pl-9" />
+              </div>
               <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-                <SelectTrigger className="flex-1 sm:w-44">
-                  <Filter className="h-4 w-4 mr-2 shrink-0" />
-                  <SelectValue placeholder="Category" />
-                </SelectTrigger>
+                <SelectTrigger aria-label="Category" className="w-36 shrink-0 sm:w-44"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Categories</SelectItem>
+                  <SelectItem value="all">All categories</SelectItem>
                   {INVENTORY_CATEGORIES.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
                 </SelectContent>
               </Select>
-              <Button variant={showArchived ? "default" : "outline"} size="sm"
-                onClick={() => setShowArchived(v => !v)} className="gap-2 shrink-0">
-                <Archive className="h-4 w-4" />
-                <span className="hidden sm:inline">{showArchived ? "Archived" : "Archived"}</span>
-              </Button>
-              {isAdmin && (
-                <Button variant="outline" size="sm" onClick={() => setShowConversionDialog(true)} className="gap-2 shrink-0">
-                  <ArrowRightLeft className="h-4 w-4" /><span className="hidden sm:inline">Units</span>
-                </Button>
-              )}
             </div>
           </div>
 
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">
-                {showArchived ? "Archived Items" : "Active Items"} ({filteredSKUs.length})
-              </CardTitle>
-              <CardDescription>
-                {showArchived
-                  ? "Archived items are excluded from requests and stock calculations."
-                  : "All active inventory items available for requests and usage."}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <ResponsiveTable
-                columns={itemColumns}
-                data={filteredSKUs}
-                rowKey={(s) => s.id}
-                onRowClick={(s) => navigate(`/business/inventory/item/${s.id}`)}
-                emptyState={
-                  <div className="flex flex-col items-center justify-center py-12 text-center gap-2 text-muted-foreground">
-                    <Package className="h-8 w-8 opacity-40" />
-                    <p className="text-sm">No items found.</p>
-                  </div>
-                }
-              />
-            </CardContent>
-          </Card>
+          <ResponsiveTable
+            columns={itemColumns}
+            data={itemPages.pageData}
+            rowKey={(s) => s.id}
+            onRowClick={(s) => navigate(`/business/inventory/item/${s.id}`)}
+            rowClassName={(s) => (stockState(s) === "negative" ? "bg-destructive/5" : undefined)}
+            emptyState={
+              <EmptyState icon={Package} tone="neutral"
+                title={searchTerm || categoryFilter !== "all" ? "No items match" : status === "low" ? "Nothing running low" : status === "out" ? "Nothing out of stock" : status === "archived" ? "No archived items" : "No items yet"}
+                body={!skus.length && canManage ? "Add the things you keep in stock to start tracking them." : undefined}
+                action={!skus.length && canManage ? <Button onClick={() => setShowAddDialog(true)}><Plus className="mr-2 h-4 w-4" />Add item</Button> : undefined} />
+            }
+          />
+          <TablePagination page={itemPages.page} pageCount={itemPages.pageCount} total={itemPages.total}
+            pageSize={itemPages.pageSize} onPageChange={itemPages.setPage} />
         </TabsContent>
 
-        {/* ── Purchase ── */}
-        {isAdmin && (
-          <TabsContent value="purchase">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-base"><ShoppingCart className="h-5 w-5" />Record Purchase</CardTitle>
-                <CardDescription>
-                  Stock bought outside an LPO. Record the payment as an expense as usual — this moves its cost
-                  into inventory until the stock is used, so it is only counted once.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <Label>Item</Label>
-                    <SearchableSelect
-                      options={purchaseOptions}
-                      value={purchaseForm.sku_id}
-                      onChange={(v) => setPurchaseForm({ ...purchaseForm, sku_id: v })}
-                      placeholder="Search items…"
-                      title="Choose an item"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Quantity</Label>
-                    <Input type="number" step="0.01" value={purchaseForm.quantity}
-                      onChange={(e) => setPurchaseForm({ ...purchaseForm, quantity: Number(e.target.value) })} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Unit Price (₦)</Label>
-                    <Input type="number" step="0.01" value={purchaseForm.unit_price}
-                      onChange={(e) => setPurchaseForm({ ...purchaseForm, unit_price: Number(e.target.value) })} />
-                  </div>
-                  <div className="flex items-end">
-                    <div className="text-lg font-semibold">Total: {formatNairaCompact(purchaseForm.quantity * purchaseForm.unit_price)}</div>
-                  </div>
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Notes (Supplier, Invoice #, etc.)</Label>
-                  <Textarea value={purchaseForm.notes}
-                    onChange={(e) => setPurchaseForm({ ...purchaseForm, notes: e.target.value })} placeholder="Optional notes..." />
-                </div>
-                <Button onClick={handlePurchase} disabled={operationLoading} className="w-full sm:w-auto">
-                  {operationLoading ? "Processing..." : "Record Purchase"}
-                </Button>
-              </CardContent>
-            </Card>
-          </TabsContent>
-        )}
+        {/* ── Movements ── */}
+        <TabsContent value="movements" className="space-y-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm text-muted-foreground">Every stock-in, use, sale and correction, newest first. Tap one to open the item.</p>
+            <Select value={movementFilter} onValueChange={setMovementFilter}>
+              <SelectTrigger aria-label="Movement type" className="w-full sm:w-52"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All movements</SelectItem>
+                {Object.entries(MOVEMENT_META).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <ResponsiveTable
+            columns={movementColumns}
+            data={movementPages.pageData}
+            rowKey={(m) => m.id}
+            onRowClick={(m) => m.products?.sku_id && navigate(`/business/inventory/item/${m.products.sku_id}`)}
+            mobileSubtitle={(m) => m.note || undefined}
+            emptyState={<EmptyState icon={History} tone="neutral" title="No movements yet" body="Recorded stock will appear here." />}
+          />
+          <TablePagination page={movementPages.page} pageCount={movementPages.pageCount} total={movementPages.total}
+            pageSize={movementPages.pageSize} onPageChange={movementPages.setPage} />
+        </TabsContent>
 
-        {/* ── Usage ── */}
-        {isAdmin && (
-          <TabsContent value="usage">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-base"><TrendingDown className="h-5 w-5" />Record Usage / Consumption</CardTitle>
-                <CardDescription>
-                  Track items used in production or events — add every item you used, then record them together.
-                  {invSettings.allow_negative_stock && " Negative stock is allowed, so items can go below zero."}
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <div className="hidden sm:grid grid-cols-[1fr_7rem_9rem_2.5rem] gap-2 text-xs text-muted-foreground px-0.5">
-                    <span>Item</span><span>Quantity</span><span>After usage</span><span />
-                  </div>
-                  {usageLines.map((line, i) => {
-                    const sku = skus.find(s => s.id === line.sku_id);
-                    const after = sku ? Number(sku.stock_quantity) - (parseFloat(line.quantity) || 0) : null;
-                    return (
-                      <div key={i} className="grid grid-cols-[1fr_5.5rem_2.5rem] sm:grid-cols-[1fr_7rem_9rem_2.5rem] gap-2 items-start">
-                        <div className="min-w-0">
-                          <SearchableSelect
-                            options={usageOptionsFor(i)}
-                            value={line.sku_id}
-                            onChange={(v) => setUsageLine(i, { sku_id: v })}
-                            placeholder="Search items…"
-                            title="Choose an item"
-                          />
-                        </div>
-                        <Input type="number" min="0" step="0.01" inputMode="decimal" placeholder="Qty" aria-label="Quantity used"
-                          value={line.quantity} onChange={(e) => setUsageLine(i, { quantity: e.target.value })} />
-                        <div className={`order-last col-span-3 sm:order-none sm:col-span-1 text-xs sm:text-sm sm:h-10 flex items-center ${after != null && after < 0 ? "text-destructive font-medium" : "text-muted-foreground"}`}>
-                          {sku && (
-                            <>
-                              {after != null && after < 0 && <AlertTriangle className="h-3.5 w-3.5 mr-1 shrink-0" />}
-                              <span className="sm:hidden mr-1">After usage:</span>
-                              {after} {sku.unit_of_measure}
-                            </>
-                          )}
-                        </div>
-                        <Button type="button" variant="ghost" size="icon" aria-label="Remove item"
-                          className="text-muted-foreground hover:text-destructive"
-                          onClick={() => removeUsageLine(i)} disabled={usageLines.length <= 1}>
-                          <X className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    );
-                  })}
-                  <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={addUsageLine}>
-                    <Plus className="h-3.5 w-3.5" /> Add item
-                  </Button>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-[12rem_1fr] gap-4">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="usage-date">Date used</Label>
-                    <Input id="usage-date" type="date" value={usageDate} max={todayISO()} onChange={(e) => setUsageDate(e.target.value)} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="usage-notes">Notes (Event, reason, etc.)</Label>
-                    <Textarea id="usage-notes" rows={2} value={usageNotes}
-                      onChange={(e) => setUsageNotes(e.target.value)} placeholder="What was this used for..." />
-                  </div>
-                </div>
-                <Button onClick={handleUsage} disabled={operationLoading} className="w-full sm:w-auto">
-                  {operationLoading ? "Processing..." : usageLineCount > 1 ? `Record Usage (${usageLineCount} items)` : "Record Usage"}
-                </Button>
-              </CardContent>
-            </Card>
-          </TabsContent>
-        )}
-
-        {/* ── Stock Take ── */}
-        {isAdmin && (
+        {/* ── Stock take ── */}
+        {canManage && (
           <TabsContent value="reconciliation">
             <StockReconciliation skus={skus} stockTakes={stockTakes} onComplete={fetchData} />
           </TabsContent>
         )}
 
-        {/* ── Movements ── */}
-        <TabsContent value="movements" className="space-y-4">
-          <Card>
-            <CardHeader className="pb-3">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                <div>
-                  <CardTitle className="text-base">Stock Movements</CardTitle>
-                  <CardDescription>Every stock-in, usage and adjustment, newest first</CardDescription>
-                </div>
-                <Select value={movementFilter} onValueChange={setMovementFilter}>
-                  <SelectTrigger className="w-full sm:w-44">
-                    <Filter className="h-4 w-4 mr-2 shrink-0" />
-                    <SelectValue placeholder="All movements" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Movements</SelectItem>
-                    {Object.entries(MOVEMENT_META).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <ResponsiveTable
-                columns={movementColumns}
-                data={filteredMovements}
-                rowKey={(m) => m.id}
-                onRowClick={(m) => m.products?.sku_id && navigate(`/business/inventory/item/${m.products.sku_id}`)}
-                mobileSubtitle={(m) => m.note || undefined}
-                emptyState={
-                  <div className="flex flex-col items-center justify-center py-12 text-center gap-2 text-muted-foreground">
-                    <ArrowRightLeft className="h-8 w-8 opacity-40" />
-                    <p className="text-sm">No stock movements recorded yet.</p>
-                  </div>
-                }
-              />
-            </CardContent>
-          </Card>
-        </TabsContent>
-
         {/* ── Analytics ── */}
-        <TabsContent value="analytics">
-          <UsageAnalytics transactions={transactions} skus={skus} />
-        </TabsContent>
-
-        {/* ── History ── */}
-        <TabsContent value="history" className="space-y-4">
-          <div className="flex justify-end">
-            <Button variant="outline" size="sm" onClick={exportInventoryReport} className="gap-2">
-              <ClipboardList className="h-4 w-4" /> Export Inventory CSV
-            </Button>
+        <TabsContent value="analytics" className="space-y-6">
+          <InventoryKPICards skus={activeSkus} transactions={transactions} movements30d={inventoryData?.movements30d} />
+          <div className="grid gap-6 lg:grid-cols-3">
+            <div className="lg:col-span-2"><UsageAnalytics transactions={transactions} skus={skus} /></div>
+            <CategoryBreakdown skus={activeSkus} />
           </div>
-          <TransactionHistory transactions={transactions} />
         </TabsContent>
       </Tabs>
+
+      <RecordStockSheet
+        open={!!record} onOpenChange={(o) => { if (!o) setRecord(null); }}
+        skus={skus} allowNegative={invSettings.allow_negative_stock} prefill={record} onDone={fetchData}
+      />
+      <InventoryDailyReport open={showDaily} onOpenChange={setShowDaily} />
 
       {/* ── Add Item Dialog ── */}
       <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>

@@ -23,9 +23,16 @@ interface Row {
   available: number;
 }
 
-export default function InventoryDailyReport() {
+/** Opens from its own button, or from a menu when `open` is controlled. */
+export default function InventoryDailyReport({ open: openProp, onOpenChange }: {
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+} = {}) {
   const { toast } = useToast();
-  const [open, setOpen] = useState(false);
+  const [openState, setOpenState] = useState(false);
+  const controlled = openProp !== undefined;
+  const open = controlled ? openProp : openState;
+  const setOpen = (o: boolean) => (controlled ? onOpenChange?.(o) : setOpenState(o));
   const [date, setDate] = useState(new Date().toISOString().split("T")[0]);
 
   const { data, isLoading } = useQuery({
@@ -102,11 +109,13 @@ export default function InventoryDailyReport() {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button variant="outline">
-          <CalendarDays className="h-4 w-4 mr-2" /> Daily Report
-        </Button>
-      </DialogTrigger>
+      {!controlled && (
+        <DialogTrigger asChild>
+          <Button variant="outline">
+            <CalendarDays className="h-4 w-4 mr-2" /> Daily Report
+          </Button>
+        </DialogTrigger>
+      )}
       <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Daily Inventory Report</DialogTitle>
