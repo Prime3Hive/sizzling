@@ -13,6 +13,8 @@
 //   leave       admin            StaffLeaveRequests    (canManage = isAdmin)
 //   attendance  approve_attendance  Attendance.tsx     (weeks in "submitted")
 //   inventory   admin / manager  InventoryRequests.tsx
+//   production  production·update Production.tsx      (runs in "submitted"; the
+//                                 database refuses self-approval by non-admins)
 //   signup      approve_roles    UserManagement.tsx    (approve only; no reject there)
 
 import { useMemo } from 'react';
@@ -24,16 +26,18 @@ import { useRoles } from '@/hooks/useRoles';
 import { formatNairaCompact } from '@/lib/currency';
 import { formatMinor } from '@/lib/money';
 import { weekDays } from '@/lib/attendance';
+import { approveProductionRun, describeInPacks, fmtQty, rejectProductionRun, unitsFor } from '@/lib/production';
 
 const db = supabase as any;
 
-export type InboxKind = 'expense' | 'leave' | 'attendance' | 'inventory' | 'signup';
+export type InboxKind = 'expense' | 'leave' | 'attendance' | 'inventory' | 'production' | 'signup';
 
 export const KIND_LABEL: Record<InboxKind, string> = {
   expense: 'Expense',
   leave: 'Leave',
   attendance: 'Attendance',
   inventory: 'Stock request',
+  production: 'Production',
   signup: 'Sign-up',
 };
 
@@ -75,7 +79,7 @@ const expenseAmount = (e: { amount_minor?: number | null; amount: number }) =>
 
 export function useInbox() {
   const { user } = useAuth();
-  const { isAdmin, isManager, canFeature, userRole } = useRoles();
+  const { isAdmin, isManager, canFeature, hasPermission, userRole } = useRoles();
   const qc = useQueryClient();
   const approved = userRole?.role_status === 'approved';
 
@@ -84,6 +88,7 @@ export function useInbox() {
     leave: isAdmin,
     attendance: canFeature('approve_attendance'),
     inventory: isAdmin || isManager,
+    production: hasPermission('production', 'update'),
     signup: canFeature('approve_roles'),
   };
   const canApproveAnything = Object.values(can).some(Boolean);
@@ -170,6 +175,29 @@ export function useInbox() {
       return (data ?? []) as any[];
     },
     enabled: !!user && can.inventory,
+    ...poll,
+  });
+
+  const productionQ = useQuery({
+    queryKey: ['inbox', 'production'],
+    queryFn: async () => {
+      let q = db
+        .from('production_runs')
+        .select(`
+          id, run_number, production_date, output_qty, batches, notes, recorded_by, recorded_at,
+          products(name, uom, product_units(unit_name, factor)),
+          stock_lots!production_runs_lot_fk(lot_number, expires_on),
+          production_run_inputs(id),
+          production_run_costs(amount)
+        `)
+        .eq('status', 'submitted');
+      // Self-approval is refused unless admin; don't offer what will fail.
+      if (!isAdmin) q = q.neq('recorded_by', user!.id);
+      const { data, error } = await q.order('recorded_at', { ascending: false }).limit(100);
+      if (error) throw error;
+      return (data ?? []) as any[];
+    },
+    enabled: !!user && can.production,
     ...poll,
   });
 
@@ -274,6 +302,30 @@ export function useInbox() {
       });
     }
 
+    for (const r of productionQ.data ?? []) {
+      const units = unitsFor(r.products?.uom, (r.products?.product_units ?? []).map((u: any) => ({ name: u.unit_name, factor: Number(u.factor) })));
+      const qty = describeInPacks(Number(r.output_qty), units);
+      const expenses = (r.production_run_costs ?? []).reduce((s: number, c: any) => s + Number(c.amount || 0), 0);
+      items.push({
+        key: `production:${r.id}`, kind: 'production', rowId: r.id,
+        title: `${r.products?.name ?? 'Production'} · ${qty}`,
+        who: nameOf(r.recorded_by), whoUserId: r.recorded_by ?? null, dept: null,
+        at: r.recorded_at, amount: qty,
+        detail: r.notes || null,
+        fields: [
+          { label: 'Run', value: r.run_number },
+          { label: 'Lot', value: r.stock_lots?.lot_number ?? '—' },
+          { label: 'Produced on', value: format(parseISO(r.production_date), 'd MMM yyyy') },
+          { label: 'Batches', value: r.batches != null ? fmtQty(Number(r.batches)) : '—' },
+          { label: 'Materials', value: `${r.production_run_inputs?.length ?? 0} line${r.production_run_inputs?.length === 1 ? '' : 's'}` },
+          ...(expenses > 0 ? [{ label: 'Production expenses', value: formatNairaCompact(expenses) }] : []),
+          { label: 'On approval', value: 'Materials leave stock, the batch enters stock, and the cost posts to the ledger' },
+        ],
+        href: '/business/production',
+        canReject: true, approveLabel: 'Approve into stock',
+      });
+    }
+
     for (const r of signupQ.data ?? []) {
       const role = r.role === 'hr' ? 'HR' : humanise(r.role);
       items.push({
@@ -294,14 +346,14 @@ export function useInbox() {
 
     return items.sort((a, b) => (b.at ?? '').localeCompare(a.at ?? ''));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [expensesQ.data, leaveQ.data, attendanceQ.data, inventoryQ.data, signupQ.data, names]);
+  }, [expensesQ.data, leaveQ.data, attendanceQ.data, inventoryQ.data, productionQ.data, signupQ.data, names]);
 
   // ── My own requests ────────────────────────────────────────────────────────
 
   const mineQ = useQuery({
     queryKey: ['inbox', 'mine', user?.id],
     queryFn: async () => {
-      const [leave, expenses, stock] = await Promise.all([
+      const [leave, expenses, stock, production] = await Promise.all([
         supabase.from('staff_leave_requests')
           .select('id, leave_type, start_date, end_date, status, reason, admin_response, created_at, responded_at')
           .eq('user_id', user!.id).order('created_at', { ascending: false }).limit(20),
@@ -312,11 +364,17 @@ export function useInbox() {
         supabase.from('inventory_requests')
           .select('id, status, created_at, notes, rejected_reason, skus(name), inventory_request_items(item_name, kind, skus(name))')
           .eq('user_id', user!.id).order('created_at', { ascending: false }).limit(20),
+        db.from('production_runs')
+          .select('id, run_number, status, output_qty, recorded_at, decision_note, products(name, uom)')
+          .eq('recorded_by', user!.id).order('recorded_at', { ascending: false }).limit(20),
       ]);
       return {
         leave: (leave.data ?? []) as any[],
         expenses: (expenses.data ?? []) as any[],
         stock: (stock.data ?? []) as any[],
+        // Before the production migration is applied the table is missing;
+        // that must not hide everything else.
+        production: (production.error ? [] : production.data ?? []) as any[],
       };
     },
     enabled: !!user && approved,
@@ -367,6 +425,18 @@ export function useInbox() {
         detail: r.rejected_reason ? `Reason: ${r.rejected_reason}` : r.notes,
         fields: [],
         href: '/business/inventory-requests', canReject: false, approveLabel: '', status: r.status,
+      });
+    }
+    for (const r of d.production) {
+      const status = r.status === 'submitted' ? 'pending' : r.status === 'cancelled' ? 'withdrawn' : r.status;
+      items.push({
+        key: `production:${r.id}`, kind: 'production', rowId: r.id,
+        title: `${r.products?.name ?? 'Production'} · ${fmtQty(Number(r.output_qty))} ${r.products?.uom ?? ''}`.trim(),
+        who: 'You', whoUserId: user?.id ?? null, dept: null,
+        at: r.recorded_at, amount: r.run_number,
+        detail: r.decision_note ? `Note: ${r.decision_note}` : null,
+        fields: [],
+        href: '/business/production', canReject: false, approveLabel: '', status,
       });
     }
     return items.sort((a, b) => (b.at ?? '').localeCompare(a.at ?? ''));
@@ -444,6 +514,12 @@ export function useInbox() {
             'inventory');
           break;
         }
+        case 'production': {
+          // The database moves the stock, posts the ledger and tells the recorder.
+          if (approve) await approveProductionRun(item.rowId, trimmed ?? undefined);
+          else await rejectProductionRun(item.rowId, trimmed ?? undefined);
+          break;
+        }
         case 'signup': {
           if (!approve) throw new Error('Sign-ups are corrected in Users, not rejected here.');
           const { error } = await supabase.from('user_roles')
@@ -461,13 +537,14 @@ export function useInbox() {
         leave: [['leave-requests']],
         attendance: [['attendance-weeks'], ['attendance-week']],
         inventory: [['inventory-requests']],
+        production: [['production'], ['inventory-data'], ['inventory-item']],
         signup: [['user-role-data'], ['user-management']],
       };
       for (const key of related[item.kind]) qc.invalidateQueries({ queryKey: key });
     },
   });
 
-  const loading = [expensesQ, leaveQ, attendanceQ, inventoryQ, signupQ, mineQ]
+  const loading = [expensesQ, leaveQ, attendanceQ, inventoryQ, productionQ, signupQ, mineQ]
     .some((q) => q.isLoading && q.fetchStatus !== 'idle');
 
   return {

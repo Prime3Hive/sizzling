@@ -46,6 +46,6 @@ describe('＋ New sheet', () => {
     expect(tos(createActions(as('employee', ['invoices', 'sales'])).team))
       .toEqual(['/business/invoices?new=1', '/business/payments?new=1']);
     expect(tos(createActions(as('admin')).team))
-      .toEqual(['/attendance', '/business/invoices?new=1', '/business/payments?new=1']);
+      .toEqual(['/attendance', '/business/production?new=1', '/business/invoices?new=1', '/business/payments?new=1']);
   });
 });

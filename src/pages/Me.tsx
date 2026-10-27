@@ -2,7 +2,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useTheme } from 'next-themes';
 import { useQuery } from '@tanstack/react-query';
 import { format, formatDistanceToNow, parseISO } from 'date-fns';
-import { CalendarDays, ChevronRight, FileText, LogOut, Moon, Pencil } from 'lucide-react';
+import { CalendarDays, ChevronRight, Compass, FileText, LifeBuoy, LogOut, Moon, Pencil } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { Switch } from '@/components/ui/switch';
 import { supabase } from '@/integrations/supabase/client';
@@ -15,6 +15,7 @@ import { CASUAL_LIMIT } from '@/lib/leave';
 import { useMe } from '@/components/shell/useNavAccess';
 import { InitialsAvatar, Meter, StatTile, StatusPill } from '@/components/shell/ui';
 import { WeekDots } from '@/components/shell/WeekDots';
+import { startTour } from '@/components/shell/tourSteps';
 
 const LINKS = [
   { to: '/my-payslip', title: 'Payslips', sub: 'Every payslip, ready to download' },
@@ -173,6 +174,17 @@ export default function Me() {
           <span className="flex-1 font-semibold">Dark mode</span>
           <Switch checked={dark} onCheckedChange={(on) => setTheme(on ? 'dark' : 'light')} aria-label="Dark mode" />
         </label>
+        <Link to="/help" className="flex min-h-14 items-center gap-3 border-t px-5 font-semibold hover:bg-accent/40 sm:px-6">
+          <LifeBuoy className="h-[18px] w-[18px] text-muted-foreground" aria-hidden />
+          <span className="flex-1">Help & guide</span>
+          <ChevronRight className="h-[18px] w-[18px] text-muted-foreground" aria-hidden />
+        </Link>
+        <button type="button" onClick={startTour}
+          className="flex min-h-14 w-full items-center gap-3 border-t px-5 text-left font-semibold hover:bg-accent/40 sm:px-6">
+          <Compass className="h-[18px] w-[18px] text-muted-foreground" aria-hidden />
+          <span className="flex-1">Take the tour</span>
+          <ChevronRight className="h-[18px] w-[18px] text-muted-foreground" aria-hidden />
+        </button>
         <button type="button" onClick={async () => { await signOut(); navigate('/auth'); }}
           className="flex min-h-14 w-full items-center gap-3 border-t px-5 text-left font-bold text-destructive hover:bg-accent/40 sm:px-6">
           <LogOut className="h-[18px] w-[18px]" aria-hidden /> Sign out

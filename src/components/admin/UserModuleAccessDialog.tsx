@@ -11,7 +11,7 @@ import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, ShieldCheck } from "lucide-react";
-import { MODULES } from "@/config/modules";
+import { MODULES, MODULE_ACTION_HINTS } from "@/config/modules";
 
 type Action = "view" | "create" | "update" | "delete";
 const ACTIONS: Action[] = ["view", "create", "update", "delete"];
@@ -155,7 +155,12 @@ export default function UserModuleAccessDialog({ userId, userName }: Props) {
                 <div key={m} className="grid grid-cols-12 gap-2 items-center rounded-lg border p-2.5">
                   <div className="col-span-5 flex items-center gap-2 min-w-0">
                     <Switch checked={s.override} onCheckedChange={(v) => setOverride(m, v)} />
-                    <span className="text-sm font-medium capitalize truncate">{m}</span>
+                    <span className="min-w-0">
+                      <span className="block text-sm font-medium capitalize truncate">{m}</span>
+                      {MODULE_ACTION_HINTS[m] && (
+                        <span className="block text-[11px] leading-tight text-muted-foreground">{MODULE_ACTION_HINTS[m]}</span>
+                      )}
+                    </span>
                     {!s.override && <Badge variant="secondary" className="text-[10px] shrink-0">Inherit</Badge>}
                   </div>
                   {ACTIONS.map((a, idx) => (

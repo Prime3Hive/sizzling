@@ -9,7 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   ShoppingCart, Package, ClipboardList, Landmark,
-  Receipt, BarChart3, ShieldCheck, Info,
+  Receipt, BarChart3, ShieldCheck, Info, Factory,
 } from 'lucide-react';
 
 // ── Module registry ───────────────────────────────────────────────────────────
@@ -23,6 +23,8 @@ interface ModuleDef {
   icon: React.ElementType;
   /** Permissions that make sense for this module (others are hidden) */
   allowedActions: ('view' | 'create' | 'update' | 'delete')[];
+  /** What a column means for this module, where it isn't the plain verb. */
+  actionLabels?: Partial<Record<'view' | 'create' | 'update' | 'delete', string>>;
 }
 
 const MODULES: ModuleDef[] = [
@@ -39,6 +41,14 @@ const MODULES: ModuleDef[] = [
     description: 'Manage products, warehouses, SKUs, KPI and analytics dashboards.',
     icon: Package,
     allowedActions: ['view', 'create', 'update', 'delete'],
+  },
+  {
+    key: 'production',
+    label: 'Production',
+    description: 'Record production batches, approve them into stock, manage recipes and lots.',
+    icon: Factory,
+    allowedActions: ['view', 'create', 'update'],
+    actionLabels: { create: 'Record', update: 'Approve' },
   },
   {
     key: 'invoices',
@@ -328,6 +338,11 @@ function PermissionGrid({
                   <div className="min-w-0">
                     <p className="text-sm font-medium leading-none">{mod.label}</p>
                     <p className="text-xs text-muted-foreground mt-0.5 truncate max-w-xs">{mod.description}</p>
+                    {mod.actionLabels && (
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {Object.entries(mod.actionLabels).map(([a, l]) => `${ACTION_LABELS[a]} = ${l}`).join(' · ')}
+                      </p>
+                    )}
                   </div>
                   {isSaving && (
                     <span className="text-xs text-muted-foreground italic shrink-0">saving…</span>
@@ -352,7 +367,7 @@ function PermissionGrid({
                           checked={checked}
                           disabled={isSaving}
                           onCheckedChange={val => onToggle(dept.id, mod.key, action, val)}
-                          aria-label={`${ACTION_LABELS[action]} ${mod.label}`}
+                          aria-label={`${mod.actionLabels?.[action] ?? ACTION_LABELS[action]} ${mod.label}`}
                           className={checked ? '' : 'opacity-50'}
                         />
                       ) : (

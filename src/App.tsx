@@ -43,6 +43,7 @@ const Operations        = lazy(() => import("./pages/Operations"));
 const AdminHub          = lazy(() => import("./pages/AdminHub"));
 const Me                = lazy(() => import("./pages/Me"));
 const Work              = lazy(() => import("./pages/Work"));
+const Help              = lazy(() => import("./pages/Help"));
 // The executive dashboard now lives under Finance › Overview.
 const Dashboard         = lazy(() => import("./pages/Dashboard"));
 const Auth              = lazy(() => import("./pages/Auth"));
@@ -52,6 +53,7 @@ const Reports           = lazy(() => import("./pages/Reports"));
 const Inventory         = lazy(() => import("./pages/business/Inventory"));
 const InventoryRequests = lazy(() => import("./pages/business/InventoryRequests"));
 const InventoryItem     = lazy(() => import("./pages/business/InventoryItem"));
+const Production        = lazy(() => import("./pages/business/Production"));
 const Payments          = lazy(() => import("./pages/business/Payments"));
 const Analytics         = lazy(() => import("./pages/business/Analytics"));
 const KPIDashboard      = lazy(() => import("./pages/business/KPIDashboard"));
@@ -149,6 +151,11 @@ const App = () => (
                     <Work />
                   </ProtectedRoute>
                 } />
+                <Route path="help" element={
+                  <ProtectedRoute allowPending>
+                    <Help />
+                  </ProtectedRoute>
+                } />
                 {/* The phone's old "More" tab is now Work. */}
                 <Route path="more" element={<Navigate to="/work" replace />} />
                 <Route path="inbox" element={
@@ -234,6 +241,11 @@ const App = () => (
                 <Route path="business/inventory/item/:skuId" element={
                   <Can module="inventory" redirect="/dashboard">
                     <InventoryItem />
+                  </Can>
+                } />
+                <Route path="business/production" element={
+                  <Can module="production" redirect="/dashboard">
+                    <Production />
                   </Can>
                 } />
                 {/* SKU Catalog consolidated into the single Inventory module */}

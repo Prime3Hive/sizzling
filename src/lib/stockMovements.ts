@@ -14,6 +14,11 @@ export interface StockLine {
    * out for stock-outs: they are valued at the current average.
    */
   unit_price?: number;
+  /**
+   * Stock-outs of a lot-tracked item: take from this lot first. Without it,
+   * lots are drawn earliest expiry first.
+   */
+  lot_id?: string;
 }
 
 /**

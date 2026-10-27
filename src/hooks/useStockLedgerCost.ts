@@ -3,7 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 
 // The ledger sources that carry stock cost. Their reversals keep the same
 // source_type, so summing debit − credit nets cancellations out.
-const STOCK_SOURCES = ['stock_movement', 'invoice_cogs', 'stock_revaluation'];
+const STOCK_SOURCES = ['stock_movement', 'invoice_cogs', 'stock_revaluation', 'production'];
 
 interface Row {
   debit: number;
@@ -35,7 +35,7 @@ export function useStockLedgerCost(from: string, to: string, enabled = true) {
           .in('journal_entries.source_type', STOCK_SOURCES)
           .gte('journal_entries.entry_date', from)
           .lte('journal_entries.entry_date', to)
-          .in('chart_of_accounts.code', ['5000', '5900'])
+          .in('chart_of_accounts.code', ['5000', '5050', '5900'])
           .order('id', { ascending: true })
           .range(start, start + PAGE - 1);
         if (error) throw error;
@@ -54,7 +54,9 @@ export function useStockLedgerCost(from: string, to: string, enabled = true) {
     for (const r of rows) {
       if (new Date(`${r.journal_entries.entry_date}T00:00:00`).getMonth() !== monthIndex) continue;
       const net = Number(r.debit || 0) - Number(r.credit || 0);
-      if (r.chart_of_accounts.code === '5000') cogs += net; else losses += net;
+      // 5050 here is only ever the credit when a batch absorbs production
+      // expenses; like a stock-in against 5000, it defers that cost until use.
+      if (r.chart_of_accounts.code === '5900') losses += net; else cogs += net;
     }
     return { cogs, losses };
   };

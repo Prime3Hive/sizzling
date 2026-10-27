@@ -47,6 +47,8 @@ export const MOVEMENT_META: Record<string, { label: string; cls: string }> = {
   transfer:   { label: "Transfer",    cls: "bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800/50 dark:text-slate-300 dark:border-slate-700" },
   reversal:   { label: "Reversal",    cls: "bg-zinc-100 text-zinc-700 border-zinc-200 dark:bg-zinc-800/50 dark:text-zinc-300 dark:border-zinc-700" },
   return:     { label: "Return",      cls: "bg-teal-100 text-teal-700 border-teal-200 dark:bg-teal-900/30 dark:text-teal-300 dark:border-teal-800" },
+  production_issue:  { label: "Used in production", cls: "bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-800" },
+  production_output: { label: "Produced",           cls: "bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:border-emerald-800" },
 };
 
 export const movementMeta = (t: string) =>

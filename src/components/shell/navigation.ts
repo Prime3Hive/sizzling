@@ -8,7 +8,7 @@
 // route's guard changes, change its check here too.
 
 import {
-  Home, Inbox, Users, Wallet, Package, UserRound, ShieldCheck,
+  Home, Inbox, Users, Wallet, Package, UserRound, ShieldCheck, LifeBuoy,
   type LucideIcon,
 } from 'lucide-react';
 import type { Module } from '@/config/modules';
@@ -110,6 +110,8 @@ export const WORKSPACES: Workspace[] = [
         show: (a) => approved(a) },
       { label: 'Inventory', to: '/business/inventory', also: ['/business/sku-management'], keywords: 'stock sku products',
         show: (a) => a.hasPermission('inventory', 'view') },
+      { label: 'Production', to: '/business/production', keywords: 'produce batch recipe lot manufacture snacks sauce',
+        show: (a) => a.hasPermission('production', 'view') },
       { label: 'Stock requests', to: '/business/inventory-requests', keywords: 'request items',
         show: (a) => approved(a) },
       { label: 'Procurement', to: '/procurement', keywords: 'purchase orders lpo suppliers',
@@ -172,6 +174,7 @@ export const WORKSPACES: Workspace[] = [
 
 export const HOME = { label: 'Home', to: '/dashboard', icon: Home };
 export const INBOX = { label: 'Inbox', to: '/inbox', icon: Inbox };
+export const HELP = { label: 'Help & guide', to: '/help', icon: LifeBuoy };
 
 export function visibleTabs(ws: Workspace, a: NavAccess): NavTab[] {
   return ws.tabs.filter((t) => t.show(a));

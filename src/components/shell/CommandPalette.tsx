@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus } from 'lucide-react';
+import { Compass, Plus } from 'lucide-react';
 import {
   CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
 } from '@/components/ui/command';
 import { useStaffDirectory, positionLabel } from '@/hooks/useStaffDirectory';
-import { HOME, INBOX, visibleTabs, visibleWorkspaces } from './navigation';
+import { startTour } from './tourSteps';
+import { HELP, HOME, INBOX, visibleTabs, visibleWorkspaces } from './navigation';
 import { useNavAccess } from './useNavAccess';
 import { InitialsAvatar } from './ui';
 
@@ -58,6 +59,7 @@ export default function CommandPalette() {
         });
       }
     }
+    list.push({ label: HELP.label, hint: 'How to use the portal', to: HELP.to, keywords: 'help guide documentation how to manual faq' });
     return list;
   }, [access]);
 
@@ -97,6 +99,12 @@ export default function CommandPalette() {
             ))}
           </CommandGroup>
         )}
+        <CommandGroup heading="Help">
+          <CommandItem value="take the tour walkthrough guide show me around" onSelect={() => { setOpen(false); startTour(); }}>
+            <Compass className="mr-2 text-brand" aria-hidden />
+            <span className="font-semibold">Take the tour</span>
+          </CommandItem>
+        </CommandGroup>
         {people.length > 0 && (
           <CommandGroup heading="People">
             {people.map((p) => (

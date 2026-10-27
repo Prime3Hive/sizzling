@@ -55,8 +55,9 @@ export function InventoryKPICards({ skus, transactions, movements30d }: Inventor
   
   const valueOf = (m: KPIMovement) => Number(m.quantity_change) * Number(m.unit_cost || 0);
   const stockIns = movements30d?.filter(m => m.movement_type === 'purchase' && Number(m.quantity_change) > 0);
-  // Kitchen usage and invoiced sales, net of invoice cancellations (reversals).
-  const stockOuts = movements30d?.filter(m => ['usage', 'sale', 'reversal'].includes(m.movement_type));
+  // Kitchen usage, materials used in production and invoiced sales, net of
+  // cancellations (reversals).
+  const stockOuts = movements30d?.filter(m => ['usage', 'production_issue', 'sale', 'reversal'].includes(m.movement_type));
 
   const totalPurchaseValue = stockIns
     ? stockIns.reduce((sum, m) => sum + valueOf(m), 0)

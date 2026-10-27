@@ -274,7 +274,7 @@ export default function Inbox() {
   };
 
   const source = view === 'waiting' ? waiting : mine;
-  const kinds: InboxKind[] = ['expense', 'leave', 'attendance', 'inventory', 'signup'];
+  const kinds: InboxKind[] = ['expense', 'leave', 'attendance', 'inventory', 'production', 'signup'];
   const chips = [
     { value: 'all' as KindFilter, label: 'All', count: source.length },
     ...kinds

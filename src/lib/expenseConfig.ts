@@ -50,6 +50,7 @@ export const RECEIPT_MAX_BYTES = 5 * 1024 * 1024;
  */
 export const EXPENSE_ACCOUNTS = [
   { code: '5000', name: 'Cost of Goods Sold' },
+  { code: '5050', name: 'Production Expenses' },
   { code: '5100', name: 'Salaries & Wages' },
   { code: '5110', name: 'Employer Pension Contribution' },
   { code: '5200', name: 'Rent' },

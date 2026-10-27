@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useTheme } from 'next-themes';
 import {
-  ArrowLeft, ChevronRight, LayoutGrid, LogOut, Moon, Plus, Search, Sun, UserRound, WifiOff,
+  ArrowLeft, ChevronRight, Compass, LayoutGrid, LogOut, Moon, Plus, Search, Sun, UserRound, WifiOff,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useBirthdayNotifications } from '@/hooks/useBirthdayNotifications';
@@ -17,8 +17,10 @@ import { usePrefetchOnIntent } from '@/lib/prefetch';
 import { pushRecent } from '@/lib/recentPages';
 import CommandPalette, { openCommandPalette } from './CommandPalette';
 import CreateSheet from './CreateSheet';
+import Tour from './Tour';
+import { startTour } from './tourSteps';
 import {
-  HOME, INBOX, WORKSPACES, landingOf, locate, visibleTabs, visibleWorkspaces,
+  HELP, HOME, INBOX, WORKSPACES, landingOf, locate, visibleTabs, visibleWorkspaces,
   type NavAccess,
 } from './navigation';
 import { useMe, useNavAccess } from './useNavAccess';
@@ -55,12 +57,15 @@ function Badge({ n, className }: { n: number; className?: string }) {
   );
 }
 
-function SidebarLink({ to, icon: Icon, label, active, badge }: {
+function SidebarLink({ to, icon: Icon, label, active, badge, tour }: {
   to: string; icon: React.ElementType; label: string; active: boolean; badge?: number;
+  /** Walkthrough anchor, see tourSteps.ts. */
+  tour?: string;
 }) {
   return (
     <Link
       to={to}
+      data-tour={tour}
       aria-current={active ? 'page' : undefined}
       className={cn(
         'flex h-10 items-center gap-3 rounded-[10px] px-3 text-sm transition-colors',
@@ -94,6 +99,7 @@ function UserMenu({ compact }: { compact?: boolean }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
+        data-tour={compact ? undefined : 'account'}
         className={cn(
           'flex items-center gap-2.5 rounded-[10px] text-left outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring',
           compact ? 'p-1' : 'w-full p-2',
@@ -116,6 +122,12 @@ function UserMenu({ compact }: { compact?: boolean }) {
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={() => navigate('/me')}>
           <UserRound className="mr-2 h-4 w-4" aria-hidden /> Me
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => navigate(HELP.to)}>
+          <HELP.icon className="mr-2 h-4 w-4" aria-hidden /> {HELP.label}
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={startTour}>
+          <Compass className="mr-2 h-4 w-4" aria-hidden /> Take the tour
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={() => setTheme(dark ? 'light' : 'dark')}>
           {dark ? <Sun className="mr-2 h-4 w-4" aria-hidden /> : <Moon className="mr-2 h-4 w-4" aria-hidden />}
@@ -141,12 +153,12 @@ function Sidebar({ access, badge }: { access: NavAccess; badge: number }) {
   const workspaces = visibleWorkspaces(access);
   const byId = (id: string) => workspaces.find((w) => w.id === id);
 
-  const wsLink = (id: 'people' | 'finance' | 'operations' | 'admin' | 'me') => {
+  const wsLink = (id: 'people' | 'finance' | 'operations' | 'admin' | 'me', tour?: string) => {
     const ws = byId(id);
     if (!ws) return null;
     const to = landingOf(ws, access)!;
     return (
-      <SidebarLink key={id} to={to} icon={ws.icon} label={ws.label} active={here?.workspace.id === id} />
+      <SidebarLink key={id} to={to} icon={ws.icon} label={ws.label} active={here?.workspace.id === id} tour={tour} />
     );
   };
 
@@ -165,6 +177,7 @@ function Sidebar({ access, badge }: { access: NavAccess; badge: number }) {
       <button
         type="button"
         onClick={openCommandPalette}
+        data-tour="search"
         className="flex h-[42px] w-full items-center gap-2.5 rounded-[10px] border bg-background px-3 text-sm text-muted-foreground transition-colors hover:border-foreground/20"
       >
         <Search className="h-4 w-4" aria-hidden />
@@ -173,18 +186,23 @@ function Sidebar({ access, badge }: { access: NavAccess; badge: number }) {
       </button>
 
       <nav aria-label="Main" className="-mx-1 flex flex-1 flex-col gap-0.5 overflow-y-auto px-1">
-        <SidebarLink to={HOME.to} icon={HOME.icon} label={HOME.label} active={pathname === '/dashboard'} />
+        <SidebarLink to={HOME.to} icon={HOME.icon} label={HOME.label} active={pathname === '/dashboard'} tour="home" />
         {!access.isPending && (
-          <SidebarLink to={INBOX.to} icon={INBOX.icon} label={INBOX.label} active={pathname === '/inbox'} badge={badge} />
+          <SidebarLink to={INBOX.to} icon={INBOX.icon} label={INBOX.label} active={pathname === '/inbox'} badge={badge} tour="inbox" />
         )}
 
         {hasWork && <SectionLabel>Workspaces</SectionLabel>}
-        {wsLink('people')}
-        {wsLink('finance')}
-        {wsLink('operations')}
+        {hasWork && (
+          <div data-tour="workspaces" className="flex flex-col gap-0.5">
+            {wsLink('people')}
+            {wsLink('finance')}
+            {wsLink('operations')}
+          </div>
+        )}
 
         <SectionLabel>You</SectionLabel>
-        {wsLink('me')}
+        {wsLink('me', 'me')}
+        <SidebarLink to={HELP.to} icon={HELP.icon} label={HELP.label} active={pathname === HELP.to} tour="help" />
 
         {byId('admin') && <SectionLabel>Company</SectionLabel>}
         {wsLink('admin')}
@@ -257,6 +275,7 @@ function titleFor(pathname: string, search: string, access: NavAccess): string {
   if (pathname === '/dashboard') return 'Sizzling Spices';
   if (pathname === '/inbox') return 'Inbox';
   if (pathname === '/work') return 'Work';
+  if (pathname === HELP.to) return 'Help';
   const here = locate(pathname, search, access);
   if (!here) return 'Sizzling Spices';
   return here.tab.label === 'Overview' ? here.workspace.label : here.tab.label;
@@ -267,6 +286,7 @@ function DesktopTopBar({ access }: { access: NavAccess }) {
   const here = locate(pathname, search, access);
   const crumbs: string[] = pathname === '/dashboard' ? ['Home']
     : pathname === '/inbox' ? ['Inbox']
+    : pathname === HELP.to ? [HELP.label]
     : here ? (here.tab.label === 'Overview' ? [here.workspace.label] : [here.workspace.label, here.tab.label])
     : [];
 
@@ -290,7 +310,7 @@ function DesktopTopBar({ access }: { access: NavAccess }) {
         >
           <Search className="h-[18px] w-[18px]" aria-hidden />
         </button>
-        <NotificationBell />
+        <span data-tour="notifications" className="inline-flex"><NotificationBell /></span>
         <span className="ml-1.5"><UserMenu compact /></span>
       </div>
     </header>
@@ -322,11 +342,12 @@ function MobileTopBar({ access }: { access: NavAccess }) {
         type="button"
         aria-label="Search"
         onClick={openCommandPalette}
+        data-tour="search"
         className="inline-flex h-11 w-11 items-center justify-center rounded-xl text-foreground/80"
       >
         <Search className="h-[21px] w-[21px]" aria-hidden />
       </button>
-      <NotificationBell />
+      <span data-tour="notifications" className="inline-flex"><NotificationBell /></span>
     </header>
   );
 }
@@ -337,11 +358,12 @@ function MobileTabBar({ access, badge, onCreate }: { access: NavAccess; badge: n
   const onMe = pathname === '/me' || here?.workspace.id === 'me';
   const onWork = pathname === '/work' || (!!here && here.workspace.id !== 'me');
 
-  const Tab = ({ to, label, icon: Icon, active, n }: {
-    to: string; label: string; icon: React.ElementType; active: boolean; n?: number;
+  const Tab = ({ to, label, icon: Icon, active, n, tour }: {
+    to: string; label: string; icon: React.ElementType; active: boolean; n?: number; tour?: string;
   }) => (
     <NavLink
       to={to}
+      data-tour={tour}
       aria-current={active ? 'page' : undefined}
       aria-label={n ? `${label}, ${n} waiting` : undefined}
       className={cn(
@@ -362,15 +384,16 @@ function MobileTabBar({ access, badge, onCreate }: { access: NavAccess; badge: n
       aria-label="Main"
       className="fixed inset-x-0 bottom-0 z-40 flex items-end border-t bg-card/95 px-1 pb-[env(safe-area-inset-bottom)] pt-1 backdrop-blur lg:hidden"
     >
-      <Tab to={HOME.to} label="Home" icon={HOME.icon} active={pathname === '/dashboard'} />
+      <Tab to={HOME.to} label="Home" icon={HOME.icon} active={pathname === '/dashboard'} tour="home" />
       {!access.isPending && (
-        <Tab to={INBOX.to} label="Inbox" icon={INBOX.icon} active={pathname === '/inbox'} n={badge} />
+        <Tab to={INBOX.to} label="Inbox" icon={INBOX.icon} active={pathname === '/inbox'} n={badge} tour="inbox" />
       )}
       {!access.isPending && (
         // The thing people start from a phone most: a request or a record.
         <button
           type="button"
           onClick={onCreate}
+          data-tour="new"
           className="flex h-16 flex-1 flex-col items-center justify-end gap-1 pb-[7px] text-[11.5px] font-semibold text-muted-foreground"
         >
           <span className="-mt-6 inline-flex h-[54px] w-[54px] items-center justify-center rounded-[18px] bg-primary text-primary-foreground shadow-[0_10px_22px_-8px_hsl(var(--primary)/0.7)] ring-4 ring-background transition-transform active:scale-95">
@@ -379,8 +402,8 @@ function MobileTabBar({ access, badge, onCreate }: { access: NavAccess; badge: n
           New
         </button>
       )}
-      <Tab to="/work" label="Work" icon={LayoutGrid} active={onWork} />
-      <Tab to="/me" label="Me" icon={WORKSPACES.find((w) => w.id === 'me')!.icon} active={onMe} />
+      <Tab to="/work" label="Work" icon={LayoutGrid} active={onWork} tour="workspaces" />
+      <Tab to="/me" label="Me" icon={WORKSPACES.find((w) => w.id === 'me')!.icon} active={onMe} tour="me" />
     </nav>
   );
 }
@@ -427,6 +450,7 @@ function useTrackRecent(access: NavAccess) {
 export default function AppShell() {
   const { user } = useAuth();
   const access = useNavAccess();
+  const me = useMe();
   useBirthdayNotifications();
   const badge = useInboxBadge(access);
   const [creating, setCreating] = useState(false);
@@ -450,6 +474,7 @@ export default function AppShell() {
       <MobileTabBar access={access} badge={badge} onCreate={() => setCreating(true)} />
       <CreateSheet open={creating} onOpenChange={setCreating} access={access} />
       <CommandPalette />
+      <Tour access={access} loading={access.loading} firstName={me.firstName} />
     </div>
   );
 }

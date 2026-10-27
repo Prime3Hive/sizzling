@@ -4,7 +4,7 @@
 
 import { Link } from 'react-router-dom';
 import {
-  CalendarCheck, CalendarDays, ChevronRight, FileText, HandCoins, Package, Receipt, ReceiptText, X,
+  CalendarCheck, CalendarDays, ChevronRight, Factory, FileText, HandCoins, Package, Receipt, ReceiptText, X,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
@@ -44,6 +44,9 @@ export function createActions(a: NavAccess): { mine: Action[]; team: Action[] } 
 
   if (a.canFeature('mark_attendance')) {
     team.push({ to: '/attendance', label: 'Mark this week’s attendance', sub: '', icon: CalendarCheck, tone: '' });
+  }
+  if (a.hasPermission('production', 'view') && a.hasPermission('production', 'create')) {
+    team.push({ to: '/business/production?new=1', label: 'Record production', sub: '', icon: Factory, tone: '' });
   }
   if (a.hasPermission('invoices', 'create')) {
     team.push({ to: '/business/invoices?new=1', label: 'Invoice a customer', sub: '', icon: ReceiptText, tone: '' });
