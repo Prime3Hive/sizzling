@@ -70,7 +70,6 @@ const MyProfile         = lazy(() => import("./pages/MyProfile"));
 const StaffPortal       = lazy(() => import("./pages/StaffPortal"));
 const BirthdayCalendar  = lazy(() => import("./pages/BirthdayCalendar"));
 const MyPayslip         = lazy(() => import("./pages/MyPayslip"));
-const DepartmentPermissions = lazy(() => import("./pages/admin/DepartmentPermissions"));
 const CompanyFiles      = lazy(() => import("./pages/admin/CompanyFiles"));
 const BankAccounts      = lazy(() => import("./pages/admin/BankAccounts"));
 const Messages          = lazy(() => import("./pages/admin/Messages"));
@@ -276,11 +275,7 @@ const App = () => (
                     <UserManagement />
                   </Can>
                 } />
-                <Route path="department-permissions" element={
-                  <Can roles={['admin']} redirect="/dashboard">
-                    <DepartmentPermissions />
-                  </Can>
-                } />
+                <Route path="department-permissions" element={<Navigate to="/users?tab=departments" replace />} />
                 <Route path="company-files" element={
                   <Can roles={['admin']} redirect="/dashboard">
                     <CompanyFiles />

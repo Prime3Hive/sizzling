@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useTheme } from 'next-themes';
 import {
-  ArrowLeft, ChevronRight, Compass, LayoutGrid, LogOut, Moon, Plus, Search, Sun, UserRound, WifiOff,
+  ArrowLeft, ChevronRight, Compass, LayoutGrid, LogOut, Moon, PanelLeftClose, PanelLeftOpen, Plus, Search, Sun,
+  UserRound, WifiOff,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useBirthdayNotifications } from '@/hooks/useBirthdayNotifications';
@@ -12,6 +13,7 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
   DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { usePrefetchOnIntent } from '@/lib/prefetch';
 import { pushRecent } from '@/lib/recentPages';
@@ -57,31 +59,95 @@ function Badge({ n, className }: { n: number; className?: string }) {
   );
 }
 
-function SidebarLink({ to, icon: Icon, label, active, badge, tour }: {
-  to: string; icon: React.ElementType; label: string; active: boolean; badge?: number;
-  /** Walkthrough anchor, see tourSteps.ts. */
-  tour?: string;
-}) {
+// ── Sidebar width ────────────────────────────────────────────────────────────
+// The desktop sidebar folds down to an icon rail. The choice is remembered per
+// browser; until someone chooses, narrower laptops (under 1280px) start folded
+// so the page gets the room.
+
+const SIDEBAR_KEY = 'sidebar-collapsed';
+
+const isTyping = (t: EventTarget | null) =>
+  t instanceof HTMLElement && (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName));
+
+function useSidebarCollapsed() {
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem(SIDEBAR_KEY);
+      if (saved !== null) return saved === '1';
+    } catch { /* storage blocked: fall through to the default */ }
+    return typeof window !== 'undefined' && window.innerWidth < 1280;
+  });
+
+  const toggle = useCallback(() => {
+    setCollapsed((c) => {
+      const next = !c;
+      try { localStorage.setItem(SIDEBAR_KEY, next ? '1' : '0'); } catch { /* not remembered */ }
+      return next;
+    });
+  }, []);
+
+  // Ctrl/⌘ + B, except while typing (where it may mean bold).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'b' && !isTyping(e.target)) {
+        e.preventDefault();
+        toggle();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [toggle]);
+
+  return [collapsed, toggle] as const;
+}
+
+/** In the folded rail, a control's name moves into a tooltip. */
+function RailTip({ show, label, children }: { show: boolean; label: React.ReactNode; children: React.ReactElement }) {
+  if (!show) return children;
   return (
-    <Link
-      to={to}
-      data-tour={tour}
-      aria-current={active ? 'page' : undefined}
-      className={cn(
-        'flex h-10 items-center gap-3 rounded-[10px] px-3 text-sm transition-colors',
-        active
-          ? 'bg-brand-soft font-bold text-brand-soft-foreground'
-          : 'font-medium text-foreground/75 hover:bg-accent hover:text-foreground',
-      )}
-    >
-      <Icon className="h-[18px] w-[18px] shrink-0" aria-hidden />
-      <span className="flex-1 truncate">{label}</span>
-      {badge ? <Badge n={badge} /> : null}
-    </Link>
+    <Tooltip delayDuration={150}>
+      <TooltipTrigger asChild>{children}</TooltipTrigger>
+      <TooltipContent side="right" sideOffset={10}>{label}</TooltipContent>
+    </Tooltip>
   );
 }
 
-function SectionLabel({ children }: { children: React.ReactNode }) {
+function SidebarLink({ to, icon: Icon, label, active, badge, tour, collapsed = false }: {
+  to: string; icon: React.ElementType; label: string; active: boolean; badge?: number;
+  /** Walkthrough anchor, see tourSteps.ts. */
+  tour?: string;
+  collapsed?: boolean;
+}) {
+  return (
+    <RailTip show={collapsed} label={badge ? `${label} (${badge})` : label}>
+      <Link
+        to={to}
+        data-tour={tour}
+        aria-current={active ? 'page' : undefined}
+        aria-label={collapsed ? (badge ? `${label}, ${badge} waiting` : label) : undefined}
+        className={cn(
+          'relative flex h-10 items-center rounded-[10px] text-sm transition-colors',
+          collapsed ? 'w-10 justify-center self-center' : 'gap-3 px-3',
+          active
+            ? 'bg-brand-soft font-bold text-brand-soft-foreground'
+            : 'font-medium text-foreground/75 hover:bg-accent hover:text-foreground',
+        )}
+      >
+        <Icon className="h-[18px] w-[18px] shrink-0" aria-hidden />
+        {!collapsed && <span className="flex-1 truncate">{label}</span>}
+        {badge ? (
+          collapsed
+            ? <Badge n={badge} className="absolute -right-1.5 -top-1.5 h-[18px] min-w-[18px] px-1 text-[10.5px] ring-2 ring-card" />
+            : <Badge n={badge} />
+        ) : null}
+      </Link>
+    </RailTip>
+  );
+}
+
+function SectionLabel({ children, collapsed = false }: { children: React.ReactNode; collapsed?: boolean }) {
+  // Folded, the heading becomes a hairline so groups still read as groups.
+  if (collapsed) return <div role="separator" aria-hidden className="mx-auto my-3 h-px w-6 bg-border" />;
   return (
     <div className="px-3 pb-1.5 pt-5 text-[11.5px] font-bold uppercase tracking-[0.08em] text-muted-foreground">
       {children}
@@ -89,7 +155,7 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
-function UserMenu({ compact }: { compact?: boolean }) {
+function UserMenu({ compact, rail }: { compact?: boolean; /** Avatar only, inside the folded sidebar. */ rail?: boolean }) {
   const me = useMe();
   const { signOut } = useAuth();
   const navigate = useNavigate();
@@ -102,19 +168,20 @@ function UserMenu({ compact }: { compact?: boolean }) {
         data-tour={compact ? undefined : 'account'}
         className={cn(
           'flex items-center gap-2.5 rounded-[10px] text-left outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring',
-          compact ? 'p-1' : 'w-full p-2',
+          compact || rail ? 'p-1' : 'w-full p-2',
+          rail && 'self-center',
         )}
         aria-label="Account menu"
       >
         <InitialsAvatar name={me.name} size={36} />
-        {!compact && (
+        {!compact && !rail && (
           <span className="flex min-w-0 flex-col">
             <span className="truncate text-sm font-bold">{me.name}</span>
             <span className="truncate text-xs text-muted-foreground">{me.title ?? me.email}</span>
           </span>
         )}
       </DropdownMenuTrigger>
-      <DropdownMenuContent align={compact ? 'end' : 'start'} side={compact ? 'bottom' : 'top'} className="w-60">
+      <DropdownMenuContent align={compact || rail ? 'end' : 'start'} side={compact ? 'bottom' : rail ? 'right' : 'top'} className="w-60">
         <DropdownMenuLabel className="font-normal">
           <div className="truncate text-sm font-bold">{me.name}</div>
           {me.email && <div className="truncate text-xs text-muted-foreground">{me.email}</div>}
@@ -147,7 +214,9 @@ function UserMenu({ compact }: { compact?: boolean }) {
 
 // ── Desktop sidebar ──────────────────────────────────────────────────────────
 
-function Sidebar({ access, badge }: { access: NavAccess; badge: number }) {
+function Sidebar({ access, badge, collapsed, onToggle }: {
+  access: NavAccess; badge: number; collapsed: boolean; onToggle: () => void;
+}) {
   const { pathname, search } = useLocation();
   const here = locate(pathname, search, access);
   const workspaces = visibleWorkspaces(access);
@@ -158,40 +227,84 @@ function Sidebar({ access, badge }: { access: NavAccess; badge: number }) {
     if (!ws) return null;
     const to = landingOf(ws, access)!;
     return (
-      <SidebarLink key={id} to={to} icon={ws.icon} label={ws.label} active={here?.workspace.id === id} tour={tour} />
+      <SidebarLink key={id} to={to} icon={ws.icon} label={ws.label} active={here?.workspace.id === id} tour={tour} collapsed={collapsed} />
     );
   };
 
   const hasWork = ['people', 'finance', 'operations'].some((id) => byId(id));
 
-  return (
-    <aside className="sticky top-0 hidden h-svh w-64 shrink-0 flex-col gap-4 border-r bg-card px-3.5 py-5 lg:flex">
-      <Link to="/dashboard" className="flex items-center gap-3 px-1.5">
-        <BrandMark />
-        <span className="min-w-0">
-          <span className="block font-display text-[17px] font-bold leading-tight">Sizzling Spices</span>
-          <span className="block text-xs text-muted-foreground">Company portal</span>
-        </span>
-      </Link>
-
+  const toggleLabel = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+  const toggleButton = (
+    <RailTip show label={<span>{toggleLabel} <kbd className="ml-1 rounded border px-1 text-[10px] font-bold">Ctrl B</kbd></span>}>
       <button
         type="button"
-        onClick={openCommandPalette}
-        data-tour="search"
-        className="flex h-[42px] w-full items-center gap-2.5 rounded-[10px] border bg-background px-3 text-sm text-muted-foreground transition-colors hover:border-foreground/20"
+        onClick={onToggle}
+        aria-label={toggleLabel}
+        aria-expanded={!collapsed}
+        aria-controls="app-sidebar"
+        className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
       >
-        <Search className="h-4 w-4" aria-hidden />
-        <span className="flex-1 text-left">Search or jump to…</span>
-        <kbd className="rounded-md border bg-card px-1.5 py-0.5 text-[11px] font-bold">Ctrl K</kbd>
+        {collapsed ? <PanelLeftOpen className="h-[18px] w-[18px]" aria-hidden /> : <PanelLeftClose className="h-[18px] w-[18px]" aria-hidden />}
       </button>
+    </RailTip>
+  );
 
-      <nav aria-label="Main" className="-mx-1 flex flex-1 flex-col gap-0.5 overflow-y-auto px-1">
-        <SidebarLink to={HOME.to} icon={HOME.icon} label={HOME.label} active={pathname === '/dashboard'} tour="home" />
+  return (
+    <aside
+      id="app-sidebar"
+      aria-label="Sidebar"
+      className={cn(
+        'sticky top-0 hidden h-svh shrink-0 flex-col gap-4 overflow-hidden border-r bg-card py-5 lg:flex',
+        'transition-[width,padding] duration-200 ease-out motion-reduce:transition-none',
+        collapsed ? 'w-[72px] px-3' : 'w-64 px-3.5',
+      )}
+    >
+      {collapsed ? (
+        <div className="flex flex-col items-center gap-2">
+          <RailTip show label="Home">
+            <Link to="/dashboard" aria-label="Sizzling Spices home"><BrandMark /></Link>
+          </RailTip>
+          {toggleButton}
+        </div>
+      ) : (
+        <div className="flex items-center gap-1">
+          <Link to="/dashboard" className="flex min-w-0 flex-1 items-center gap-3 px-1.5">
+            <BrandMark />
+            <span className="min-w-0">
+              <span className="block truncate font-display text-[17px] font-bold leading-tight">Sizzling Spices</span>
+              <span className="block truncate text-xs text-muted-foreground">Company portal</span>
+            </span>
+          </Link>
+          {toggleButton}
+        </div>
+      )}
+
+      <RailTip show={collapsed} label={<span>Search <kbd className="ml-1 rounded border px-1 text-[10px] font-bold">Ctrl K</kbd></span>}>
+        <button
+          type="button"
+          onClick={openCommandPalette}
+          data-tour="search"
+          aria-label={collapsed ? 'Search' : undefined}
+          className={cn(
+            'flex h-[42px] items-center rounded-[10px] border bg-background text-sm text-muted-foreground transition-colors hover:border-foreground/20',
+            collapsed ? 'w-10 justify-center self-center' : 'w-full gap-2.5 px-3',
+          )}
+        >
+          <Search className="h-4 w-4 shrink-0" aria-hidden />
+          {!collapsed && <>
+            <span className="flex-1 truncate text-left">Search or jump to…</span>
+            <kbd className="rounded-md border bg-card px-1.5 py-0.5 text-[11px] font-bold">Ctrl K</kbd>
+          </>}
+        </button>
+      </RailTip>
+
+      <nav aria-label="Main" className="-mx-1 flex flex-1 flex-col gap-0.5 overflow-y-auto overflow-x-hidden px-1 py-1">
+        <SidebarLink to={HOME.to} icon={HOME.icon} label={HOME.label} active={pathname === '/dashboard'} tour="home" collapsed={collapsed} />
         {!access.isPending && (
-          <SidebarLink to={INBOX.to} icon={INBOX.icon} label={INBOX.label} active={pathname === '/inbox'} badge={badge} tour="inbox" />
+          <SidebarLink to={INBOX.to} icon={INBOX.icon} label={INBOX.label} active={pathname === '/inbox'} badge={badge} tour="inbox" collapsed={collapsed} />
         )}
 
-        {hasWork && <SectionLabel>Workspaces</SectionLabel>}
+        {hasWork && <SectionLabel collapsed={collapsed}>Workspaces</SectionLabel>}
         {hasWork && (
           <div data-tour="workspaces" className="flex flex-col gap-0.5">
             {wsLink('people')}
@@ -200,15 +313,15 @@ function Sidebar({ access, badge }: { access: NavAccess; badge: number }) {
           </div>
         )}
 
-        <SectionLabel>You</SectionLabel>
+        <SectionLabel collapsed={collapsed}>You</SectionLabel>
         {wsLink('me', 'me')}
-        <SidebarLink to={HELP.to} icon={HELP.icon} label={HELP.label} active={pathname === HELP.to} tour="help" />
+        <SidebarLink to={HELP.to} icon={HELP.icon} label={HELP.label} active={pathname === HELP.to} tour="help" collapsed={collapsed} />
 
-        {byId('admin') && <SectionLabel>Company</SectionLabel>}
+        {byId('admin') && <SectionLabel collapsed={collapsed}>Company</SectionLabel>}
         {wsLink('admin')}
       </nav>
 
-      <UserMenu />
+      <UserMenu rail={collapsed} />
     </aside>
   );
 }
@@ -454,6 +567,7 @@ export default function AppShell() {
   useBirthdayNotifications();
   const badge = useInboxBadge(access);
   const [creating, setCreating] = useState(false);
+  const [collapsed, toggleSidebar] = useSidebarCollapsed();
   useTrackRecent(access);
   usePrefetchOnIntent(['/inbox', '/work', '/me', '/dashboard']);
 
@@ -461,12 +575,12 @@ export default function AppShell() {
 
   return (
     <div className="flex min-h-svh w-full bg-background">
-      <Sidebar access={access} badge={badge} />
+      <Sidebar access={access} badge={badge} collapsed={collapsed} onToggle={toggleSidebar} />
       <div className="flex min-w-0 flex-1 flex-col">
         <DesktopTopBar access={access} />
         <MobileTopBar access={access} />
         <OfflineBanner />
-        <main className="mx-auto w-full min-w-0 max-w-[1400px] flex-1 px-4 py-5 pb-[calc(96px+env(safe-area-inset-bottom))] sm:px-6 lg:px-8 lg:py-8 lg:pb-10">
+        <main className="mx-auto w-full min-w-0 max-w-[1560px] flex-1 px-4 py-5 pb-[calc(96px+env(safe-area-inset-bottom))] sm:px-6 lg:px-8 lg:py-8 lg:pb-10">
           <WorkspaceTabs access={access} />
           <Outlet />
         </main>

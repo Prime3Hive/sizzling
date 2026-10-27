@@ -578,24 +578,24 @@ const SECTIONS: Section[] = [
     articles: [
       {
         id: 'users',
-        title: 'Approving users and assigning roles',
+        title: 'Approving people and setting their role',
         who: ['Admin'],
         summary: 'Approve new sign-ups, set each person’s role and department, and link their login to their staff profile.',
         steps: [
-          'Go to Admin › Users. New sign-ups show as pending (also in the Inbox).',
-          'Use “Assign Role & Department”: choose Admin, Manager, HR or Staff / Employee, and their department, then Approve.',
-          'Use “Link Profile” to connect the login to the right staff profile, so their payslips, leave and attendance appear under Me.',
-          'Create new departments from the Departments section on the same page.',
+          'Go to Admin › People & access. People waiting for approval are listed first (and in the Inbox).',
+          'Tap a person. Approve them if they are waiting, pick their role and department, then Save changes.',
+          'Under Staff profile, link their login to their staff record so payslips, leave and attendance appear under Me.',
+          'Create and rename departments on the Departments tab.',
         ],
         to: '/users',
         show: (a) => a.isAdmin,
       },
       {
         id: 'access-control',
-        title: 'Access control',
+        title: 'Access: departments and personal',
         who: ['Admin'],
-        summary: 'Decide what each department can do in Inventory, Sales, Invoices, Finance, Budgets and Reports: view, create, edit or delete.',
-        to: '/department-permissions',
+        summary: 'Open a department on People & access › Departments and choose a level for each area (for example Production: Record or Approve). Give one person something different from their department by opening them on the People tab.',
+        to: '/users?tab=departments',
         show: (a) => a.isAdmin,
       },
       {

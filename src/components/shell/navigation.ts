@@ -159,9 +159,8 @@ export const WORKSPACES: Workspace[] = [
     icon: ShieldCheck,
     tabs: [
       { label: 'Overview', to: '/admin', show: (a) => a.isAdmin },
-      { label: 'Users', to: '/users', keywords: 'sign ups roles approve access',
-        show: (a) => a.isAdmin },
-      { label: 'Access control', to: '/department-permissions', keywords: 'permissions departments',
+      { label: 'People & access', to: '/users', also: ['/department-permissions'],
+        keywords: 'users sign ups roles approve access control permissions departments',
         show: (a) => a.isAdmin },
       { label: 'Bank accounts', to: '/bank-accounts', show: (a) => a.isAdmin },
       { label: 'Company files', to: '/company-files', keywords: 'documents policies',

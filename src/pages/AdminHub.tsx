@@ -50,10 +50,10 @@ export default function AdminHub() {
     <div className="flex flex-col gap-6">
       <PageHeader title="Admin" description="Who can get in, what they can see, and the company’s records." />
       <div className="grid gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-3">
-        <Card to="/users" icon={UserCheck} title="Users & sign-ups" sub="Approve new accounts, assign roles, link staff profiles"
+        <Card to="/users" icon={UserCheck} title="People & access" sub="Approve sign-ups, set roles and departments, and what each person can reach"
           tone="bg-red-100 text-red-800 dark:bg-red-500/15 dark:text-red-300"
           stat={pendingRoles ? `${pendingRoles} waiting for approval` : null} />
-        <Card to="/department-permissions" icon={ToggleLeft} title="Access control" sub="What each department and person can see and do"
+        <Card to="/users?tab=departments" icon={ToggleLeft} title="Department access" sub="What everyone in a department can see and do"
           tone="bg-blue-100 text-blue-800 dark:bg-blue-500/15 dark:text-blue-300" />
         <Card to="/bank-accounts" icon={Landmark} title="Bank accounts" sub="Company accounts used in the ledger"
           tone="bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300" />
