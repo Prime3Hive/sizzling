@@ -1093,6 +1093,14 @@ GRANT EXECUTE ON FUNCTION public.fn_close_year(integer) TO authenticated;
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 15. Budgets: a real "monthly" type
 -- ─────────────────────────────────────────────────────────────────────────────
+-- The live table carries a CHECK (created outside these migrations) that only
+-- allows week/event/activity. Replace it with one that also allows monthly.
+-- NOT VALID: existing rows are not re-checked, only new and changed ones.
+ALTER TABLE public.budgets DROP CONSTRAINT IF EXISTS budgets_type_check;
+ALTER TABLE public.budgets
+  ADD CONSTRAINT budgets_type_check
+  CHECK (type IN ('monthly', 'week', 'event', 'activity')) NOT VALID;
+
 UPDATE public.budgets
    SET type = 'monthly'
  WHERE start_date = date_trunc('month', start_date)::date
