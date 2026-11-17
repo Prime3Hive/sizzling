@@ -31,7 +31,9 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useRoles } from '@/hooks/useRoles';
-import { useCommissionCost } from '@/hooks/useCommission';
+import { useProfitAndLoss, useCashCollected } from '@/hooks/useProfitAndLoss';
+import { fetchAll } from '@/lib/fetchAll';
+import { countStock } from '@/lib/stockStatus';
 import { formatNairaCompact, formatNairaShort } from '@/lib/currency';
 import { nextBirthday, countdownLabel, formatBirthdayShort } from '@/lib/birthday';
 import { Banknote, FileText, CreditCard, Briefcase, Activity, PiggyBank } from 'lucide-react';
@@ -68,11 +70,13 @@ const Dashboard = () => {
   const isStaff = !isAdmin && !isHR && !isManager && !isEmployee;
   const canViewFinancials = isAdmin || isManager;
   const now = new Date();
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
-  const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
+  // Local dates (toISOString shifts to UTC and turned 1 Nov into 31 Oct).
+  const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const today = ymd(now);
+  const monthStart = ymd(new Date(now.getFullYear(), now.getMonth(), 1));
+  const monthEnd = ymd(new Date(now.getFullYear(), now.getMonth() + 1, 0));
   const yearStart = `${now.getFullYear()}-01-01`;
-  const yearEnd = `${now.getFullYear()}-12-31`;
-  const sixAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1).toISOString().split('T')[0];
+  const sixAgo = ymd(new Date(now.getFullYear(), now.getMonth() - 5, 1));
 
   const hour = now.getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
@@ -94,53 +98,37 @@ const Dashboard = () => {
     enabled: !!user && canViewFinancials,
   });
 
-  // YTD Sales
-  const { data: ytdSales = [], isLoading: salesLoading } = useQuery({
-    queryKey: ['dashboard-sales', yearStart, yearEnd],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('sales')
-        .select('total_amount, vat_amount, sale_type, sale_date')
-        .gte('sale_date', yearStart)
-        .lte('sale_date', yearEnd)
-        .neq('status', 'cancelled');
-      if (error) throw error;
-      return data || [];
-    },
-    enabled: !!user && canViewFinancials,
-  });
-
-  // YTD Expenses for P/L
-  const { data: ytdExpenses = [], isLoading: ytdExpLoading } = useQuery({
-    queryKey: ['dashboard-ytd-expenses', yearStart, yearEnd],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('expenses')
-        .select('amount, account_type')
-        .eq('status', 'approved')
-        .gte('date', yearStart)
-        .lte('date', yearEnd);
-      if (error) throw error;
-      return data || [];
-    },
-    enabled: !!user && canViewFinancials,
-  });
-
-  // Payroll summary
+  // Payroll summary — every record this year (no row cap: a .limit(100) here
+  // reported "100 paid" against 176 on the P&L), plus anything still pending.
   const { data: payrollRecords = [], isLoading: payrollLoading } = useQuery({
-    queryKey: ['dashboard-payroll'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('payroll_records')
-        .select('net_pay, basic_salary, allowances, pension_employer, status, salary_period, period_start, period_end')
-        .order('created_at', { ascending: false })
-        .limit(100);
-      if (error) throw error;
-      return data || [];
-    },
+    queryKey: ['dashboard-payroll', yearStart],
+    queryFn: () => fetchAll<any>((from, to) => supabase
+      .from('payroll_records')
+      .select('id, net_pay, status, period_start')
+      .or(`period_start.gte.${yearStart},status.eq.pending`)
+      .order('id')
+      .range(from, to)),
     enabled: !!user && isAdmin,
   });
-  const ytdCommission = useCommissionCost(yearStart, yearEnd, !!user && isAdmin);
+
+  // THE P&L (ledger) — the same function the P&L page and Finance use.
+  const pl = useProfitAndLoss(yearStart, today, !!user && canViewFinancials);
+  const pl6 = useProfitAndLoss(sixAgo, today, !!user && canViewFinancials);
+  const cashIn = useCashCollected(monthStart, today, !!user && canViewFinancials);
+
+  // Draft LPOs left more than 7 days.
+  const { data: staleDrafts = 0 } = useQuery({
+    queryKey: ['dash-stale-lpo-drafts'],
+    queryFn: async () => {
+      const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString();
+      const { count, error } = await (supabase as any)
+        .from('lpos').select('id', { count: 'exact', head: true })
+        .eq('status', 'draft').lt('created_at', weekAgo);
+      if (error) throw error;
+      return count ?? 0;
+    },
+    enabled: !!user && canViewFinancials,
+  });
 
   // Budgets. The date range matters: the expense KPI compares month-to-date
   // spend against the budget FOR THAT PERIOD, not against the sum of every
@@ -166,6 +154,8 @@ const Dashboard = () => {
       let q = supabase
         .from('expenses')
         .select('id, description, category, date, amount')
+        .is('cancelled_at', null)
+        .order('date', { ascending: false })
         .order('created_at', { ascending: false })
         .limit(5);
       if (!canViewFinancials) q = q.eq('user_id', user!.id);
@@ -211,8 +201,9 @@ const Dashboard = () => {
   const { data: lowStockCount = 0 } = useQuery({
     queryKey: ['dashboard-low-stock'],
     queryFn: async () => {
-      const { data } = await supabase.from('skus').select('stock_quantity, reorder_level').gt('reorder_level', 0);
-      return (data || []).filter((s: any) => Number(s.stock_quantity) <= Number(s.reorder_level)).length;
+      // Same rule and same count as the Inventory page (low + out + negative).
+      const data = await fetchAll<any>((from, to) => (supabase as any).from('skus').select('id, stock_quantity, reorder_level').eq('is_archived', false).order('id').range(from, to));
+      return countStock(data).needsReorder;
     },
     enabled: !!user && isAdmin,
   });
@@ -232,21 +223,6 @@ const Dashboard = () => {
 
   // ── Executive financial data (admin) ──────────────────────────────────────────
 
-  // Invoices issued YTD (primary revenue source)
-  const { data: ytdInvoices = [] } = useQuery({
-    queryKey: ['dash-ytd-invoices', yearStart, yearEnd],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('invoices')
-        .select('total_amount, tax_amount, issue_date, invoice_type')
-        .eq('status', 'invoice')
-        .gte('issue_date', yearStart).lte('issue_date', yearEnd);
-      if (error) throw error;
-      return data || [];
-    },
-    enabled: !!user && canViewFinancials,
-  });
-
   // Outstanding invoices (receivables)
   const { data: dashOutstanding = [] } = useQuery({
     queryKey: ['dash-outstanding'],
@@ -261,62 +237,7 @@ const Dashboard = () => {
     enabled: !!user && canViewFinancials,
   });
 
-  // Cash collected this month — sale payments + dated invoice receipts
-  const { data: mtdSalePayments = [] } = useQuery({
-    queryKey: ['dash-mtd-sale-payments', monthStart, monthEnd],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('payments').select('amount, payment_date, status')
-        .eq('status', 'completed')
-        .gte('payment_date', monthStart).lte('payment_date', monthEnd);
-      if (error) throw error;
-      return data || [];
-    },
-    enabled: !!user && canViewFinancials,
-  });
-  const { data: mtdInvoiceReceipts = [] } = useQuery({
-    queryKey: ['dash-mtd-invoice-receipts', monthStart, monthEnd],
-    queryFn: async () => {
-      const { data, error } = await (supabase as any)
-        .from('invoice_payments').select('amount, payment_date')
-        .gte('payment_date', monthStart).lte('payment_date', monthEnd);
-      if (error) throw error;
-      return data || [];
-    },
-    enabled: !!user && canViewFinancials,
-  });
 
-  // 6-month trend: sales, invoices, expenses
-  const { data: sixSales = [] } = useQuery({
-    queryKey: ['dash-6m-sales', sixAgo],
-    queryFn: async () => {
-      const { data, error } = await supabase.from('sales')
-        .select('total_amount, vat_amount, sale_date, status').gte('sale_date', sixAgo).neq('status', 'cancelled');
-      if (error) throw error;
-      return data || [];
-    },
-    enabled: !!user && canViewFinancials,
-  });
-  const { data: sixInvoices = [] } = useQuery({
-    queryKey: ['dash-6m-invoices', sixAgo],
-    queryFn: async () => {
-      const { data, error } = await supabase.from('invoices')
-        .select('total_amount, tax_amount, issue_date, status').eq('status', 'invoice').gte('issue_date', sixAgo);
-      if (error) throw error;
-      return data || [];
-    },
-    enabled: !!user && canViewFinancials,
-  });
-  const { data: sixExpenses = [] } = useQuery({
-    queryKey: ['dash-6m-expenses', sixAgo],
-    queryFn: async () => {
-      const { data, error } = await supabase.from('expenses')
-        .select('amount, date').eq('status', 'approved').gte('date', sixAgo);
-      if (error) throw error;
-      return data || [];
-    },
-    enabled: !!user && canViewFinancials,
-  });
 
   // Headcount + department spread
   const { data: headcount = [] } = useQuery({
@@ -386,7 +307,7 @@ const Dashboard = () => {
     enabled: !!user && (isStaff || isEmployee || isManager),
   });
 
-  const isLoading = expLoading || salesLoading || ytdExpLoading || payrollLoading;
+  const isLoading = expLoading || payrollLoading || pl.isLoading;
 
   const monthlySpent = monthlyExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
 
@@ -418,43 +339,22 @@ const Dashboard = () => {
 
   const pendingPayroll = payrollRecords.filter(r => r.status === 'pending');
   const totalPendingPay = pendingPayroll.reduce((sum, r) => sum + Number(r.net_pay), 0);
-  const paidPayroll = payrollRecords.filter(r => r.status === 'paid');
+  const paidPayroll = payrollRecords.filter(r => r.status === 'paid' && r.period_start >= yearStart);
   const totalPaidPay = paidPayroll.reduce((sum, r) => sum + Number(r.net_pay), 0);
 
-  // Revenue = legacy sales + issued invoices (single source of truth, matches Finance)
-  // Invoice revenue is NET of VAT — the tax portion is a FIRS liability, not income.
-  const invNet = (i: { total_amount: number; tax_amount?: number | null }) =>
-    Number(i.total_amount) - Number((i as any).tax_amount ?? 0);
-  const saleNet = (s: { total_amount: number }) =>
-    Number(s.total_amount) - Number((s as any).vat_amount ?? 0);
-  const ytdSalesRevenue   = ytdSales.reduce((sum, s) => sum + saleNet(s), 0);
-  const ytdInvoiceRevenue = ytdInvoices.reduce((sum, i) => sum + invNet(i), 0);
-  const ytdRevenue = ytdSalesRevenue + ytdInvoiceRevenue;
-
-  const ytdCOGS = ytdExpenses.filter(e => (e.account_type || 'COGS') === 'COGS').reduce((sum, e) => sum + Number(e.amount), 0);
-  const ytdOpEX = ytdExpenses.filter(e => e.account_type === 'OpEX').reduce((sum, e) => sum + Number(e.amount), 0);
-  // Staff cost at gross + employer pension (matches the general ledger)
-  const ytdPayrollOpEX = paidPayroll.reduce(
-    (sum, r: any) => sum + Number(r.basic_salary ?? r.net_pay) + Number(r.allowances ?? 0) + Number(r.pension_employer ?? 0), 0)
-    // Sales commission accrued this year (ledger 5120) — never in payroll's figure.
-    + ytdCommission.total;
-  const ytdGrossProfit = ytdRevenue - ytdCOGS;
-  const ytdTotalOpEX = ytdOpEX + ytdPayrollOpEX;
-  const ytdNetProfit = ytdGrossProfit - ytdTotalOpEX;
+  // Profit, year to date — straight from the one P&L (general ledger).
+  const ytdRevenue = pl.totals.revenue;
+  const ytdCOGS = pl.totals.cogs;
+  const ytdOpEX = pl.totals.opex;
+  const ytdPayroll = pl.totals.payroll;
+  const ytdCommission = pl.totals.commission;
+  const ytdGrossProfit = pl.totals.grossProfit;
+  const ytdNetProfit = pl.totals.netProfit;
   const profitMargin = ytdRevenue > 0 ? (ytdNetProfit / ytdRevenue) * 100 : 0;
+  const monthlySales = pl.forMonth(now.getMonth())?.revenue ?? 0;
 
-  const monthlySalesRev = ytdSales
-    .filter(s => s.sale_date >= monthStart && s.sale_date <= monthEnd)
-    .reduce((sum, s) => sum + saleNet(s), 0);
-  const monthlyInvoiceRev = ytdInvoices
-    .filter(i => i.issue_date >= monthStart && i.issue_date <= monthEnd)
-    .reduce((sum, i) => sum + invNet(i), 0);
-  const monthlySales = monthlySalesRev + monthlyInvoiceRev;
-
-  // Cash collected this month (dated)
-  const mtdCash =
-    mtdSalePayments.reduce((s, p) => s + Number(p.amount), 0) +
-    mtdInvoiceReceipts.reduce((s: number, r: any) => s + Number(r.amount), 0);
+  // Cash actually received this month (Cash + Bank, from sales and receipts).
+  const mtdCash = cashIn.data ?? 0;
 
   // Receivables (outstanding invoices)
   const receivablesTotal = dashOutstanding.reduce((s, i) => s + (Number(i.total_amount) - Number(i.amount_paid)), 0);
@@ -469,15 +369,12 @@ const Dashboard = () => {
     return { y: d.getFullYear(), m: d.getMonth(), label: d.toLocaleDateString('en-US', { month: 'short' }) };
   });
   const trendData = monthsBack.map(({ y, m, label }) => {
-    const inMonth = (dateStr: string) => {
-      const d = new Date(dateStr);
-      return d.getFullYear() === y && d.getMonth() === m;
+    const row = pl6.rows.find(r => Number(r.month.slice(0, 4)) === y && Number(r.month.slice(5, 7)) - 1 === m);
+    return {
+      name: label,
+      Revenue: row?.revenue ?? 0,
+      Expenses: row ? row.cogs + row.opex + row.payroll + row.commission : 0,
     };
-    const rev =
-      sixSales.filter(s => inMonth(s.sale_date)).reduce((a, s) => a + saleNet(s), 0) +
-      sixInvoices.filter(i => inMonth(i.issue_date)).reduce((a, i) => a + invNet(i), 0);
-    const exp = sixExpenses.filter(e => inMonth(e.date)).reduce((a, e) => a + Number(e.amount), 0);
-    return { name: label, Revenue: rev, Expenses: exp };
   });
 
   // Top expense categories this month
@@ -673,7 +570,7 @@ const Dashboard = () => {
   }
 
   // ── Admin Dashboard ──
-  const hasAlerts = allPendingLeave > 0 || lowStockCount > 0 || upcomingBirthdays.length > 0 || unreadMsgCount > 0;
+  const hasAlerts = allPendingLeave > 0 || lowStockCount > 0 || upcomingBirthdays.length > 0 || unreadMsgCount > 0 || staleDrafts > 0;
 
   return (
     <div className="space-y-8">
@@ -698,6 +595,12 @@ const Dashboard = () => {
           </Link>
         </div>
       </div>
+
+      {pl.error && (
+        <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+          Profit figures could not load: {pl.error.message}. If this mentions fn_profit_and_loss, apply database migration 20261117100000_finance_single_source.
+        </div>
+      )}
 
       {/* Action Alerts */}
       {hasAlerts && (
@@ -732,7 +635,18 @@ const Dashboard = () => {
                   <div className="p-2 bg-red-500/10 rounded-lg shrink-0"><PackageX className="h-4 w-4 text-red-600" /></div>
                   <div>
                     <p className="text-sm font-semibold text-red-800 dark:text-red-400">{lowStockCount} Low Stock Item{lowStockCount !== 1 ? 's' : ''}</p>
-                    <p className="text-xs text-red-600 dark:text-red-500">At or below reorder point</p>
+                    <p className="text-xs text-red-600 dark:text-red-500">Low, out or below zero</p>
+                  </div>
+                </div>
+              </Link>
+            )}
+            {staleDrafts > 0 && (
+              <Link to="/procurement" className="flex-1 min-w-[200px]">
+                <div className="flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-900/10 px-4 py-3 hover:shadow-md transition-all cursor-pointer">
+                  <div className="p-2 bg-amber-500/10 rounded-lg shrink-0"><FileText className="h-4 w-4 text-amber-600" /></div>
+                  <div>
+                    <p className="text-sm font-semibold text-amber-800 dark:text-amber-400">{staleDrafts} Draft LPO{staleDrafts !== 1 ? 's' : ''}</p>
+                    <p className="text-xs text-amber-600 dark:text-amber-500">Older than 7 days: send or cancel</p>
                   </div>
                 </div>
               </Link>
@@ -937,7 +851,8 @@ const Dashboard = () => {
               <div className="flex justify-between text-sm"><span className="text-muted-foreground">COGS</span><span className="font-medium text-destructive">−{formatNairaCompact(ytdCOGS)}</span></div>
               <div className="border-t pt-2 flex justify-between text-sm"><span className="font-medium">Gross Profit</span><span className={ytdGrossProfit >= 0 ? 'text-success font-semibold' : 'text-destructive font-semibold'}>{formatNairaCompact(ytdGrossProfit)}</span></div>
               <div className="flex justify-between text-sm"><span className="text-muted-foreground">OpEX</span><span className="font-medium text-destructive">−{formatNairaCompact(ytdOpEX)}</span></div>
-              <div className="flex justify-between text-sm"><span className="text-muted-foreground">Payroll</span><span className="font-medium text-destructive">−{formatNairaCompact(ytdPayrollOpEX)}</span></div>
+              <div className="flex justify-between text-sm"><span className="text-muted-foreground">Payroll</span><span className="font-medium text-destructive">−{formatNairaCompact(ytdPayroll)}</span></div>
+              <div className="flex justify-between text-sm"><span className="text-muted-foreground">Commission</span><span className="font-medium text-destructive">−{formatNairaCompact(ytdCommission)}</span></div>
               <div className="border-t pt-2 flex justify-between text-sm"><span className="font-semibold">Net Profit</span><span className={`font-bold ${ytdNetProfit >= 0 ? 'text-success' : 'text-destructive'}`}>{ytdNetProfit < 0 ? '−' : ''}{formatNairaCompact(Math.abs(ytdNetProfit))}</span></div>
             </div>
             <Link to="/profit-loss">

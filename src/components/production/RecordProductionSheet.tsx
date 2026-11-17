@@ -356,7 +356,7 @@ export default function RecordProductionSheet({ open, onOpenChange, items, recip
           <div>
             <h3 className="text-sm font-semibold">Production expenses</h3>
             <p className="text-xs text-muted-foreground">
-              Gas, diesel, power and similar for this batch (not salaries). Added to the batch's cost per unit. Pay them through Expenses under “Production Expenses”.
+              Gas, diesel, power and similar for this batch (not salaries). Added to the batch's cost per unit. Pay them through Expenses (Cooking Fuel, Kitchen Labour …).
             </p>
           </div>
           {costs.map((c, i) => (

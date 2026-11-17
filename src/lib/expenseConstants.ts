@@ -9,25 +9,12 @@
 //                        control is gone: it left Rent (5200) and Utilities
 //                        (5300) unreachable from the form.
 //
-// These arrays remain only for src/components/procurement/LPOSheet.tsx, which
-// belongs to the procure-to-pay work governed by FIX-INSTRUCTIONS.md. Do not
-// add new expense-capture uses.
+// The remaining arrays are used by src/components/procurement/LPOSheet.tsx and
+// the P&L. Do not add new expense-capture uses.
 
-export const EXPENSE_CATEGORIES = [
-  'Raw Materials',
-  'Packaging',
-  'Production Labour',
-  'Shipping & Transportation',
-  'Repairs & Maintenance',
-  'Salaries & Wages',
-  'Catering Services',
-  'Event Staff',
-  'Proteins',
-  'Snacks',
-  'Chefs Payment',
-  'Waiters Payment',
-  'Miscellaneous',
-] as const;
+// EXPENSE_CATEGORIES was removed (2026-11-17). The approved categories live in
+// public.expense_categories, each with its ledger account; see
+// src/lib/expenseCategories.ts for the list and the item → category guesser.
 
 export const ACCOUNT_TYPES = ['COGS', 'OpEX'] as const;
 export const COST_CENTERS = ['Daily Orders', 'Event Account', 'Operations Account'] as const;
@@ -44,7 +31,6 @@ export const SALARY_PERIODS = [
   { value: 'weekly', label: 'Weekly' },
 ] as const;
 
-export type ExpenseCategory = typeof EXPENSE_CATEGORIES[number];
 export type AccountType = typeof ACCOUNT_TYPES[number];
 export type CostCenter = typeof COST_CENTERS[number];
 export type PaymentMethod = typeof PAYMENT_METHODS[number];

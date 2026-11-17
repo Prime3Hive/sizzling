@@ -29,6 +29,7 @@ import ApprovalLineEditor, {
   linesFromReport, lineIssues, type EditableLine,
 } from '@/components/expenses/ApprovalLineEditor';
 import { useExpenseCategories } from '@/hooks/useExpenseReference';
+import { guessExpenseCategory } from '@/lib/expenseCategories';
 import ChecklistAdmin from '@/components/reports/ChecklistAdmin';
 import ReportDetailsDialog, { type StaffReportRecord } from '@/components/reports/ReportDetailsDialog';
 
@@ -153,7 +154,9 @@ export default function StaffReportsAdmin() {
           if (isMoneyError(parsed)) throw new Error(`"${l.description}": ${parsed.error}`);
           return {
             description: l.description,
-            category: categories.find(c => c.id === l.categoryId)?.name ?? l.categoryName ?? 'Miscellaneous',
+            // Only a category from the list. Free text (an item name such as
+            // "Parsley") is never a category; it stays in the description.
+            category: categories.find(c => c.id === l.categoryId)?.name ?? '',
             category_id: l.categoryId || null,
             receipt_path: l.receiptPath ?? null,
             minor: Number(parsed.minor),
@@ -173,7 +176,7 @@ export default function StaffReportsAdmin() {
         const rows = withMinor.map(l => ({
           amount_minor: l.minor,
           description: l.description || r.title || 'Staff expense report',
-          category: l.category || 'Miscellaneous',
+          category: l.category,
           category_id: l.category_id ?? null,
           date: r.report_date,
           budget_id: null,
@@ -246,10 +249,13 @@ export default function StaffReportsAdmin() {
         // not when the supplier is eventually paid — so the expense record is
         // created NOW, dated to the report date, alongside the payable.
         const creditMinor = (r as any).amount_minor ?? Number(nairaToMinor(r.amount ?? 0));
+        // "Credit" is how it was paid, not what was bought: the category comes
+        // from the items (Proteins, Fresh Produce …).
+        const creditCategory = guessExpenseCategory(`${items} ${r.title ?? ''}`) ?? 'Dry Goods & Seasonings';
         const { data: exp, error: expErr } = await supabase.from('expenses').insert({
           amount_minor: creditMinor,
           description: `Credit purchase — ${supplier}${items ? `: ${items}` : ''}`,
-          category: 'Credit Purchase',
+          category: creditCategory,
           date: r.report_date,
           budget_id: null,
           account_type: 'COGS',
@@ -269,7 +275,7 @@ export default function StaffReportsAdmin() {
 
         const { data, error } = await supabase.from('payables').insert({
           supplier,
-          description: items || r.title || null, category: 'Credit Purchase',
+          description: items || r.title || null, category: creditCategory,
           amount_minor: creditMinor, incurred_date: r.report_date,
           due_date: r.details?.due_date ?? null, status: 'unpaid',
           expense_id: exp!.id,
@@ -370,19 +376,11 @@ export default function StaffReportsAdmin() {
       // meaning the cost was never recognised at all. Record it, dated to when
       // it was incurred, marked as on credit so it credits Accounts Payable —
       // which the settlement below then clears.
-      let expenseId = p.expense_id ?? null;
-      if (!expenseId) {
-        const { data: exp, error: expErr } = await supabase.from('expenses').insert({
-          amount_minor: (p as any).amount_minor ?? Number(nairaToMinor(p.amount)),
-          description: `Credit purchase — ${p.supplier}${p.description ? `: ${p.description}` : ''}`,
-          category: p.category || 'Credit Purchase', date: p.incurred_date,
-          budget_id: null, account_type: 'COGS', cost_center: 'Daily Orders',
-          payment_method: 'Credit', payee_name: p.supplier, created_by: user!.id,
-          source: 'settlement',
-        } as any).select('id').single();
-        if (expErr) throw expErr;
-        expenseId = exp!.id;
-      }
+      // Settling records a PAYMENT only (Dr 2000 / Cr Cash|Bank, posted by
+      // fn_post_payable_settlement). It never creates an expense: the cost was
+      // recorded when the credit purchase (or goods receipt) was approved, and
+      // a second expense here is what double-counted credit purchases.
+      const expenseId = p.expense_id ?? null;
       const { error } = await supabase.from('payables').update({
         status: 'paid', paid_at: new Date().toISOString(), payment_method: payMethod, expense_id: expenseId,
       }).eq('id', p.id);

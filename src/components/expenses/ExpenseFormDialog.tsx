@@ -140,6 +140,10 @@ export default function ExpenseFormDialog({
   const [saving, setSaving] = useState(false);
   const [splitOpen, setSplitOpen] = useState(false);
   const [dirty, setDirty] = useState(false);
+  // Possible duplicates found on save; a second save goes ahead anyway.
+  const [dupes, setDupes] = useState<{ id: string; date: string; amount: number; description: string; payee_name: string | null }[] | null>(null);
+  // Reference filled for the user when they leave it blank.
+  const [autoRef] = useState(() => `EXP-${todayIso().replace(/-/g, '')}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`);
   const formRef = useRef<HTMLFormElement>(null);
 
   const { data: categories = [] } = useExpenseCategories();
@@ -153,7 +157,11 @@ export default function ExpenseFormDialog({
   const set = (patch: Partial<FormState>) => {
     setForm((prev) => ({ ...prev, ...patch }));
     setDirty(true);
+    if ('amount' in patch || 'date' in patch) setDupes(null);
   };
+
+  // Only Finance (admin) chooses the account; everyone else gets the category's.
+  const canEditAccount = isAdmin;
 
   useEffect(() => {
     if (!editingExpense) return;
@@ -181,14 +189,39 @@ export default function ExpenseFormDialog({
     setDirty(false);
   }, [editingExpense, accounts, costCentres]);
 
-  // ── Category may pre-fill the account, but it stays editable ──────────────
+  // ── The account follows the category (the database enforces the same) ─────
   const chosenCategory = categories.find((c) => c.id === form.categoryId);
+  const lastCategory = useRef<string>('');
   useEffect(() => {
     if (!chosenCategory?.account_code) return;
-    if (form.accountId) return; // never overwrite a choice the user made
+    const changed = lastCategory.current !== chosenCategory.id;
+    lastCategory.current = chosenCategory.id;
+    // Finance may override after choosing; a category change resets it.
+    if (!changed && form.accountId && canEditAccount) return;
     const match = accounts.find((a) => a.code === chosenCategory.account_code);
-    if (match) setForm((p) => ({ ...p, accountId: match.id }));
-  }, [chosenCategory, accounts, form.accountId]);
+    if (match && match.id !== form.accountId) setForm((p) => ({ ...p, accountId: match.id }));
+  }, [chosenCategory, accounts, form.accountId, canEditAccount]);
+
+  // ── Cost centre defaults to the first (Daily Orders) ─────────────────────
+  useEffect(() => {
+    if (form.costCentreId || costCentres.length === 0) return;
+    const daily = costCentres.find((c) => /daily/i.test(c.name)) ?? costCentres[0];
+    setForm((p) => ({ ...p, costCentreId: daily.id }));
+  }, [costCentres, form.costCentreId]);
+
+  // ── Budget follows the date: the budget covering it, monthly first ───────
+  const budgetForDate = useMemo(() => {
+    const covering = budgetRows.filter((b: any) => b.start_date && b.end_date && b.start_date <= form.date && b.end_date >= form.date);
+    covering.sort((a: any, b: any) =>
+      (new Date(a.end_date).getTime() - new Date(a.start_date).getTime()) -
+      (new Date(b.end_date).getTime() - new Date(b.start_date).getTime()));
+    return covering[0]?.id ?? '';
+  }, [budgetRows, form.date]);
+  const budgetTouched = useRef(false);
+  useEffect(() => {
+    if (budgetTouched.current || isEditMode) return;
+    if (budgetForDate !== form.budgetId) setForm((p) => ({ ...p, budgetId: budgetForDate }));
+  }, [budgetForDate, form.budgetId, isEditMode]);
 
   const amountParsed = form.amount.trim() === '' ? null : parseMoney(form.amount);
   const amountMinor = amountParsed && !isMoneyError(amountParsed) ? amountParsed.minor : 0n;
@@ -212,7 +245,7 @@ export default function ExpenseFormDialog({
     budget_id: form.budgetId || null,
     vat: form.vat,
     wht: form.wht,
-    reference: form.reference,
+    reference: form.reference.trim() || (isEditMode ? '' : autoRef),
     receipt_path: receiptFile ? 'pending-upload' : existingReceipt,
     date: form.date,
     payment_method: form.paymentMethod,
@@ -231,6 +264,9 @@ export default function ExpenseFormDialog({
   const splitOffered = !!liveErrors.description && form.description.trim().length > 0;
 
   const reset = () => {
+    budgetTouched.current = false;
+    lastCategory.current = '';
+    setDupes(null);
     setForm(blank());
     setReceiptFile(null);
     setExistingReceipt(null);
@@ -276,6 +312,24 @@ export default function ExpenseFormDialog({
       return;
     }
 
+    // Same amount within ±3 days is usually the same purchase entered twice.
+    if (dupes === null) {
+      const { data: found } = await db.rpc('fn_find_duplicate_expenses', {
+        p_amount_minor: Number(amountMinor),
+        p_date: form.date,
+        p_exclude: editingExpense?.id ?? null,
+      });
+      if (found && found.length > 0) {
+        setDupes(found);
+        toast({
+          title: 'Possible duplicate',
+          description: `${found.length} expense${found.length === 1 ? '' : 's'} of the same amount within 3 days. Check below, then save again to add it anyway.`,
+          variant: 'destructive',
+        });
+        return;
+      }
+    }
+
     setSaving(true);
     try {
       let receiptPath = existingReceipt;
@@ -293,7 +347,7 @@ export default function ExpenseFormDialog({
         expense_account_code: account?.code ?? null,
         // The old two-value column is kept in step for anything still reading
         // it, but the account code above is what the journal now uses.
-        account_type: account?.code === '5000' ? 'COGS' : 'OpEX',
+        account_type: account?.code && account.code >= '5000' && account.code <= '5099' ? 'COGS' : 'OpEX',
         cost_center: value.cost_centre,
         payment_method: value.payment_method,
         bank_account_id: value.bank_account_id,
@@ -314,19 +368,23 @@ export default function ExpenseFormDialog({
         setOpen(false);
         onExpenseUpdated?.();
       } else {
-        const { error } = await db.from('expenses').insert({
+        const { data: saved, error } = await db.from('expenses').insert({
           ...payload,
           created_by: user?.id,
           submitted_by: user?.id,
           submitted_at: new Date().toISOString(),
           status: isAdmin ? 'approved' : 'pending',
-        });
+        }).select('status').single();
         if (error) throw error;
+        // Above the self-approval limit the database holds it for a second approver.
+        const approved = saved?.status === 'approved';
         toast({
           title: 'Expense added',
-          description: isAdmin
+          description: approved
             ? `${formatMinor(value.amount_minor)} recorded.`
-            : `${formatMinor(value.amount_minor)} submitted — it counts once an admin approves it.`,
+            : isAdmin
+              ? `${formatMinor(value.amount_minor)} saved as pending — you recorded it, so another admin must approve it.`
+              : `${formatMinor(value.amount_minor)} submitted — it counts once an admin approves it.`,
         });
         setOpen(false);
         reset();
@@ -490,22 +548,20 @@ export default function ExpenseFormDialog({
         <Field
           id="expense-budget_id"
           label="Budget"
-          required
           error={errorFor('budget_id')}
           hint={
             selectedBudget
               ? `${formatMinor(budgetRemaining!)} remaining of ${formatMinor(nairaToMinor(selectedBudget.total_budget))}`
-              : undefined
+              : 'Set from the date (that month\'s budget).'
           }
         >
           <SearchableSelect
             id="expense-budget_id"
             options={budgetOptions(budgetRows)}
             value={form.budgetId}
-            onChange={(v) => set({ budgetId: v })}
-            placeholder="Choose a budget"
+            onChange={(v) => { budgetTouched.current = true; set({ budgetId: v }); }}
+            placeholder="This month's budget"
             title="Choose a budget"
-            required
           />
           {overBudget && (
             <p role="alert" className="text-xs text-amber-600 flex items-start gap-1 mt-1">
@@ -524,23 +580,22 @@ export default function ExpenseFormDialog({
         <Field
           id="expense-expense_account_code"
           label="Expense account"
-          required
           error={errorFor('expense_account_code')}
-          hint="Where this lands in the ledger."
+          hint={canEditAccount ? 'Filled from the category. Finance may change it.' : 'Filled from the category.'}
         >
           <SearchableSelect
             id="expense-expense_account_code"
             options={accountOptions(accounts)}
             value={form.accountId}
             onChange={(v) => set({ accountId: v })}
-            placeholder="Choose an account"
+            placeholder="Choose a category first"
             title="Choose an expense account"
-            required
+            disabled={!canEditAccount}
             invalid={!!errorFor('expense_account_code')}
           />
         </Field>
 
-        <Field id="expense-cost_centre" label="Cost centre" required error={errorFor('cost_centre')}>
+        <Field id="expense-cost_centre" label="Cost centre" error={errorFor('cost_centre')}>
           <SearchableSelect
             id="expense-cost_centre"
             options={costCentreOptions(costCentres)}
@@ -548,7 +603,6 @@ export default function ExpenseFormDialog({
             onChange={(v) => set({ costCentreId: v })}
             placeholder="Choose a cost centre"
             title="Choose a cost centre"
-            required
             invalid={!!errorFor('cost_centre')}
           />
         </Field>
@@ -624,8 +678,8 @@ export default function ExpenseFormDialog({
         <Field
           id="expense-reference"
           label="Reference / invoice no."
-          required
           error={errorFor('reference')}
+          hint={isEditMode ? undefined : `Leave blank to use ${autoRef}.`}
         >
           <Input
             id="expense-reference"
@@ -634,7 +688,7 @@ export default function ExpenseFormDialog({
             onBlur={() => setTouched((t) => ({ ...t, reference: true }))}
             className="h-11 text-base"
             inputMode="text"
-            aria-required
+            placeholder={isEditMode ? undefined : autoRef}
           />
         </Field>
       </div>
@@ -656,6 +710,19 @@ export default function ExpenseFormDialog({
           error={errorFor('receipt')}
         />
       </Field>
+      {dupes && dupes.length > 0 && (
+        <div role="alert" className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-900/10 p-3 text-sm space-y-1">
+          <p className="font-semibold text-amber-800 dark:text-amber-300 flex items-center gap-1.5">
+            <AlertTriangle className="h-4 w-4" aria-hidden />Same amount recorded within 3 days
+          </p>
+          {dupes.map((d) => (
+            <p key={d.id} className="text-amber-800/90 dark:text-amber-300/90">
+              {d.date} · {formatMinor(nairaToMinor(Number(d.amount)))} · {d.payee_name ?? ''} {d.description}
+            </p>
+          ))}
+          <p className="text-xs text-muted-foreground">If this is a different purchase, save again to add it.</p>
+        </div>
+      )}
     </form>
   );
 
@@ -670,7 +737,7 @@ export default function ExpenseFormDialog({
         Cancel
       </Button>
       <Button type="submit" form="expense-form" disabled={saving} className="h-11 sm:flex-1">
-        {saving ? 'Saving…' : isEditMode ? 'Save changes' : 'Add expense'}
+        {saving ? 'Saving…' : dupes && dupes.length > 0 ? 'Save anyway' : isEditMode ? 'Save changes' : 'Add expense'}
       </Button>
     </div>
   );

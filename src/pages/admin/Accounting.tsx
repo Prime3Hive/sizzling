@@ -16,7 +16,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Scale, BookOpen, ListTree, Plus, Trash2, Loader2, CheckCircle2, AlertTriangle, TrendingUp, Landmark, Receipt, Banknote } from "lucide-react";
 import { formatNairaCompact } from "@/lib/currency";
 import { safeFormat } from "@/lib/safeDate";
-import { useCommissionCost } from "@/hooks/useCommission";
+import { useProfitAndLoss } from "@/hooks/useProfitAndLoss";
+import { fetchAll } from "@/lib/fetchAll";
 import AmountCorrectionScreen from "@/components/expenses/AmountCorrectionScreen";
 
 interface Account {
@@ -92,7 +93,7 @@ export default function Accounting() {
       for (let from = 0; ; from += PAGE) {
         const { data, error } = await (supabase as any)
           .from("journal_lines")
-          .select("id, entry_id, account_id, debit, credit, description, reconciled_at, journal_entries!inner(entry_date, memo), chart_of_accounts(code, name, type, normal_balance)")
+          .select("id, entry_id, account_id, debit, credit, description, reconciled_at, journal_entries!inner(entry_date, memo, source_type), chart_of_accounts(code, name, type, normal_balance)")
           .order("id", { ascending: true })
           .range(from, from + PAGE - 1);
         if (error) throw error;
@@ -100,7 +101,7 @@ export default function Accounting() {
         out.push(...page);
         if (page.length < PAGE) break;
       }
-      return out.map((r: any) => ({ ...r, entry_date: r.journal_entries?.entry_date, memo: r.journal_entries?.memo }));
+      return out.map((r: any) => ({ ...r, entry_date: r.journal_entries?.entry_date, memo: r.journal_entries?.memo, source_type: r.journal_entries?.source_type }));
     },
   });
 
@@ -142,6 +143,9 @@ export default function Accounting() {
       if (!l.entry_date) continue;
       if (l.entry_date > to) continue;
       if (from && l.entry_date < from) continue;
+      // A period statement shows the year's activity, not the closing entry
+      // that zeroes it into Retained Earnings.
+      if (from && (l as any).source_type === "year_close") continue;
 
       const debit = Number(l.debit) || 0;
       const credit = Number(l.credit) || 0;
@@ -365,35 +369,85 @@ export default function Accounting() {
   });
   const { data: bcPayroll = [] } = useQuery<any[]>({
     queryKey: ["bc-payroll", bcFrom, bcTo],
+    queryFn: () => fetchAll<any>((from, to) => (supabase as any)
+      .from("payroll_records")
+      .select("id, basic_salary, allowances, pension_employer, net_pay")
+      .eq("status", "paid")
+      .gte("period_start", bcFrom).lte("period_start", bcTo)
+      .order("id").range(from, to)),
+  });
+  const { data: bcCommissionRows = [] } = useQuery<any[]>({
+    queryKey: ["bc-commission", bcFrom, bcTo],
     queryFn: async () => {
       const { data, error } = await (supabase as any)
-        .from("payroll_records")
-        .select("basic_salary, allowances, pension_employer, net_pay")
-        .eq("status", "paid")
-        .gte("period_start", bcFrom).lte("period_start", bcTo);
-      if (error) throw error;
+        .from("commission_periods")
+        .select("total_allocated, period_end, status")
+        .eq("status", "approved")
+        .gte("period_end", bcFrom).lte("period_end", bcTo);
+      if (error) return [];
       return data ?? [];
     },
   });
 
-  // Commission accruals, dated the same as their 5120 journal (period end).
-  const bcCommission = useCommissionCost(bcFrom, bcTo);
+  // The ledger side is THE P&L — the same function every page uses.
+  const bcGl = useProfitAndLoss(bcFrom, bcTo);
+
+  const { data: invCheck, refetch: refetchInvCheck } = useQuery<{ stock_value: number; ledger_value: number; difference: number } | null>({
+    queryKey: ["inventory-ledger-check"],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any).rpc("fn_inventory_ledger_check");
+      if (error) throw error;
+      const row = Array.isArray(data) ? data[0] : data;
+      return row ? { stock_value: Number(row.stock_value), ledger_value: Number(row.ledger_value), difference: Number(row.difference) } : null;
+    },
+  });
+  const [syncOffset, setSyncOffset] = useState<"5010" | "3000">("5010");
+  const [syncDate, setSyncDate] = useState(today);
+  const syncInventory = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await (supabase as any).rpc("fn_sync_inventory_ledger", { p_date: syncDate, p_offset: syncOffset });
+      if (error) throw error;
+      return Number(data ?? 0);
+    },
+    onSuccess: (d) => {
+      toast({ title: d === 0 ? "Already matching" : "Ledger inventory updated", description: d === 0 ? undefined : `Posted ${formatNairaCompact(Math.abs(d))} ${d > 0 ? "into" : "out of"} inventory.` });
+      refetchInvCheck();
+      qc.invalidateQueries({ queryKey: ["journal-all-lines"] });
+      qc.invalidateQueries({ queryKey: ["journal-entries"] });
+      qc.invalidateQueries({ queryKey: ["profit-and-loss"] });
+    },
+    onError: (e: any) => toast({ title: "Could not update inventory", description: e.message, variant: "destructive" }),
+  });
+  const [closeYear, setCloseYear] = useState(String(new Date().getFullYear() - 1));
+  const closeYearMut = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await (supabase as any).rpc("fn_close_year", { p_year: Number(closeYear) });
+      if (error) throw error;
+      return Number(data ?? 0);
+    },
+    onSuccess: (net) => {
+      toast({ title: `${closeYear} closed`, description: `${net >= 0 ? "Profit" : "Loss"} of ${formatNairaCompact(Math.abs(net))} moved to 3100 Retained Earnings.` });
+      qc.invalidateQueries({ queryKey: ["journal-all-lines"] });
+      qc.invalidateQueries({ queryKey: ["journal-entries"] });
+    },
+    onError: (e: any) => toast({ title: "Could not close the year", description: e.message, variant: "destructive" }),
+  });
 
   const booksCheck = useMemo(() => {
-    const { byAccount } = aggregate(bcFrom, bcTo);
-    let glRevenue = 0, glExpense = 0;
-    for (const r of Object.values(byAccount)) {
-      if ((r.account as any).type === "income") glRevenue += r.credit - r.debit;
-      if ((r.account as any).type === "expense") glExpense += r.debit - r.credit;
-    }
+    const t = bcGl.totals;
+    const glRevenue = t.revenue;
+    const glExpense = t.cogs + t.opex + t.payroll + t.commission;
 
     const opsRevenue =
       bcInvoices.reduce((s, i) => s + Number(i.total_amount) - Number(i.tax_amount ?? 0), 0) +
       bcSales.reduce((s, x) => s + Number(x.total_amount) - Number(x.vat_amount ?? 0), 0);
     const opsExpenses = bcExpenses.reduce((s, e) => s + Number(e.amount), 0);
+    // Same payroll basis as the ledger: gross (basic, or net for legacy rows)
+    // + allowances + employer pension.
     const opsPayrollGross = bcPayroll.reduce(
-      (s, p) => s + Number(p.basic_salary) + Number(p.allowances) + Number(p.pension_employer ?? 0), 0);
-    const opsCosts = opsExpenses + opsPayrollGross + bcCommission.total;
+      (s, p) => s + Number(p.basic_salary ?? p.net_pay ?? 0) + Number(p.allowances ?? 0) + Number(p.pension_employer ?? 0), 0);
+    const opsCommission = bcCommissionRows.reduce((s, c) => s + Number(c.total_allocated ?? 0), 0);
+    const opsCosts = opsExpenses + opsPayrollGross + opsCommission;
 
     return {
       glRevenue, glExpense,
@@ -403,7 +457,7 @@ export default function Accounting() {
       revDelta: glRevenue - opsRevenue,
       expDelta: glExpense - opsCosts,
     };
-  }, [allLines, bcFrom, bcTo, bcInvoices, bcSales, bcExpenses, bcPayroll, bcCommission.total]);
+  }, [bcGl.rows, bcInvoices, bcSales, bcExpenses, bcPayroll, bcCommissionRows]);
 
   // ── Bank reconciliation ──────────────────────────────────────────────────────
   const [recAccountCode, setRecAccountCode] = useState("1010");
@@ -834,12 +888,61 @@ export default function Accounting() {
               </Table>
               <div className="text-xs text-muted-foreground mt-4 space-y-1">
                 <p className="font-medium text-foreground">Known, expected differences:</p>
-                <p>• COGS on tracked stock hits the ledger at invoice issue; operational reports carry purchase-typed expenses instead (timing/classification).</p>
+                <p>• Purchases are costed when bought (expense, including one per goods receipt). Stock movements carry quantities only; the stock-count posting below (5010) is ledger-only.</p>
                 <p>• Payroll: the ledger books gross pay + employer pension; the comparison uses the same gross figure, but legacy pre-statutory records may differ by their deduction treatment.</p>
                 <p>• Sales commission is expensed (5120) when a month is approved, dated to its last Sunday; payroll later clears 2350 Commission Payable, so paying it adds no further cost.</p>
                 <p>• Journal entries posted manually (or remittances) have no counterpart in the operational tables.</p>
                 <p>• Cancelled documents in a locked period may be excluded on one side only.</p>
               </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Inventory — stock value vs ledger</CardTitle>
+              <CardDescription>
+                Stock is costed when bought. To carry what is still on the shelves as an asset, post the
+                difference between the Inventory page's stock value and ledger 1200/1210.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-3 sm:grid-cols-3 text-sm">
+                <div className="rounded-lg border p-3"><p className="text-xs text-muted-foreground">Inventory page stock value</p><p className="text-lg font-semibold tabular-nums">{invCheck ? formatNairaCompact(invCheck.stock_value) : "—"}</p></div>
+                <div className="rounded-lg border p-3"><p className="text-xs text-muted-foreground">Ledger 1200 + 1210</p><p className="text-lg font-semibold tabular-nums">{invCheck ? formatNairaCompact(invCheck.ledger_value) : "—"}</p></div>
+                <div className="rounded-lg border p-3"><p className="text-xs text-muted-foreground">Difference</p><p className={`text-lg font-semibold tabular-nums ${invCheck && Math.abs(invCheck.difference) < 1 ? "text-green-600" : "text-amber-600"}`}>{invCheck ? (Math.abs(invCheck.difference) < 1 ? "✓ agrees" : formatNairaCompact(invCheck.difference)) : "—"}</p></div>
+              </div>
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="space-y-1"><Label className="text-xs">Date</Label><Input type="date" className="h-9 w-40" value={syncDate} onChange={(e) => setSyncDate(e.target.value)} /></div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Offset</Label>
+                  <Select value={syncOffset} onValueChange={(v) => setSyncOffset(v as "5010" | "3000")}>
+                    <SelectTrigger className="h-9 w-[300px]"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="5010">5010 — month-end stock count (adjusts cost of sales)</SelectItem>
+                      <SelectItem value="3000">3000 — first time: stock already on hand (equity)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Button onClick={() => syncInventory.mutate()} disabled={syncInventory.isPending || !invCheck || Math.abs(invCheck.difference) < 1}>
+                  {syncInventory.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}Match ledger to stock value
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Year-end close</CardTitle>
+              <CardDescription>
+                Moves the year's income and expenses into 3100 Retained Earnings (dated 31 December) so the
+                balance sheet balances against equity. P&amp;L reports ignore the closing entry. Safe to re-run.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-wrap items-end gap-3">
+              <div className="space-y-1"><Label className="text-xs">Year</Label><Input type="number" className="h-9 w-28" value={closeYear} onChange={(e) => setCloseYear(e.target.value)} /></div>
+              <Button variant="outline" onClick={() => closeYearMut.mutate()} disabled={closeYearMut.isPending}>
+                {closeYearMut.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}Close {closeYear}
+              </Button>
             </CardContent>
           </Card>
         </TabsContent>

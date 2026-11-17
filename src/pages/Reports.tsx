@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { useCommissionCost } from "@/hooks/useCommission";
+import { useProfitAndLoss } from "@/hooks/useProfitAndLoss";
 import { formatNairaCompact, formatNairaShort } from "@/lib/currency";
 import { format } from "date-fns";
 
@@ -123,8 +123,8 @@ const Reports = () => {
   });
 
   // ── Derived ──
-  // Sales commission accrued in range (ledger 5120); payroll's figure never includes it.
-  const commissionCost = useCommissionCost(start, end);
+  // THE P&L for the range (general ledger) — same figures as every other page.
+  const gl = useProfitAndLoss(start, end);
 
   const r = useMemo(() => {
     // Revenue net of VAT — the tax portion is a FIRS liability, not income
@@ -133,20 +133,18 @@ const Reports = () => {
     const eventRevenue = invoices.filter((i: any) => i.invoice_type === "event").reduce((s: number, i: any) => s + invNet(i), 0);
     const dailyInvoiceRevenue = invoiceRevenue - eventRevenue;
     const salesRevenue = sales.reduce((s: number, x: any) => s + Number(x.total_amount) - Number(x.vat_amount ?? 0), 0);
-    const grossRevenue = invoiceRevenue + salesRevenue;
+    // Profit lines come from the ledger P&L; the split above is the breakdown.
+    const t = gl.totals;
+    const grossRevenue = t.revenue;
+    const cogs = t.cogs;
+    const opex = t.opex;
+    const otherExp = 0;
+    const expenseTotal = t.cogs + t.opex;
+    const payrollCost = t.payroll + t.commission;
 
-    const cogs = expenses.filter((e: any) => (e.account_type || "COGS") === "COGS").reduce((s: number, e: any) => s + Number(e.amount), 0);
-    const opex = expenses.filter((e: any) => e.account_type === "OpEX").reduce((s: number, e: any) => s + Number(e.amount), 0);
-    const otherExp = expenses.filter((e: any) => e.account_type && e.account_type !== "COGS" && e.account_type !== "OpEX").reduce((s: number, e: any) => s + Number(e.amount), 0);
-    const expenseTotal = expenses.reduce((s: number, e: any) => s + Number(e.amount), 0);
-    // Gross + employer pension — matches the general ledger's staff cost
-    const payrollCost = payroll.reduce(
-      (s: number, p: any) => s + Number(p.basic_salary ?? p.net_pay) + Number(p.allowances ?? 0) + Number(p.pension_employer ?? 0), 0)
-      + commissionCost.total;
-
-    const grossProfit = grossRevenue - cogs;
+    const grossProfit = t.grossProfit;
     const totalCosts = expenseTotal + payrollCost;
-    const netProfit = grossRevenue - totalCosts;
+    const netProfit = t.netProfit;
     const margin = grossRevenue > 0 ? (netProfit / grossRevenue) * 100 : 0;
 
     const cashCollected =
@@ -165,7 +163,7 @@ const Reports = () => {
       cogs, opex, otherExp, expenseTotal, payrollCost, totalCosts,
       grossProfit, netProfit, margin, cashCollected, receivables, expenseByCategory,
     };
-  }, [invoices, sales, expenses, payroll, salePayments, invoiceReceipts, outstanding, commissionCost.total]);
+  }, [invoices, sales, expenses, salePayments, invoiceReceipts, outstanding, gl.rows]);
 
   const rangeLabel = RANGE_LABELS[timeRange] ?? "This Month";
 
@@ -296,7 +294,7 @@ const Reports = () => {
               <Line label="Cost of Goods Sold" value={-r.cogs} neg />
               <Total label="Gross Profit" value={r.grossProfit} />
               <Line label="Operating Expenses" value={-r.opex} neg />
-              <Line label="Payroll" value={-r.payrollCost} neg />
+              <Line label="Payroll & commission" value={-r.payrollCost} neg />
               {r.otherExp > 0 && <Line label="Other Expenses" value={-r.otherExp} neg />}
               <div className="border-t-2 pt-2 flex justify-between font-bold text-base">
                 <span>Net {r.netProfit >= 0 ? "Profit" : "Loss"}</span>

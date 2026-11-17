@@ -8,6 +8,7 @@ import { SearchableSelect } from '@/components/ui/searchable-select';
 import { formatMinor, parseMoney, isMoneyError } from '@/lib/money';
 import { checkImplausible, extractNumericTokens } from '@/lib/expenseValidation';
 import { useExpenseCategories, categoryOptions } from '@/hooks/useExpenseReference';
+import { guessExpenseCategory } from '@/lib/expenseCategories';
 import { cn } from '@/lib/utils';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -132,10 +133,14 @@ export default function ApprovalLineEditor({ lines, onChange, statedTotalMinor, 
     if (categories.length === 0) return;
     let changed = false;
     const mapped = lines.map((l) => {
-      if (l.categoryId || !l.categoryName) return l;
-      const hit = categories.find(
-        (c) => c.name.toLowerCase() === l.categoryName.trim().toLowerCase(),
-      );
+      if (l.categoryId || (!l.categoryName && !l.description)) return l;
+      // Exact name first; otherwise suggest one from the text (an item name
+      // like "Parsley" is a description, not a category). The approver can
+      // still change it.
+      const want = (l.categoryName ?? '').trim().toLowerCase();
+      const guess = guessExpenseCategory(`${l.categoryName ?? ''} ${l.description ?? ''}`);
+      const hit = categories.find((c) => c.name.toLowerCase() === want)
+        ?? (guess ? categories.find((c) => c.name === guess) : undefined);
       if (!hit) return l;
       changed = true;
       return { ...l, categoryId: hit.id };

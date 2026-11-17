@@ -23,9 +23,13 @@ import {
   Plus, Trash2, Download, Check, ChevronsUpDown, Package,
   Pencil, Send, PackageCheck, X,
 } from 'lucide-react';
-import {
-  EXPENSE_CATEGORIES, ACCOUNT_TYPES, COST_CENTERS, PAYMENT_METHODS,
-} from '@/lib/expenseConstants';
+import { ACCOUNT_TYPES, COST_CENTERS } from '@/lib/expenseConstants';
+import { useExpenseCategories, usePayees } from '@/hooks/useExpenseReference';
+import { UNITS_OF_MEASURE } from '@/lib/inventoryConstants';
+
+// How the supplier is paid. "Credit" = owed: receiving the goods records the
+// cost against Accounts Payable until "Pay supplier" settles it.
+const LPO_PAYMENT_METHODS = ['Credit', 'Transfer', 'Cash', 'POS', 'Card'] as const;
 import { generateLPOPDF, getStoredCompany, saveCompanyDetails, CompanyDetails } from '@/lib/lpo-pdf';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -134,8 +138,8 @@ const defaultForm = () => ({
   expected_delivery: '',
   account_type: 'COGS',
   cost_center: 'Daily Orders',
-  expense_category: 'Raw Materials',
-  payment_method: '',
+  expense_category: '',
+  payment_method: 'Credit',
   budget_id: '',
   notes: '',
 });
@@ -150,7 +154,7 @@ function QuickCreateProductDialog({
 }) {
   const { user } = useAuth();
   const { toast } = useToast();
-  const [form, setForm] = useState({ name: '', uom: 'unit', price: '', item_type: 'non_sellable' });
+  const [form, setForm] = useState({ name: '', uom: 'kg', price: '', item_type: 'non_sellable' });
   const [saving, setSaving] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -160,12 +164,13 @@ function QuickCreateProductDialog({
     try {
       const { data, error } = await (supabase as any).from('products').insert({
         name: form.name.trim(),
-        uom: form.uom || 'unit',
+        uom: form.uom || 'kg',
         price: form.price ? parseFloat(form.price) : 0,
         // Procurement items: the entered price is what we pay — it is the cost
         // used for inventory valuation and COGS.
         cost_price: form.price ? parseFloat(form.price) : 0,
         item_type: form.item_type,
+        // Placed from the item's name by the database (Proteins, Fresh Produce …).
         category: 'Procurement',
         created_by: user?.id,
         user_id: user?.id!,
@@ -174,7 +179,7 @@ function QuickCreateProductDialog({
       toast({ title: 'Item created', description: `"${data.name}" added to inventory` });
       onCreated(data);
       onOpenChange(false);
-      setForm({ name: '', uom: 'unit', price: '', item_type: 'non_sellable' });
+      setForm({ name: '', uom: 'kg', price: '', item_type: 'non_sellable' });
     } catch (err: any) {
       toast({ title: 'Error', description: err.message, variant: 'destructive' });
     } finally {
@@ -196,7 +201,10 @@ function QuickCreateProductDialog({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label>Unit of Measure</Label>
-              <Input value={form.uom} onChange={e => setForm(f => ({ ...f, uom: e.target.value }))} placeholder="kg, litre, unit…" />
+              <Select value={form.uom} onValueChange={v => setForm(f => ({ ...f, uom: v }))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>{UNITS_OF_MEASURE.map(u => <SelectItem key={u} value={u}>{u}</SelectItem>)}</SelectContent>
+              </Select>
             </div>
             <div className="space-y-1.5">
               <Label>Cost / Price (₦)</Label>
@@ -357,6 +365,9 @@ export default function LPOSheet({ mode, lpo, templateLPO, sourceRequest, open, 
   const qc = useQueryClient();
 
   const [form, setForm] = useState(defaultForm());
+  const { data: expenseCategories = [] } = useExpenseCategories();
+  const { data: payees = [] } = usePayees();
+  const supplierNames = payees.filter(p => p.kind === 'supplier').map(p => p.name);
   const [lines, setLines] = useState<LineDraft[]>([newLine()]);
   const [saving, setSaving] = useState(false);
   const [showCreateSKU, setShowCreateSKU] = useState(false);
@@ -411,7 +422,7 @@ export default function LPOSheet({ mode, lpo, templateLPO, sourceRequest, open, 
         expected_delivery: lpo.expected_delivery ?? '',
         account_type: lpo.account_type ?? 'COGS',
         cost_center: lpo.cost_center ?? 'Daily Orders',
-        expense_category: lpo.expense_category ?? 'Raw Materials',
+        expense_category: lpo.expense_category ?? '',
         payment_method: lpo.payment_method ?? '',
         budget_id: lpo.budget_id ?? '',
         notes: lpo.notes ?? '',
@@ -443,7 +454,7 @@ export default function LPOSheet({ mode, lpo, templateLPO, sourceRequest, open, 
           expected_delivery: '',
           account_type: templateLPO.account_type ?? 'COGS',
           cost_center: templateLPO.cost_center ?? 'Daily Orders',
-          expense_category: templateLPO.expense_category ?? 'Raw Materials',
+          expense_category: templateLPO.expense_category ?? '',
           payment_method: templateLPO.payment_method ?? '',
           budget_id: templateLPO.budget_id ?? '',
           notes: templateLPO.notes ?? '',
@@ -686,8 +697,13 @@ export default function LPOSheet({ mode, lpo, templateLPO, sourceRequest, open, 
                         onChange={f('supplier_name')}
                         placeholder="ABC Suppliers Ltd"
                         disabled={!isEditable}
+                        list="lpo-supplier-list"
                         required
                       />
+                      <datalist id="lpo-supplier-list">
+                        {supplierNames.map(n => <option key={n} value={n} />)}
+                      </datalist>
+                      <p className="text-[11px] text-muted-foreground mt-1">Pick an existing supplier where you can; the same name is used for every LPO and expense.</p>
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
@@ -744,10 +760,11 @@ export default function LPOSheet({ mode, lpo, templateLPO, sourceRequest, open, 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <Label>Expense Category</Label>
-                      <Select value={form.expense_category} onValueChange={v => setForm(p => ({ ...p, expense_category: v }))} disabled={!isEditable}>
-                        <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                      <Select value={form.expense_category || '__auto'} onValueChange={v => setForm(p => ({ ...p, expense_category: v === '__auto' ? '' : v }))} disabled={!isEditable}>
+                        <SelectTrigger className="mt-1"><SelectValue placeholder="From the items" /></SelectTrigger>
                         <SelectContent>
-                          {EXPENSE_CATEGORIES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                          <SelectItem value="__auto">From the items received</SelectItem>
+                          {expenseCategories.map(c => <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>)}
                         </SelectContent>
                       </Select>
                     </div>
@@ -756,14 +773,13 @@ export default function LPOSheet({ mode, lpo, templateLPO, sourceRequest, open, 
                       <Select value={form.payment_method || '__none'} onValueChange={v => setForm(p => ({ ...p, payment_method: v === '__none' ? '' : v }))} disabled={!isEditable}>
                         <SelectTrigger className="mt-1"><SelectValue placeholder="Select…" /></SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="__none">None</SelectItem>
-                          {PAYMENT_METHODS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}
+                          {LPO_PAYMENT_METHODS.map(m => <SelectItem key={m} value={m}>{m === 'Credit' ? 'Credit (pay supplier later)' : `${m} (paid on the spot)`}</SelectItem>)}
                         </SelectContent>
                       </Select>
                     </div>
                   </div>
                   <div>
-                    <Label>Budget (required for expense on receipt)</Label>
+                    <Label>Budget (blank = the month's budget)</Label>
                     <Select value={form.budget_id || '__none'} onValueChange={v => setForm(p => ({ ...p, budget_id: v === '__none' ? '' : v }))} disabled={!isEditable}>
                       <SelectTrigger className="mt-1"><SelectValue placeholder="Select budget…" /></SelectTrigger>
                       <SelectContent>
@@ -833,7 +849,10 @@ export default function LPOSheet({ mode, lpo, templateLPO, sourceRequest, open, 
                               value={line.unit_of_measure}
                               onChange={e => updateLine(line._key, { unit_of_measure: e.target.value })}
                               placeholder="kg, unit…"
-                              disabled={!isEditable}
+                              // A stocked item is ordered in its own unit; the
+                              // database refuses any other (unless a pack size exists).
+                              disabled={!isEditable || !!line.product_id}
+                              title={line.product_id ? "Ordered in the item's stock unit" : undefined}
                             />
                           </div>
                           <div>

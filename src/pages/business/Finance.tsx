@@ -28,7 +28,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { usePagination } from "@/hooks/usePagination";
-import { useCommissionCost } from "@/hooks/useCommission";
+import { useProfitAndLoss } from "@/hooks/useProfitAndLoss";
 import { TablePagination } from "@/components/ui/table-pagination";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -436,9 +436,9 @@ export default function Finance() {
     },
   });
 
-  // Sales commission accrued in the period (ledger 5120) — staff cost that
-  // payroll's own figure never includes.
-  const commissionCost = useCommissionCost(periodStart, periodEnd);
+  // THE P&L for the period — the same ledger function the Finance overview and
+  // P&L page use, so all three agree to the kobo.
+  const gl = useProfitAndLoss(periodStart, periodEnd);
 
   const payrollGross = (p: { basic_salary: number; allowances: number; pension_employer?: number | null }) =>
     Number(p.basic_salary) + Number(p.allowances) + Number(p.pension_employer ?? 0);
@@ -500,7 +500,8 @@ export default function Finance() {
     // Revenue (accrual): issued invoices (primary) + non-cancelled legacy sales (historical)
     const salesRevenue   = periodSales.reduce((s, r) => s + (Number(r.total_amount) - Number((r as any).vat_amount ?? 0)), 0);
     const invoiceRevenue = periodInvoices.reduce((s, r) => s + netOfVat(r), 0);
-    const totalRevenue   = salesRevenue + invoiceRevenue;
+    // Company revenue is the ledger's; the split above is for the breakdown.
+    const totalRevenue   = gl.totals.revenue;
 
     // Cash collected (cash basis) — dated payment events only.
     // Sales: payments by payment_date. Invoices: ledger payment_received by entry_date.
@@ -508,13 +509,11 @@ export default function Finance() {
     const cashFromInvoices = periodInvoiceReceipts.reduce((s, r) => s + Number(r.amount), 0);
     const totalCash        = cashFromSales + cashFromInvoices;
 
-    // Costs: expense records + paid payroll (payroll is a real operating cost).
-    const expenseTotal = periodExpenses.reduce((s, e) => s + Number(e.amount), 0);
-    const payrollCost  = periodPayroll.reduce((s, p) => s + payrollGross(p), 0) + commissionCost.total;
+    // Costs and profit: the ledger P&L (cost of sales + OpEx, payroll + commission).
+    const expenseTotal  = gl.totals.cogs + gl.totals.opex;
+    const payrollCost   = gl.totals.payroll + gl.totals.commission;
     const totalExpenses = expenseTotal + payrollCost;
-
-    // Net profit = revenue − (expenses + payroll)
-    const netProfit = totalRevenue - totalExpenses;
+    const netProfit     = gl.totals.netProfit;
     const margin    = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
 
     // Outstanding receivables = unpaid invoices + unpaid legacy sales
@@ -546,7 +545,7 @@ export default function Finance() {
       totalOutstanding, overdueCount, receivableCount, salesOutstanding,
       totalBudgeted, totalSpent, budgetPct, activeBudgetCount: activeBudgets.length,
     };
-  }, [periodSales, periodPayments, periodInvoiceReceipts, periodPayroll, periodExpenses, periodInvoices, outstandingInvoices, salesReceivables, allBudgets, periodStart, periodEnd, commissionCost.total]);
+  }, [periodSales, periodPayments, periodInvoiceReceipts, periodPayroll, periodExpenses, periodInvoices, outstandingInvoices, salesReceivables, allBudgets, periodStart, periodEnd, gl.rows]);
 
   // ── 6-month Chart Data ───────────────────────────────────────────────────────
 
@@ -578,11 +577,10 @@ export default function Finance() {
     periodExpenses.forEach(e => {
       map[e.category] = (map[e.category] ?? 0) + Number(e.amount);
     });
-    const payroll = periodPayroll.reduce((s, p) => s + payrollGross(p), 0);
-    if (payroll > 0) map["payroll"] = (map["payroll"] ?? 0) + payroll;
-    if (commissionCost.total > 0) map["sales commission"] = (map["sales commission"] ?? 0) + commissionCost.total;
+    if (gl.totals.payroll > 0) map["payroll"] = (map["payroll"] ?? 0) + gl.totals.payroll;
+    if (gl.totals.commission > 0) map["sales commission"] = (map["sales commission"] ?? 0) + gl.totals.commission;
     return Object.entries(map).sort((a, b) => b[1] - a[1]);
-  }, [periodExpenses, periodPayroll, commissionCost.total]);
+  }, [periodExpenses, gl.rows]);
 
   // ── Budget utilization per budget ────────────────────────────────────────────
 
@@ -657,6 +655,12 @@ export default function Finance() {
 
   return (
     <div className="space-y-6">
+
+      {gl.error && (
+        <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+          Profit figures could not load: {gl.error.message}. If this mentions fn_profit_and_loss, apply database migration 20261117100000_finance_single_source.
+        </div>
+      )}
 
       {/* Page header + period picker */}
       <div className="flex flex-wrap items-start justify-between gap-3">

@@ -1,3 +1,4 @@
+import { needsReorder, stockStatus, stockValue } from '@/lib/stockStatus';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Package, AlertTriangle, TrendingUp, TrendingDown, DollarSign, BarChart3 } from "lucide-react";
 import { formatNairaCompact } from "@/lib/currency";
@@ -36,11 +37,12 @@ interface InventoryKPICardsProps {
 
 export function InventoryKPICards({ skus, transactions, movements30d }: InventoryKPICardsProps) {
   const totalItems = skus.length;
-  const lowStockItems = skus.filter(sku => sku.stock_quantity <= sku.reorder_level);
-  const outOfStockItems = skus.filter(sku => sku.stock_quantity <= 0);
+  // The shared rule (src/lib/stockStatus.ts): "need reorder" = low + out + negative.
+  const lowStockItems = skus.filter(sku => needsReorder(sku));
+  const outOfStockItems = skus.filter(sku => stockStatus(sku) === 'out' || stockStatus(sku) === 'negative');
   // An item below zero is worth nothing, not a negative amount that quietly
   // shrinks everything else's value.
-  const totalStockValue = skus.reduce((total, sku) => total + (Math.max(Number(sku.stock_quantity), 0) * Number(sku.cost_per_unit || 0)), 0);
+  const totalStockValue = stockValue(skus);
   
   // Calculate transaction trends (last 30 days)
   const thirtyDaysAgo = new Date();

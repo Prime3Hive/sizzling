@@ -51,8 +51,8 @@ export const RECEIPT_MAX_BYTES = 5 * 1024 * 1024;
 export const EXPENSE_ACCOUNTS = [
   { code: '5000', name: 'Cost of Goods Sold' },
   { code: '5050', name: 'Production Expenses' },
-  { code: '5100', name: 'Salaries & Wages' },
-  { code: '5110', name: 'Employer Pension Contribution' },
+  // 5100/5110 (salaries, employer pension) are reached through Payroll only.
+  { code: '5120', name: 'Commissions' },
   { code: '5200', name: 'Rent' },
   { code: '5300', name: 'Utilities' },
   { code: '5400', name: 'Operating Expenses' },

@@ -145,24 +145,16 @@ export default function ReceiveGoodsDialog({ lpo, open, onOpenChange, onSuccess 
         .eq('id', lpo.id);
       if (lpoErr) throw lpoErr;
 
-      // 5. Receiving goods posts NO expense.
+      // 5. The expense is created by the database, not here.
       //
-      //    Receiving stock is not a cost — it swaps one asset for a liability.
-      //    The journal is raised in the database by fn_capitalize_receipt_item:
-      //
-      //        Dr 1200 Inventory        (qty received x unit cost)
-      //        Cr 2000 Accounts Payable
-      //
-      //    Cost reaches the P&L later, when the stock is issued and consumed
-      //    (Dr 5000 COGS / Cr 1200 Inventory), and the payable is cleared later
-      //    still by an explicit supplier payment (Dr 2000 / Cr 1010 Bank).
-      //
-      //    This function previously inserted an `expenses` row here. That row
-      //    tripped the expense auto-poster, which posted a second, unwanted
-      //    journal — Dr 5000 COGS / Cr 1010 Bank — against a receipt that had
-      //    already been capitalised and had not been paid for. Every goods
-      //    receipt therefore hit the P&L and the bank twice over. Do not
-      //    reinstate it: one business event posts exactly one journal entry.
+      //    Purchases are direct costs. Inserting the receipt lines above fires
+      //    fn_grn_expense, which records exactly ONE expense for this GRN:
+      //    amount = value received, dated the GRN date, payee = the LPO's
+      //    supplier, category from the LPO (or its items), linked by grn_id.
+      //    It posts Dr cost / Cr Cash|Bank when the LPO was paid on the spot,
+      //    or Cr Accounts Payable (and a payable to settle) when on credit.
+      //    Stock movements carry quantities only, so the cost hits the P&L
+      //    once. Do not insert an expense here as well.
 
       // 6. Record the purchase for inventory analytics.
       //
@@ -204,7 +196,7 @@ export default function ReceiveGoodsDialog({ lpo, open, onOpenChange, onSuccess 
 
       toast({
         title: 'Goods received',
-        description: `${receiptNumber} · ₦${totalReceiving.toLocaleString('en-NG', { minimumFractionDigits: 2 })} capitalised to inventory, owed to ${lpo.supplier_name}`,
+        description: `${receiptNumber} · ₦${totalReceiving.toLocaleString('en-NG', { minimumFractionDigits: 2 })} recorded as an expense${(lpo.payment_method ?? 'Credit').toLowerCase() === 'credit' || !lpo.payment_method ? `, owed to ${lpo.supplier_name}` : ''}`,
       });
 
       qc.invalidateQueries({ queryKey: ['lpos'] });
@@ -212,6 +204,9 @@ export default function ReceiveGoodsDialog({ lpo, open, onOpenChange, onSuccess 
       qc.invalidateQueries({ queryKey: ['skus'] });
       qc.invalidateQueries({ queryKey: ['journal-all-lines'] });
       qc.invalidateQueries({ queryKey: ['journal-entries'] });
+      qc.invalidateQueries({ queryKey: ['expenses'] });
+      qc.invalidateQueries({ queryKey: ['admin-payables'] });
+      qc.invalidateQueries({ queryKey: ['profit-and-loss'] });
 
       onSuccess();
       onOpenChange(false);

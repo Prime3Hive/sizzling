@@ -10,6 +10,8 @@ import { useAuth } from '@/hooks/useAuth';
 import { useRoles } from '@/hooks/useRoles';
 import { useInbox } from '@/hooks/useInbox';
 import { useMySummary } from '@/hooks/useMySummary';
+import { useProfitAndLoss, useCashCollected } from '@/hooks/useProfitAndLoss';
+import { needsReorder } from '@/lib/stockStatus';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatNairaShort, formatNairaCompact } from '@/lib/currency';
@@ -186,6 +188,10 @@ function useFinanceSnapshot(enabled: boolean, withPayroll: boolean) {
   const now = new Date();
   const sixAgo = format(new Date(now.getFullYear(), now.getMonth() - 5, 1), 'yyyy-MM-dd');
   const monthStart = format(new Date(now.getFullYear(), now.getMonth(), 1), 'yyyy-MM-dd');
+  const today = format(now, 'yyyy-MM-dd');
+  // Revenue, spend and cash come from the ledger, like every finance page.
+  const pl = useProfitAndLoss(sixAgo, today, enabled);
+  const cashIn = useCashCollected(monthStart, today, enabled);
 
   const q = useQuery({
     queryKey: ['home-finance', sixAgo, withPayroll],
@@ -224,14 +230,14 @@ function useFinanceSnapshot(enabled: boolean, withPayroll: boolean) {
       return { y: m.getFullYear(), m: m.getMonth(), label: format(m, 'MMM') };
     });
     const inMonth = (s: string, y: number, m: number) => { const x = parseISO(s); return x.getFullYear() === y && x.getMonth() === m; };
-    const revenue = months.map(({ y, m, label }) => ({
-      label,
-      value:
-        d.sales.filter((s) => inMonth(s.sale_date, y, m)).reduce((a, s) => a + Number(s.total_amount) - Number(s.vat_amount ?? 0), 0) +
-        d.invoices.filter((i) => inMonth(i.issue_date, y, m)).reduce((a, i) => a + Number(i.total_amount) - Number(i.tax_amount ?? 0), 0),
-    }));
-    const spend = months.map(({ y, m }) =>
-      d.expenses.filter((e) => inMonth(e.date, y, m)).reduce((a, e) => a + Number(e.amount), 0));
+    const glRow = (y: number, m: number) =>
+      pl.rows.find((r) => Number(r.month.slice(0, 4)) === y && Number(r.month.slice(5, 7)) - 1 === m);
+    const revenue = months.map(({ y, m, label }) => ({ label, value: glRow(y, m)?.revenue ?? 0 }));
+    const spend = months.map(({ y, m }) => {
+      const r = glRow(y, m);
+      return r ? r.cogs + r.opex + r.payroll + r.commission : 0;
+    });
+    void inMonth;
     const receivables = d.outstanding.reduce((s, i) => s + Number(i.total_amount) - Number(i.amount_paid ?? 0), 0);
     const overdue = d.outstanding.filter((i) => (Date.now() - parseISO(i.issue_date).getTime()) / 86_400_000 > 30).length;
     return {
@@ -241,10 +247,10 @@ function useFinanceSnapshot(enabled: boolean, withPayroll: boolean) {
       receivables, overdue,
       payrollPending: d.payroll.reduce((s, r) => s + Number(r.net_pay), 0),
       payrollCount: d.payroll.length,
-      cash: d.cash,
+      cash: cashIn.data ?? d.cash,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q.data]);
+  }, [q.data, pl.rows, cashIn.data]);
 }
 
 function delta(now: number, before: number): { text: string; up: boolean } | null {
@@ -265,8 +271,9 @@ function LeadHome() {
   const { data: lowStock = [] } = useQuery({
     queryKey: ['home-low-stock'],
     queryFn: async () => {
-      const { data } = await supabase.from('skus').select('name, stock_quantity, reorder_level').gt('reorder_level', 0);
-      return (data ?? []).filter((s: any) => Number(s.stock_quantity) <= Number(s.reorder_level));
+      // Same rule as the Inventory page and the Finance overview.
+      const { data } = await (supabase as any).from('skus').select('name, stock_quantity, reorder_level').eq('is_archived', false);
+      return (data ?? []).filter((s: any) => needsReorder(s));
     },
     enabled: canSeeStock,
   });

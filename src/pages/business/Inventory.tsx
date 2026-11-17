@@ -36,6 +36,7 @@ import RecordStockSheet, { type StockPrefill } from "@/components/inventory/Reco
 import { Switch } from "@/components/ui/switch";
 import { useInventorySettings } from "@/hooks/useInventorySettings";
 import { recordStockMovements, setProductCost } from "@/lib/stockMovements";
+import { stockStatus, stockValue } from "@/lib/stockStatus";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 interface SKU {
@@ -108,8 +109,8 @@ type StockStatus = "all" | "low" | "out" | "archived";
 /** Quantities are stored to 4 places; show them without trailing zeros. */
 const qty = (n: number) => Number(Number(n).toFixed(4)).toLocaleString("en-NG", { maximumFractionDigits: 4 });
 
-const stockState = (s: SKU): "negative" | "out" | "low" | "ok" =>
-  s.stock_quantity < 0 ? "negative" : s.stock_quantity <= 0 ? "out" : s.stock_quantity <= s.reorder_level ? "low" : "ok";
+// One rule for every screen (see src/lib/stockStatus.ts).
+const stockState = (s: SKU) => stockStatus(s);
 
 /** A headline figure that also works as a shortcut to the list behind it. */
 function Tile({ label, value, sub, tone = "neutral", onClick }: {
@@ -160,7 +161,7 @@ export default function Inventory() {
   const [movementFilter, setMovementFilter] = useState("all");
 
   const [newSKU, setNewSKU] = useState({
-    name: "", category: "proteins", unit_of_measure: "kg",
+    name: "", category: "Proteins", unit_of_measure: "kg",
     stock_quantity: 0, reorder_level: 0, cost_per_unit: 0, notes: "",
   });
 
@@ -371,7 +372,7 @@ export default function Inventory() {
   };
 
   const resetForm = () => setNewSKU({
-    name: "", category: "proteins", unit_of_measure: "kg",
+    name: "", category: "Proteins", unit_of_measure: "kg",
     stock_quantity: 0, reorder_level: 0, cost_per_unit: 0, notes: "",
   });
 
@@ -382,7 +383,8 @@ export default function Inventory() {
     out: activeSkus.filter(s => ["out", "negative"].includes(stockState(s))).length,
     negative: activeSkus.filter(s => stockState(s) === "negative").length,
     archived: skus.length - activeSkus.length,
-    value: activeSkus.reduce((t, s) => t + Math.max(0, Number(s.stock_quantity)) * Number(s.cost_per_unit || 0), 0),
+    // Same definition as ledger 1200 in Books Check (fn_inventory_ledger_check).
+    value: stockValue(activeSkus),
   }), [skus, activeSkus]);
 
   const filteredSKUs = useMemo(() => {

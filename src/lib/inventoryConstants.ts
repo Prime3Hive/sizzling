@@ -1,31 +1,31 @@
-// Inventory categories for catering business
+// Inventory categories — the same names as the matching expense categories.
+// The value stored in the database IS the label; the database normalises old
+// spellings ("RAW MATERIALS", "Protein", "Procurement" …) onto this list.
 export const INVENTORY_CATEGORIES = [
-  { value: 'proteins', label: 'Proteins', description: 'Meat, poultry, fish, eggs' },
-  { value: 'raw_materials', label: 'Raw Materials', description: 'Basic ingredients and supplies' },
-  { value: 'perishables', label: 'Perishables', description: 'Fresh produce, dairy, items with short shelf life' },
-  { value: 'packaging', label: 'Packaging', description: 'Containers, wraps, boxes, bags' },
-  { value: 'gas', label: 'Gas', description: 'Cooking gas, propane cylinders' },
-  { value: 'coal', label: 'Coal', description: 'Charcoal, firewood' },
-  { value: 'consumables', label: 'Consumables', description: 'Disposables, cleaning supplies, paper products' },
+  { value: 'Proteins', label: 'Proteins', description: 'Chicken, beef, fish, prawns, gizzard, lamb, eggs' },
+  { value: 'Fresh Produce', label: 'Fresh Produce', description: 'Peppers, tomatoes, onions, vegetables, herbs, plantain, yam, potatoes' },
+  { value: 'Dry Goods & Seasonings', label: 'Dry Goods & Seasonings', description: 'Flour, oil, spices, sauces, sugar, butter, bread, rice' },
+  { value: 'Packaging & Disposables', label: 'Packaging & Disposables', description: 'Packs, foil, cling film, takeaway, serviettes, toothpicks' },
+  { value: 'Cooking Fuel', label: 'Cooking Fuel', description: 'Gas, charcoal' },
+  { value: 'Cleaning & Hygiene', label: 'Cleaning & Hygiene', description: 'Detergent, hypo, hair nets, brushes' },
+  { value: 'Finished Goods', label: 'Finished Goods', description: 'Made in production (snacks, sauces)' },
 ] as const;
 
-export const UNITS_OF_MEASURE = [
-  'kg', 'g', 'lb', 'oz', 'bag', 'pack', 'piece', 'skewer', 
-  'liter', 'ml', 'cup', 'tray', 'box', 'carton', 'cylinder', 'roll'
-] as const;
+// The fixed unit list. Pack sizes for an item are set up as pack units.
+export const UNITS_OF_MEASURE = ['kg', 'litre', 'piece', 'pack', 'bag', 'carton'] as const;
 
 export type InventoryCategory = typeof INVENTORY_CATEGORIES[number]['value'];
 export type UnitOfMeasure = typeof UNITS_OF_MEASURE[number];
 
 // Category colors for visual distinction
 export const CATEGORY_COLORS: Record<string, { bg: string; text: string; border: string }> = {
-  proteins: { bg: 'bg-red-100', text: 'text-red-700', border: 'border-red-300' },
-  raw_materials: { bg: 'bg-amber-100', text: 'text-amber-700', border: 'border-amber-300' },
-  perishables: { bg: 'bg-green-100', text: 'text-green-700', border: 'border-green-300' },
-  packaging: { bg: 'bg-blue-100', text: 'text-blue-700', border: 'border-blue-300' },
-  gas: { bg: 'bg-orange-100', text: 'text-orange-700', border: 'border-orange-300' },
-  coal: { bg: 'bg-gray-100', text: 'text-gray-700', border: 'border-gray-300' },
-  consumables: { bg: 'bg-purple-100', text: 'text-purple-700', border: 'border-purple-300' },
+  'Proteins': { bg: 'bg-red-100', text: 'text-red-700', border: 'border-red-300' },
+  'Fresh Produce': { bg: 'bg-green-100', text: 'text-green-700', border: 'border-green-300' },
+  'Dry Goods & Seasonings': { bg: 'bg-amber-100', text: 'text-amber-700', border: 'border-amber-300' },
+  'Packaging & Disposables': { bg: 'bg-blue-100', text: 'text-blue-700', border: 'border-blue-300' },
+  'Cooking Fuel': { bg: 'bg-orange-100', text: 'text-orange-700', border: 'border-orange-300' },
+  'Cleaning & Hygiene': { bg: 'bg-purple-100', text: 'text-purple-700', border: 'border-purple-300' },
+  'Finished Goods': { bg: 'bg-emerald-100', text: 'text-emerald-700', border: 'border-emerald-300' },
 };
 
 export const getCategoryColor = (category: string) => {

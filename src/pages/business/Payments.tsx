@@ -49,6 +49,8 @@ const Payments = () => {
   const [showAddPayment, setShowAddPayment] = useState(openOnArrival);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  // One submit at a time: a double click recorded the same payment twice.
+  const [savingPayment, setSavingPayment] = useState(false);
   const qc = useQueryClient();
 
   // Cached, so coming back to this page shows the last list at once and
@@ -89,6 +91,8 @@ const Payments = () => {
   }, [loadError, toast]);
 
   const addPayment = async (formData: FormData) => {
+    if (savingPayment) return;
+    setSavingPayment(true);
     try {
       const paymentData = {
         sale_id: formData.get('sale_id') as string,
@@ -117,9 +121,11 @@ const Payments = () => {
       console.error('Error creating payment:', error);
       toast({
         title: "Error",
-        description: "Failed to record payment",
+        description: (error as any)?.message || "Failed to record payment",
         variant: "destructive",
       });
+    } finally {
+      setSavingPayment(false);
     }
   };
 
@@ -316,7 +322,7 @@ const Payments = () => {
                 </div>
               </div>
               <DialogFooter>
-                <Button type="submit">Record Payment</Button>
+                <Button type="submit" disabled={savingPayment}>{savingPayment ? 'Saving…' : 'Record Payment'}</Button>
               </DialogFooter>
             </form>
           </DialogContent>

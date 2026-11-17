@@ -49,7 +49,8 @@ interface BudgetWithDetails extends Budget {
   totalSpent: number;
 }
 
-const budgetTypes = ['week', 'event', 'activity'];
+// Monthly budgets are 'monthly'; 'event' is only for a specific event.
+const budgetTypes = ['monthly', 'week', 'event', 'activity'];
 const expenseCategories = ['proteins', 'staff', 'waiters', 'chef', 'miscellaneous'];
 
 const Budgets = () => {
