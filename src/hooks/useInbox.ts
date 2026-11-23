@@ -115,7 +115,10 @@ export function useInbox() {
     queryFn: async () => {
       const { data, error } = await db
         .from('expenses')
-        .select('id, description, amount, amount_minor, category, date, created_at, submitted_by, user_id, payee_name, receipt_path, cost_center, payees(name), budgets(title)')
+        // `expenses` has no user_id column (it has submitted_by and created_by).
+        // Asking for one made this query fail with HTTP 400 on every page, so
+        // no pending expense ever reached the Inbox.
+        .select('id, description, amount, amount_minor, category, date, created_at, submitted_by, created_by, payee_name, receipt_path, cost_center, payees(name), budgets(title)')
         .eq('status', 'pending')
         .is('cancelled_at', null)
         .order('created_at', { ascending: false })
@@ -220,7 +223,7 @@ export function useInbox() {
     const items: InboxItem[] = [];
 
     for (const e of expensesQ.data ?? []) {
-      const by = e.submitted_by ?? e.user_id;
+      const by = e.submitted_by ?? e.created_by;
       items.push({
         key: `expense:${e.id}`, kind: 'expense', rowId: e.id,
         title: e.description || 'Expense',

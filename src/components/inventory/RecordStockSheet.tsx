@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, ArrowDownToLine, ArrowUpFromLine, ListChecks, Loader2, Plus, SlidersHorizontal, X } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { FormSheet, Field } from '@/components/ui/form-sheet';
@@ -97,8 +97,15 @@ export default function RecordStockSheet({ open, onOpenChange, skus, allowNegati
     return m === 'in' ? u.purchaseUnit : u.stockUnit;
   };
 
+  // Set the form up once each time it opens. Not on every new `prefill`
+  // object: a parent that builds the prefill inline would otherwise wipe what
+  // has been typed whenever it re-renders.
+  const wasOpen = useRef(false);
+  const submitting = useRef(false);
   useEffect(() => {
-    if (!open) return;
+    if (!open) { wasOpen.current = false; return; }
+    if (wasOpen.current) return;
+    wasOpen.current = true;
     const m = prefill?.mode ?? 'usage';
     setMode(m);
     setLines([{
@@ -224,6 +231,9 @@ export default function RecordStockSheet({ open, onOpenChange, skus, allowNegati
       return;
     }
 
+    // One save per click, however fast the second click comes.
+    if (submitting.current) return;
+    submitting.current = true;
     setSaving(true);
     try {
       // Only send a unit when it is not the stock unit, so the form also works
@@ -265,12 +275,19 @@ export default function RecordStockSheet({ open, onOpenChange, skus, allowNegati
         });
         toast({ title: 'Correction recorded' });
       }
+      // It is saved. Empty the form and close it before anything else, so a
+      // saved entry can never sit on screen ready to be recorded a second time.
+      setLines([{ key: nextKey(), sku_id: '', quantity: '', unit: '' }]);
+      setPrice('');
+      setNote('');
+      setDirty(false);
+      onOpenChange(false);
       refetchUnits();
       onDone();
-      onOpenChange(false);
     } catch (e) {
       toast({ title: 'Could not record that', description: (e as Error).message, variant: 'destructive' });
     } finally {
+      submitting.current = false;
       setSaving(false);
     }
   };

@@ -17,6 +17,15 @@ export interface ItemUnitInfo extends ItemUnits {
   /** Largest single stock-in since then, in stock units. */
   largestReceipt: number | null;
   hasMovements: boolean;
+  // The item master (migration 20261124100000). Unset until then.
+  /** raw_ingredient, packaging, cleaning, fuel, finished_good; null = not set. */
+  kind: string | null;
+  storagePlace: string | null;
+  /** The usual supplier (a payee id). */
+  payeeId: string | null;
+  countedWeekly: boolean;
+  /** Made in production (finished or semi-finished): its type is fixed. */
+  produced: boolean;
 }
 
 interface Raw {
@@ -25,6 +34,8 @@ interface Raw {
   receipts: { product_id: string; quantity_change: number; created_at: string }[];
   /** false until migration 20261123200000 is applied. */
   ready: boolean;
+  /** false until migration 20261124100000 is applied. */
+  masterReady: boolean;
 }
 
 export function useItemUnits() {
@@ -36,7 +47,14 @@ export function useItemUnits() {
     staleTime: 60_000,
     queryFn: async () => {
       let ready = true;
-      let res = await db.from('products').select('id, sku_id, uom, purchase_unit, product_units(unit_name, factor)');
+      let masterReady = true;
+      let res = await db.from('products')
+        .select('id, sku_id, uom, purchase_unit, item_class, item_kind, storage_place, default_payee_id, counted_weekly, product_units(unit_name, factor)');
+      if (res.error) {
+        // Before the item master migration there are no type or storage columns.
+        masterReady = false;
+        res = await db.from('products').select('id, sku_id, uom, purchase_unit, product_units(unit_name, factor)');
+      }
       if (res.error) {
         // Before the units migration there is no purchase_unit column.
         ready = false;
@@ -53,6 +71,7 @@ export function useItemUnits() {
         changes: (changes as any).data ?? [],
         receipts: (receipts as any).data ?? [],
         ready,
+        masterReady,
       };
     },
   });
@@ -82,10 +101,21 @@ export function useItemUnits() {
         resetAt: resetByProduct.get(p.id) ?? null,
         largestReceipt: largest.get(p.id) ?? null,
         hasMovements: moved.has(p.id),
+        kind: p.item_kind ?? null,
+        storagePlace: p.storage_place ?? null,
+        payeeId: p.default_payee_id ?? null,
+        countedWeekly: p.counted_weekly !== false,
+        produced: !!p.item_class && p.item_class !== 'raw_material',
       });
     }
     return out;
   }, [query.data]);
 
-  return { bySku, ready: query.data?.ready ?? false, isLoading: query.isLoading, refetch: query.refetch };
+  return {
+    bySku,
+    ready: query.data?.ready ?? false,
+    masterReady: query.data?.masterReady ?? false,
+    isLoading: query.isLoading,
+    refetch: query.refetch,
+  };
 }

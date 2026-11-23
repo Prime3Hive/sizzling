@@ -8,11 +8,16 @@ export interface InventorySettings {
   notify_on_negative: boolean;
   /** Units an admin added to the standard list. */
   custom_units: string[];
+  /** Where stock is kept, in the order the count sheet follows. */
+  storage_places: string[];
 }
 
 // Until migration 20261016100000 is applied there is no settings row; the
 // page then behaves as it always did (no negative stock, alerts on).
-const DEFAULTS: InventorySettings = { id: null, allow_negative_stock: false, notify_on_negative: true, custom_units: [] };
+const DEFAULTS: InventorySettings = {
+  id: null, allow_negative_stock: false, notify_on_negative: true, custom_units: [],
+  storage_places: ['Freezer', 'Cold room', 'Dry store', 'Gas store'],
+};
 
 export function useInventorySettings() {
   const { user } = useAuth();
@@ -28,7 +33,11 @@ export function useInventorySettings() {
         .select('*')
         .maybeSingle();
       if (error || !data) return DEFAULTS;
-      return { ...DEFAULTS, ...data, custom_units: data.custom_units ?? [] } as InventorySettings;
+      return {
+        ...DEFAULTS, ...data,
+        custom_units: data.custom_units ?? [],
+        storage_places: data.storage_places ?? DEFAULTS.storage_places,
+      } as InventorySettings;
     },
   });
 

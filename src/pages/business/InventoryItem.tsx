@@ -20,6 +20,7 @@ import { usePagination } from "@/hooks/usePagination";
 import { formatNairaCompact } from "@/lib/currency";
 import { getCategoryColor, getCategoryLabel, MOVEMENT_META, movementMeta } from "@/lib/inventoryConstants";
 import { beforeUnitChange, buildItemUnits, movementQuantity, withPurchaseEquivalent } from "@/lib/units";
+import { itemKindLabel } from "@/lib/itemMaster";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 interface ItemSku {
@@ -109,18 +110,48 @@ export default function InventoryItem() {
       // (.maybeSingle()), which fails without a word when an item has two
       // linked products, and the page then said "no stock movements" for an
       // item that had plenty.
+      //
+      // Stock rows and warehouse names are fetched on their own, not embedded:
+      // `inventory` has two foreign keys to `products` (and two to
+      // `warehouses`), so an embed is ambiguous and the API answers HTTP 300.
+      // That made this page say the item did not exist, for every item.
       const db = supabase as any;
       let prodRes = await db.from("products")
-        .select("id, uom, purchase_unit, product_units(unit_name, factor), inventory(quantity, reorder_level, warehouses(name))")
+        .select("id, uom, purchase_unit, item_kind, storage_place, counted_weekly, default_payee_id, product_units(unit_name, factor)")
         .eq("sku_id", skuId);
       if (prodRes.error) {
+        // Before the item master migration (20261124100000).
         prodRes = await db.from("products")
-          .select("id, uom, inventory(quantity, reorder_level, warehouses(name))")
+          .select("id, uom, purchase_unit, product_units(unit_name, factor)")
           .eq("sku_id", skuId);
+      }
+      if (prodRes.error) {
+        // Before the units migration (20261123200000).
+        prodRes = await db.from("products").select("id, uom").eq("sku_id", skuId);
       }
       if (prodRes.error) throw prodRes.error;
       const products: any[] = prodRes.data ?? [];
       const ids = products.map(p => p.id);
+
+      let stock: StockRow[] = [];
+      let supplier: string | null = null;
+      if (ids.length) {
+        const [invRes, whRes] = await Promise.all([
+          db.from("inventory").select("quantity, reorder_level, warehouse_id").in("product_id", ids),
+          db.from("warehouses").select("id, name"),
+        ]);
+        if (invRes.error) throw invRes.error;
+        const whName = new Map<string, string>((whRes.data ?? []).map((w: any) => [w.id, w.name]));
+        stock = (invRes.data ?? []).map((r: any) => ({
+          quantity: r.quantity, reorder_level: r.reorder_level,
+          warehouses: whName.has(r.warehouse_id) ? { name: whName.get(r.warehouse_id)! } : null,
+        }));
+        const payeeId = products[0]?.default_payee_id;
+        if (payeeId) {
+          const p = await db.from("payees").select("name").eq("id", payeeId).maybeSingle();
+          supplier = p.data?.name ?? null;
+        }
+      }
 
       let movements: MovementRow[] = [];
       let totalMovements = 0;
@@ -148,10 +179,16 @@ export default function InventoryItem() {
       const main = products[0];
       return {
         sku: sku as unknown as ItemSku,
-        stock: (products.flatMap(p => p.inventory ?? []) as StockRow[]),
+        stock,
         movements,
         totalMovements,
         changes,
+        master: {
+          kind: (main?.item_kind ?? null) as string | null,
+          storagePlace: (main?.storage_place ?? null) as string | null,
+          countedWeekly: main?.counted_weekly !== false,
+          supplier,
+        },
         units: buildItemUnits(main?.uom ?? (sku as any).unit_of_measure, main?.product_units ?? [], main?.purchase_unit),
       };
     },
@@ -354,6 +391,12 @@ export default function InventoryItem() {
             {data?.units && data.units.units.slice(1).map(u => (
               <span key={u.name}>· 1 {u.name} = {fmtQty(u.factor)} {uom}{u.name === data.units.purchaseUnit ? " (usually bought this way)" : ""}</span>
             ))}
+          </div>
+          <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
+            <span>Type: <span className="text-foreground">{itemKindLabel(data?.master.kind)}</span></span>
+            <span>Kept in: <span className="text-foreground">{data?.master.storagePlace || "Not set"}</span></span>
+            <span>Usual supplier: <span className="text-foreground">{data?.master.supplier || "None"}</span></span>
+            <span>Weekly count: <span className="text-foreground">{data?.master.countedWeekly ? "Yes" : "Left out"}</span></span>
           </div>
         </div>
         <Button variant="outline" size="sm" onClick={exportCsv} className="gap-2 self-start" disabled={filtered.length === 0}>

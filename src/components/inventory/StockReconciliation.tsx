@@ -16,6 +16,8 @@ import { getCategoryColor, getCategoryLabel } from "@/lib/inventoryConstants";
 import { recordStockMovements } from "@/lib/stockMovements";
 import { useRoles } from "@/hooks/useRoles";
 import { fmtQty } from "@/lib/units";
+import { orderForCount } from "@/lib/itemMaster";
+import type { ItemUnitInfo } from "@/hooks/useItemUnits";
 
 interface SKU {
   id: string;
@@ -51,17 +53,30 @@ interface StockReconciliationProps {
   skus: SKU[];
   stockTakes: StockTake[];
   onComplete: () => void;
+  /** Storage place and "counted weekly" per item (item master). */
+  unitsBySku?: Map<string, ItemUnitInfo>;
+  /** Storage places in count order. */
+  storagePlaces?: string[];
 }
 
-export function StockReconciliation({ skus: allSkus, stockTakes, onComplete }: StockReconciliationProps) {
+export function StockReconciliation({ skus: allSkus, stockTakes, onComplete, unitsBySku, storagePlaces = [] }: StockReconciliationProps) {
   const { user } = useAuth();
   const { isAdmin } = useRoles();
-  // Archived items are not on the shelf, so they are not on the count sheet.
-  const skus = allSkus.filter(s => !s.is_archived);
   // What a shortfall is recorded as. A weekly count IS the usage record: what
   // is missing since the last count was used. An opening count is a fresh
   // start after the units were set up.
   const [kind, setKind] = useState<'usage' | 'correction' | 'opening'>('usage');
+  const placeOf = (s: SKU) => unitsBySku?.get(s.id)?.storagePlace ?? null;
+  // Archived items are not on the shelf, so they are not on the count sheet.
+  // Items marked "not counted weekly" are left off too, except for an opening
+  // count, which is a full count of everything. The sheet follows the storage
+  // places in order, so it reads the way the store is walked.
+  const active = allSkus.filter(s => !s.is_archived);
+  const leftOut = active.filter(s => unitsBySku?.get(s.id)?.countedWeekly === false);
+  const skus = orderForCount(
+    kind === 'opening' ? active : active.filter(s => !leftOut.includes(s)),
+    placeOf, storagePlaces,
+  );
   const [showReconciliationDialog, setShowReconciliationDialog] = useState(false);
   const [stockCounts, setStockCounts] = useState<Record<string, number>>({});
   const [notes, setNotes] = useState('');
@@ -291,6 +306,11 @@ export function StockReconciliation({ skus: allSkus, stockTakes, onComplete }: S
                 marked “before unit change”, and are left out of balances and usage figures from now on.
               </p>
             )}
+            {leftOut.length > 0 && kind !== 'opening' && (
+              <p className="text-xs text-muted-foreground">
+                {leftOut.length} item{leftOut.length === 1 ? ' is' : 's are'} left out of the weekly count (set under Edit item) and not on this sheet.
+              </p>
+            )}
             {/* Summary */}
             <div className="grid grid-cols-3 gap-4 p-4 bg-muted/50 rounded-lg">
               <div className="text-center">
@@ -319,7 +339,7 @@ export function StockReconciliation({ skus: allSkus, stockTakes, onComplete }: S
                 <TableHeader>
                   <TableRow>
                     <TableHead>Item</TableHead>
-                    <TableHead>Category</TableHead>
+                    <TableHead>Kept in</TableHead>
                     <TableHead className="text-right">System Qty</TableHead>
                     <TableHead className="text-right">Counted Qty</TableHead>
                     <TableHead className="text-right">Variance</TableHead>
@@ -329,14 +349,15 @@ export function StockReconciliation({ skus: allSkus, stockTakes, onComplete }: S
                   {skus.map(sku => {
                     const variance = getVariance(sku);
                     const colors = getCategoryColor(sku.category);
+                    const keptIn = placeOf(sku);
                     
                     return (
                       <TableRow key={sku.id} className={variance !== 0 ? 'bg-orange-50/50' : ''}>
                         <TableCell className="font-medium">{sku.name}</TableCell>
                         <TableCell>
-                          <Badge className={`${colors.bg} ${colors.text} text-xs`}>
-                            {getCategoryLabel(sku.category)}
-                          </Badge>
+                          {keptIn
+                            ? <span className="text-sm">{keptIn}</span>
+                            : <Badge className={`${colors.bg} ${colors.text} text-xs`}>{getCategoryLabel(sku.category)}</Badge>}
                         </TableCell>
                         <TableCell className="text-right whitespace-nowrap">
                           {fmtQty(Number(sku.stock_quantity))} {sku.unit_of_measure}

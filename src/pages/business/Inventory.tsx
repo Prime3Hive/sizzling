@@ -6,14 +6,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
   Plus, Package, Search, Edit2, Archive, ArchiveRestore, ShoppingCart, ArrowRightLeft, ClipboardCheck,
-  History, LineChart, MoreHorizontal, ClipboardList, Settings2, AlertTriangle, CalendarDays, Download, Ruler,
+  History, LineChart, MoreHorizontal, ClipboardList, Settings2, AlertTriangle, CalendarDays, Download, Ruler, MapPin,
 } from "lucide-react";
 import { format } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
@@ -27,7 +27,7 @@ import { INVENTORY_CATEGORIES, getCategoryLabel, MOVEMENT_META, movementMeta } f
 import { ResponsiveTable, type ResponsiveColumn } from "@/components/ui/responsive-table";
 import { TablePagination } from "@/components/ui/table-pagination";
 import { EmptyState, FilterChips, PageHeader, StatusPill } from "@/components/shell/ui";
-import ReorderLevelsDialog, { setReorderLevels } from "@/components/inventory/ReorderLevelsDialog";
+import ReorderLevelsDialog from "@/components/inventory/ReorderLevelsDialog";
 import { InventoryKPICards, type KPIMovement } from "@/components/inventory/InventoryKPICards";
 import { CategoryBreakdown } from "@/components/inventory/CategoryBreakdown";
 import { StockReconciliation } from "@/components/inventory/StockReconciliation";
@@ -36,14 +36,12 @@ import InventoryDailyReport from "@/components/inventory/InventoryDailyReport";
 import RecordStockSheet, { type StockPrefill } from "@/components/inventory/RecordStockSheet";
 import { Switch } from "@/components/ui/switch";
 import { useInventorySettings } from "@/hooks/useInventorySettings";
-import { recordStockMovements, setProductCost } from "@/lib/stockMovements";
 import { stockStatus, stockValue } from "@/lib/stockStatus";
 import { useItemUnits } from "@/hooks/useItemUnits";
-import { allUnits, beforeUnitChange, movementQuantity, normaliseUnit, similarItems, withPurchaseEquivalent } from "@/lib/units";
-import {
-  ChangeStockUnitDialog, PackSizesEditor, UnitListDialog, packProblems, saveItemUnits, unitSelectCls,
-  STOCK_UNIT_RULE, type PackDraft,
-} from "@/components/inventory/ItemUnits";
+import { allUnits, beforeUnitChange, movementQuantity, normaliseUnit, withPurchaseEquivalent } from "@/lib/units";
+import { itemKindLabel, nameKey } from "@/lib/itemMaster";
+import { ChangeStockUnitDialog, UnitListDialog } from "@/components/inventory/ItemUnits";
+import ItemFormSheet, { ArchiveItemDialog, StoragePlacesDialog } from "@/components/inventory/ItemForm";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -108,7 +106,7 @@ const EMPTY_MOVEMENTS: Movement[] = [];
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
-type StockStatus = "all" | "low" | "out" | "archived";
+type StockStatus = "all" | "low" | "out" | "setup" | "archived";
 
 /** Quantities are stored to 4 places; show them without trailing zeros. */
 const qty = (n: number) => Number(Number(n).toFixed(4)).toLocaleString("en-NG", { maximumFractionDigits: 4 });
@@ -152,10 +150,13 @@ export default function Inventory() {
   const canManage = hasPermission("inventory", "update");
   const canOrder = isAdmin || isManager;
 
-  const [showAddDialog, setShowAddDialog] = useState(false);
+  // The item form: { item: null } adds, { item } edits. One form, with its own
+  // state and a key per item, so it cannot show the item that was open before.
+  const [itemForm, setItemForm] = useState<{ item: SKU | null } | null>(null);
+  const [archiving, setArchiving] = useState<SKU | null>(null);
   const [showUnits, setShowUnits] = useState(false);
+  const [showPlaces, setShowPlaces] = useState(false);
   const [showDaily, setShowDaily] = useState(false);
-  const [editingSKU, setEditingSKU] = useState<SKU | null>(null);
   const [record, setRecord] = useState<StockPrefill | null>(null);
 
   const [activeTab, setActiveTab] = useState("items");
@@ -167,19 +168,9 @@ export default function Inventory() {
   const [movementFrom, setMovementFrom] = useState("");
   const [movementTo, setMovementTo] = useState("");
 
-  // Units: pack sizes and the purchase unit for the item being added or edited.
-  const { bySku: unitsBySku, refetch: refetchUnits } = useItemUnits();
-  const [newPacks, setNewPacks] = useState<PackDraft[]>([]);
-  const [newPurchaseUnit, setNewPurchaseUnit] = useState("");
-  const [editPacks, setEditPacks] = useState<PackDraft[]>([]);
-  const [editPurchaseUnit, setEditPurchaseUnit] = useState("");
+  // Units and the item master (type, storage place, supplier) for every item.
+  const { bySku: unitsBySku, masterReady, refetch: refetchUnits } = useItemUnits();
   const [changeUnitFor, setChangeUnitFor] = useState<SKU | null>(null);
-  const [savingItem, setSavingItem] = useState(false);
-
-  const [newSKU, setNewSKU] = useState({
-    name: "", category: "Proteins", unit_of_measure: "kg",
-    stock_quantity: 0, reorder_level: 0, cost_per_unit: 0, notes: "",
-  });
 
   const { settings: invSettings, update: updateInvSettings } = useInventorySettings();
   const [showSetup, setShowSetup] = useState(false);
@@ -261,132 +252,18 @@ export default function Inventory() {
     }
   };
 
-  // Apply a stock change to the single source (products + inventory + movements)
-  // in one database transaction. The SKU is a mirror; the DB trigger syncs its
-  // stock_quantity automatically.
-  const applyStockMovement = (
-    skuId: string, delta: number, type: "purchase" | "usage" | "stock_take", note: string,
-  ) => recordStockMovements({ lines: [{ sku_id: skuId, quantity_change: delta }], type, note });
-
-  const handleAddSKU = async () => {
-    if (!newSKU.name.trim()) { toast({ title: "Please enter an item name", variant: "destructive" }); return; }
-    if (!normaliseUnit(newSKU.unit_of_measure)) { toast({ title: "Choose the unit this item is stocked in", variant: "destructive" }); return; }
-    const problems = packProblems(newSKU.unit_of_measure, newPacks);
-    if (problems.length) { toast({ title: "Check the pack sizes", description: problems.join(" "), variant: "destructive" }); return; }
-    setSavingItem(true);
+  // An item with stock on hand cannot be archived: it is first corrected to
+  // zero with a reason (ArchiveItemDialog). The database refuses it otherwise.
+  const handleArchive = async (sku: SKU, archive: boolean) => {
+    if (archive && Number(sku.stock_quantity) !== 0) { setArchiving(sku); return; }
     try {
-      const { data: product, error } = await (supabase as any)
-        .from("products")
-        .insert({
-          name: newSKU.name.trim(), category: newSKU.category, item_type: "non_sellable",
-          uom: newSKU.unit_of_measure, price: newSKU.cost_per_unit,
-          // cost_price is the value used for inventory/COGS journals (IAS 2)
-          cost_price: newSKU.cost_per_unit,
-          user_id: user!.id, created_by: user!.id,
-        })
-        .select("id").single();
-      if (error) throw error;
-
-      // Pack sizes and the purchase unit, before any stock is recorded.
-      if (product && newPacks.some(p => normaliseUnit(p.name))) {
-        await saveItemUnits(product.id, newSKU.unit_of_measure, newPacks, newPurchaseUnit);
-      }
-
-      // Opening stock goes through the ledger like every other movement:
-      // Dr 1200 Inventory / Cr 3000 Owner's Equity at the item's cost.
-      if (product && newSKU.stock_quantity > 0) {
-        await recordStockMovements({
-          lines: [{ product_id: product.id, quantity_change: newSKU.stock_quantity, unit_price: newSKU.cost_per_unit || undefined }],
-          type: "adjustment", referenceType: "opening", note: `Opening stock — ${newSKU.name.trim()}`,
-        });
-      }
-      // The level typed on the form, in the item's own unit. It used to be
-      // saved only alongside opening stock, and as 10 when left at 0.
-      if (product) {
-        const { data: made } = await (supabase as any).from("products").select("sku_id").eq("id", product.id).maybeSingle();
-        if (made?.sku_id) {
-          await setReorderLevels([{ sku_id: made.sku_id, level: Number(newSKU.reorder_level) || 0 }]).catch(() => {});
-        }
-      }
-      toast({ title: "Item added successfully" });
-      setShowAddDialog(false);
-      resetForm();
-      fetchData();
-    } catch (error) {
-      console.error("Error adding item:", error);
-      toast({ title: "Failed to add item", description: (error as Error).message, variant: "destructive" });
-    } finally {
-      setSavingItem(false);
-    }
-  };
-
-  const openEdit = (sku: SKU) => {
-    const u = unitsBySku.get(sku.id);
-    setEditPacks((u?.units ?? []).slice(1).map(x => ({ name: x.name, factor: String(x.factor) })));
-    setEditPurchaseUnit(u?.purchaseUnit ?? normaliseUnit(sku.unit_of_measure));
-    setEditingSKU(sku);
-  };
-
-  const handleUpdateSKU = async () => {
-    if (!editingSKU) return;
-    const problems = packProblems(editingSKU.unit_of_measure, editPacks);
-    if (problems.length) { toast({ title: "Check the pack sizes", description: problems.join(" "), variant: "destructive" }); return; }
-    setSavingItem(true);
-    try {
-      const { error } = await (supabase as any)
-        .from("products")
-        // Never `price`: that is the SELLING price invoices use, and this form
-        // only edits cost. Cost goes through setProductCost so stock on hand is
-        // revalued in the ledger rather than silently re-priced.
-        // Not the unit either: it changes only through "Change stock unit",
-        // which restates the balance and the cost.
-        .update({ name: editingSKU.name, category: editingSKU.category })
-        .eq("sku_id", editingSKU.id);
-      if (error) throw error;
-
-      const productId = unitsBySku.get(editingSKU.id)?.productId;
-      if (productId) await saveItemUnits(productId, editingSKU.unit_of_measure, editPacks, editPurchaseUnit);
-
-      const before = skus.find(s => s.id === editingSKU.id);
-      // The reorder level on this form was shown but never saved.
-      if (before && Number(editingSKU.reorder_level) !== Number(before.reorder_level)) {
-        await setReorderLevels([{ sku_id: editingSKU.id, level: Number(editingSKU.reorder_level) || 0 }]);
-      }
-      let revalued = 0;
-      if (before && Number(editingSKU.cost_per_unit) !== Number(before.cost_per_unit)) {
-        revalued = await setProductCost(editingSKU.id, Number(editingSKU.cost_per_unit), "item edit");
-      }
-
-      const original = before?.stock_quantity ?? 0;
-      const delta = Number(editingSKU.stock_quantity) - Number(original);
-      if (delta !== 0) {
-        await applyStockMovement(editingSKU.id, delta, "stock_take", "Adjustment from item edit");
-      }
-      toast({
-        title: "Item updated successfully",
-        description: revalued !== 0
-          ? `Stock on hand revalued by ${revalued > 0 ? "+" : "−"}${formatNairaCompact(Math.abs(revalued))} in the books.`
-          : undefined,
-      });
-      setEditingSKU(null);
-      fetchData();
-    } catch (error) {
-      console.error("Error updating item:", error);
-      toast({ title: "Failed to update item", description: (error as Error).message, variant: "destructive" });
-    } finally {
-      setSavingItem(false);
-    }
-  };
-
-  const handleArchive = async (id: string, archive: boolean) => {
-    try {
-      const { error } = await supabase.from("skus").update({ is_archived: archive }).eq("id", id);
+      const { error } = await supabase.from("skus").update({ is_archived: archive }).eq("id", sku.id);
       if (error) throw error;
       toast({ title: archive ? "Item archived" : "Item restored" });
       fetchData();
     } catch (error) {
       console.error("Error archiving SKU:", error);
-      toast({ title: "Failed to update item", variant: "destructive" });
+      toast({ title: "Failed to update item", description: (error as Error).message, variant: "destructive" });
     }
   };
 
@@ -416,18 +293,6 @@ export default function Inventory() {
     });
   };
 
-  const resetForm = () => {
-    setNewSKU({
-      name: "", category: "Proteins", unit_of_measure: "kg",
-      stock_quantity: 0, reorder_level: 0, cost_per_unit: 0, notes: "",
-    });
-    setNewPacks([]);
-    setNewPurchaseUnit("");
-  };
-
-  // Items with a similar name to the one being added: PRAWNS, PUD PRAWNS…
-  const similar = useMemo(() => similarItems(newSKU.name, skus), [newSKU.name, skus]);
-
   // ── Derived ────────────────────────────────────────────────────────────────
   const activeSkus = useMemo(() => skus.filter(s => !s.is_archived), [skus]);
   const [showReorder, setShowReorder] = useState(false);
@@ -436,21 +301,29 @@ export default function Inventory() {
     out: activeSkus.filter(s => ["out", "negative"].includes(stockState(s))).length,
     negative: activeSkus.filter(s => stockState(s) === "negative").length,
     archived: skus.length - activeSkus.length,
+    // Items the owner has not finished setting up: no type yet.
+    setup: masterReady ? activeSkus.filter(s => !unitsBySku.get(s.id)?.kind).length : 0,
     // Same definition as ledger 1200 in Books Check (fn_inventory_ledger_check).
     value: stockValue(activeSkus),
-  }), [skus, activeSkus]);
+  }), [skus, activeSkus, masterReady, unitsBySku]);
+
+  const storagePlacesInUse = useMemo(
+    () => new Set([...unitsBySku.values()].map(u => nameKey(u.storagePlace)).filter(Boolean)),
+    [unitsBySku],
+  );
 
   const filteredSKUs = useMemo(() => {
     const q = searchTerm.trim().toLowerCase();
     return skus.filter(sku => {
       const st = stockState(sku);
       const matchesStatus = status === "archived" ? sku.is_archived
+        : status === "setup" ? !sku.is_archived && !unitsBySku.get(sku.id)?.kind
         : !sku.is_archived && (status === "all" || (status === "low" ? st === "low" : st === "out" || st === "negative"));
       return matchesStatus
         && (categoryFilter === "all" || sku.category === categoryFilter)
         && (!q || sku.name.toLowerCase().includes(q) || getCategoryLabel(sku.category).toLowerCase().includes(q));
     });
-  }, [skus, searchTerm, categoryFilter, status]);
+  }, [skus, searchTerm, categoryFilter, status, unitsBySku]);
 
   const negativeSkus = useMemo(() => activeSkus.filter(s => Number(s.stock_quantity) < 0), [activeSkus]);
 
@@ -519,7 +392,14 @@ export default function Inventory() {
       cell: (sku) => (
         <div className="min-w-0">
           <div className="truncate font-semibold">{sku.name}</div>
-          <div className="truncate text-xs text-muted-foreground">{getCategoryLabel(sku.category)}</div>
+          <div className="truncate text-xs text-muted-foreground">
+            {[getCategoryLabel(sku.category),
+              masterReady && unitsBySku.get(sku.id)?.kind ? itemKindLabel(unitsBySku.get(sku.id)?.kind) : null,
+              unitsBySku.get(sku.id)?.storagePlace].filter(Boolean).join(" · ")}
+            {masterReady && !sku.is_archived && !unitsBySku.get(sku.id)?.kind && (
+              <span className="ml-1.5 rounded border border-amber-300 px-1 text-[11px] text-amber-800 dark:border-amber-500/40 dark:text-amber-300">needs setup</span>
+            )}
+          </div>
         </div>
       ),
     },
@@ -539,7 +419,7 @@ export default function Inventory() {
     },
     { key: "status", header: "Status", cell: statusPill },
     {
-      key: "reorder", header: "Reorder at", align: "right", hideOnMobile: true,
+      key: "reorder", header: "Minimum", align: "right", hideOnMobile: true,
       cell: (sku) => <span className="tabular-nums text-muted-foreground">{qty(sku.reorder_level)} {sku.unit_of_measure}</span>,
     },
     {
@@ -585,16 +465,16 @@ export default function Inventory() {
                 )}
                 {canManage && <DropdownMenuSeparator />}
                 {canManage && !sku.is_archived && (
-                  <DropdownMenuItem onClick={() => openEdit(sku)}>
+                  <DropdownMenuItem onClick={() => setItemForm({ item: sku })}>
                     <Edit2 className="mr-2 h-3.5 w-3.5" />Edit item
                   </DropdownMenuItem>
                 )}
                 {canManage && (sku.is_archived ? (
-                  <DropdownMenuItem onClick={() => handleArchive(sku.id, false)} className="text-green-700 focus:text-green-700">
+                  <DropdownMenuItem onClick={() => handleArchive(sku, false)} className="text-green-700 focus:text-green-700">
                     <ArchiveRestore className="mr-2 h-3.5 w-3.5" />Restore
                   </DropdownMenuItem>
                 ) : (
-                  <DropdownMenuItem onClick={() => handleArchive(sku.id, true)} className="text-amber-700 focus:text-amber-700">
+                  <DropdownMenuItem onClick={() => handleArchive(sku, true)} className="text-amber-700 focus:text-amber-700">
                     <Archive className="mr-2 h-3.5 w-3.5" />Archive
                   </DropdownMenuItem>
                 ))}
@@ -674,7 +554,7 @@ export default function Inventory() {
             </Button>
           )}
           {canManage && (
-            <Button variant="outline" className="flex-1 sm:flex-none" onClick={() => setShowAddDialog(true)}>
+            <Button variant="outline" className="flex-1 sm:flex-none" onClick={() => setItemForm({ item: null })}>
               <Plus className="mr-2 h-4 w-4" />Add item
             </Button>
           )}
@@ -699,12 +579,17 @@ export default function Inventory() {
               {(canManage || isAdmin) && <DropdownMenuLabel className="text-xs text-muted-foreground">Setup</DropdownMenuLabel>}
               {canManage && (
                 <DropdownMenuItem onClick={() => setShowReorder(true)}>
-                  <Settings2 className="mr-2 h-4 w-4" />Reorder levels
+                  <Settings2 className="mr-2 h-4 w-4" />Minimum levels
                 </DropdownMenuItem>
               )}
               {canManage && (
                 <DropdownMenuItem onClick={() => setShowUnits(true)}>
                   <Ruler className="mr-2 h-4 w-4" />Units
+                </DropdownMenuItem>
+              )}
+              {canManage && masterReady && (
+                <DropdownMenuItem onClick={() => setShowPlaces(true)}>
+                  <MapPin className="mr-2 h-4 w-4" />Storage places
                 </DropdownMenuItem>
               )}
               {isAdmin && (
@@ -748,6 +633,7 @@ export default function Inventory() {
               { value: "all", label: "All items", count: activeSkus.length },
               { value: "low", label: "Running low", count: counts.low },
               { value: "out", label: "Out of stock", count: counts.out },
+              ...(counts.setup > 0 || status === "setup" ? [{ value: "setup" as const, label: "Needs setup", count: counts.setup }] : []),
               { value: "archived", label: "Archived", count: counts.archived },
             ]} />
             <div className="flex gap-2">
@@ -774,9 +660,9 @@ export default function Inventory() {
             rowClassName={(s) => (stockState(s) === "negative" ? "bg-destructive/5" : undefined)}
             emptyState={
               <EmptyState icon={Package} tone="neutral"
-                title={searchTerm || categoryFilter !== "all" ? "No items match" : status === "low" ? "Nothing running low" : status === "out" ? "Nothing out of stock" : status === "archived" ? "No archived items" : "No items yet"}
+                title={searchTerm || categoryFilter !== "all" ? "No items match" : status === "low" ? "Nothing running low" : status === "out" ? "Nothing out of stock" : status === "archived" ? "No archived items" : status === "setup" ? "Every item is set up" : "No items yet"}
                 body={!skus.length && canManage ? "Add the things you keep in stock to start tracking them." : undefined}
-                action={!skus.length && canManage ? <Button onClick={() => setShowAddDialog(true)}><Plus className="mr-2 h-4 w-4" />Add item</Button> : undefined} />
+                action={!skus.length && canManage ? <Button onClick={() => setItemForm({ item: null })}><Plus className="mr-2 h-4 w-4" />Add item</Button> : undefined} />
             }
           />
           <TablePagination page={itemPages.page} pageCount={itemPages.pageCount} total={itemPages.total}
@@ -835,7 +721,8 @@ export default function Inventory() {
         {/* ── Stock take ── */}
         {canManage && (
           <TabsContent value="reconciliation">
-            <StockReconciliation skus={skus} stockTakes={stockTakes} onComplete={fetchData} />
+            <StockReconciliation skus={skus} stockTakes={stockTakes} onComplete={fetchData}
+              unitsBySku={unitsBySku} storagePlaces={invSettings.storage_places} />
           </TabsContent>
         )}
 
@@ -859,147 +746,21 @@ export default function Inventory() {
       />
       <InventoryDailyReport open={showDaily} onOpenChange={setShowDaily} />
 
-      {/* ── Add Item Dialog ── */}
-      <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
-        <DialogContent className="max-h-[90svh] max-w-lg overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Add item</DialogTitle>
-            <DialogDescription>Choose the unit the kitchen counts it in. Everything about this item is kept in that unit.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="name">Item name</Label>
-              <Input id="name" value={newSKU.name} onChange={(e) => setNewSKU({ ...newSKU, name: e.target.value })} placeholder="Enter item name" />
-              {similar.length > 0 && (
-                <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
-                  <p className="font-medium">Already in the list. Use one of these instead of adding it again?</p>
-                  <ul className="mt-1 space-y-0.5">
-                    {similar.map(it => (
-                      <li key={it.id}>
-                        <button type="button" className="text-left underline underline-offset-2"
-                          onClick={() => { setShowAddDialog(false); navigate(`/business/inventory/item/${it.id}`); }}>
-                          {it.name}
-                        </button>
-                        {" "}· {qty(it.stock_quantity)} {it.unit_of_measure}{it.is_archived ? " · archived" : ""}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="category">Category</Label>
-              <Select value={newSKU.category} onValueChange={(v) => setNewSKU({ ...newSKU, category: v })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {INVENTORY_CATEGORIES.map(cat => (
-                    <SelectItem key={cat.value} value={cat.value}>
-                      <div className="flex flex-col">
-                        <span>{cat.label}</span>
-                        <span className="text-xs text-muted-foreground">{cat.description}</span>
-                      </div>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="uom">Stock unit</Label>
-              <select id="uom" className={unitSelectCls} value={normaliseUnit(newSKU.unit_of_measure)}
-                onChange={(e) => {
-                  setNewSKU({ ...newSKU, unit_of_measure: e.target.value });
-                  setNewPacks(p => p.filter(x => normaliseUnit(x.name) !== e.target.value));
-                  setNewPurchaseUnit("");
-                }}>
-                {unitChoices.map(unit => <option key={unit} value={unit}>{unit}</option>)}
-              </select>
-              <p className="text-xs text-muted-foreground">{STOCK_UNIT_RULE}</p>
-            </div>
-            <PackSizesEditor stockUnit={normaliseUnit(newSKU.unit_of_measure)} packs={newPacks} onChange={setNewPacks}
-              purchaseUnit={newPurchaseUnit} onPurchaseUnit={setNewPurchaseUnit} unitChoices={unitChoices} />
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="opening">Opening stock ({newSKU.unit_of_measure})</Label>
-                <Input id="opening" type="number" min="0" step="any" value={newSKU.stock_quantity}
-                  onChange={(e) => setNewSKU({ ...newSKU, stock_quantity: Number(e.target.value) })} />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="reorder_level">Reorder at ({newSKU.unit_of_measure})</Label>
-                <Input id="reorder_level" type="number" min="0" step="any" value={newSKU.reorder_level}
-                  onChange={(e) => setNewSKU({ ...newSKU, reorder_level: Number(e.target.value) })} />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="cost_per_unit">Cost per {newSKU.unit_of_measure} (₦)</Label>
-                <Input id="cost_per_unit" type="number" min="0" step="0.01" value={newSKU.cost_per_unit}
-                  onChange={(e) => setNewSKU({ ...newSKU, cost_per_unit: Number(e.target.value) })} />
-              </div>
-            </div>
-            <Button onClick={handleAddSKU} className="w-full" disabled={savingItem}>Add item</Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      {/* ── Add or edit an item ── */}
+      <ItemFormSheet
+        key={itemForm?.item?.id ?? "new"}
+        open={!!itemForm} onOpenChange={(o) => { if (!o) setItemForm(null); }}
+        item={itemForm?.item ?? null}
+        skus={skus} unitsBySku={unitsBySku} masterReady={masterReady}
+        unitChoices={unitChoices} storagePlaces={invSettings.storage_places}
+        isAdmin={isAdmin} canRecord={canRecord}
+        onSaved={fetchData}
+        onChangeUnit={(it) => setChangeUnitFor(it as SKU)}
+        onCorrectCount={(it) => setRecord({ mode: "adjust", sku_id: it.id })}
+        onOpenItem={(id) => navigate(`/business/inventory/item/${id}`)}
+      />
 
-      {/* ── Edit Item Dialog ── */}
-      {editingSKU && (
-        <Dialog open={!!editingSKU} onOpenChange={() => setEditingSKU(null)}>
-          <DialogContent className="max-h-[90svh] max-w-lg overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle>Edit item</DialogTitle>
-              <DialogDescription>Quantities and cost are in {editingSKU.unit_of_measure}, this item’s stock unit.</DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="edit_name">Item name</Label>
-                <Input id="edit_name" value={editingSKU.name} onChange={(e) => setEditingSKU({ ...editingSKU, name: e.target.value })} />
-              </div>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div className="space-y-1.5">
-                  <Label htmlFor="edit_category">Category</Label>
-                  <Select value={editingSKU.category} onValueChange={(v) => setEditingSKU({ ...editingSKU, category: v })}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {INVENTORY_CATEGORIES.map(cat => <SelectItem key={cat.value} value={cat.value}>{cat.label}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="edit_uom">Stock unit</Label>
-                  <div className="flex gap-2">
-                    <Input id="edit_uom" value={editingSKU.unit_of_measure} disabled className="min-w-0" />
-                    <Button type="button" variant="outline" className="shrink-0"
-                      onClick={() => { setChangeUnitFor(editingSKU); setEditingSKU(null); }}>
-                      Change
-                    </Button>
-                  </div>
-                </div>
-              </div>
-              <PackSizesEditor stockUnit={normaliseUnit(editingSKU.unit_of_measure)} packs={editPacks} onChange={setEditPacks}
-                purchaseUnit={editPurchaseUnit} onPurchaseUnit={setEditPurchaseUnit} unitChoices={unitChoices} />
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                <div className="space-y-1.5">
-                  <Label htmlFor="edit_stock">On hand ({editingSKU.unit_of_measure})</Label>
-                  <Input id="edit_stock" type="number" step="any" value={editingSKU.stock_quantity}
-                    onChange={(e) => setEditingSKU({ ...editingSKU, stock_quantity: Number(e.target.value) })} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="edit_reorder">Reorder at ({editingSKU.unit_of_measure})</Label>
-                  <Input id="edit_reorder" type="number" min="0" step="any" value={editingSKU.reorder_level}
-                    onChange={(e) => setEditingSKU({ ...editingSKU, reorder_level: Number(e.target.value) })} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="edit_cost">Cost per {editingSKU.unit_of_measure} (₦)</Label>
-                  <Input id="edit_cost" type="number" min="0" step="0.01" value={editingSKU.cost_per_unit}
-                    onChange={(e) => setEditingSKU({ ...editingSKU, cost_per_unit: Number(e.target.value) })} />
-                </div>
-              </div>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setEditingSKU(null)}>Cancel</Button>
-              <Button onClick={handleUpdateSKU} disabled={savingItem}>Update item</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      )}
+      <ArchiveItemDialog item={archiving} onOpenChange={(o) => { if (!o) setArchiving(null); }} onDone={fetchData} />
 
       <ChangeStockUnitDialog
         open={!!changeUnitFor} onOpenChange={(o) => { if (!o) setChangeUnitFor(null); }}
@@ -1010,6 +771,10 @@ export default function Inventory() {
         } : null}
         unitChoices={unitChoices} onDone={fetchData}
       />
+
+      <StoragePlacesDialog open={showPlaces} onOpenChange={setShowPlaces} places={invSettings.storage_places}
+        canEdit={isAdmin} inUse={storagePlacesInUse}
+        onSave={(places) => updateInvSettings.mutateAsync({ storage_places: places }).then(() => { toast({ title: "Storage places saved" }); })} />
 
       <UnitListDialog open={showUnits} onOpenChange={setShowUnits} custom={invSettings.custom_units} canEdit={isAdmin}
         onSave={(units) => updateInvSettings.mutateAsync({ custom_units: units }).then(() => { toast({ title: "Units saved" }); })} />
