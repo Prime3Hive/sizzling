@@ -6,11 +6,13 @@ export interface InventorySettings {
   id: string | null;
   allow_negative_stock: boolean;
   notify_on_negative: boolean;
+  /** Units an admin added to the standard list. */
+  custom_units: string[];
 }
 
 // Until migration 20261016100000 is applied there is no settings row; the
 // page then behaves as it always did (no negative stock, alerts on).
-const DEFAULTS: InventorySettings = { id: null, allow_negative_stock: false, notify_on_negative: true };
+const DEFAULTS: InventorySettings = { id: null, allow_negative_stock: false, notify_on_negative: true, custom_units: [] };
 
 export function useInventorySettings() {
   const { user } = useAuth();
@@ -23,10 +25,10 @@ export function useInventorySettings() {
     queryFn: async () => {
       const { data, error } = await (supabase as any)
         .from('inventory_settings')
-        .select('id, allow_negative_stock, notify_on_negative')
+        .select('*')
         .maybeSingle();
       if (error || !data) return DEFAULTS;
-      return data as InventorySettings;
+      return { ...DEFAULTS, ...data, custom_units: data.custom_units ?? [] } as InventorySettings;
     },
   });
 

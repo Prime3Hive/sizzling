@@ -23,7 +23,7 @@ import { toast } from "@/hooks/use-toast";
 import { usePagination } from "@/hooks/usePagination";
 import { formatNairaCompact } from "@/lib/currency";
 import { cn } from "@/lib/utils";
-import { INVENTORY_CATEGORIES, UNITS_OF_MEASURE, getCategoryLabel, MOVEMENT_META, movementMeta } from "@/lib/inventoryConstants";
+import { INVENTORY_CATEGORIES, getCategoryLabel, MOVEMENT_META, movementMeta } from "@/lib/inventoryConstants";
 import { ResponsiveTable, type ResponsiveColumn } from "@/components/ui/responsive-table";
 import { TablePagination } from "@/components/ui/table-pagination";
 import { EmptyState, FilterChips, PageHeader, StatusPill } from "@/components/shell/ui";
@@ -38,6 +38,13 @@ import { Switch } from "@/components/ui/switch";
 import { useInventorySettings } from "@/hooks/useInventorySettings";
 import { recordStockMovements, setProductCost } from "@/lib/stockMovements";
 import { stockStatus, stockValue } from "@/lib/stockStatus";
+import { useItemUnits } from "@/hooks/useItemUnits";
+import { allUnits, beforeUnitChange, movementQuantity, normaliseUnit, similarItems, withPurchaseEquivalent } from "@/lib/units";
+import {
+  ChangeStockUnitDialog, PackSizesEditor, UnitListDialog, packProblems, saveItemUnits, unitSelectCls,
+  STOCK_UNIT_RULE, type PackDraft,
+} from "@/components/inventory/ItemUnits";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 interface SKU {
@@ -75,13 +82,6 @@ interface StockTake {
   created_at: string;
 }
 
-interface UnitConversion {
-  id: string;
-  from_unit: string;
-  to_unit: string;
-  conversion_factor: number;
-}
-
 interface Movement {
   id: string;
   product_id: string;
@@ -91,6 +91,10 @@ interface Movement {
   occurred_on: string;
   note: string | null;
   created_at: string;
+  created_by: string | null;
+  entered_qty?: number | null;
+  entered_unit?: string | null;
+  stock_unit?: string | null;
   products: { name: string; uom: string | null; category: string | null; sku_id: string | null } | null;
 }
 
@@ -100,7 +104,6 @@ interface Movement {
 const EMPTY_SKUS: SKU[] = [];
 const EMPTY_TRANSACTIONS: Transaction[] = [];
 const EMPTY_STOCK_TAKES: StockTake[] = [];
-const EMPTY_UNIT_CONVERSIONS: UnitConversion[] = [];
 const EMPTY_MOVEMENTS: Movement[] = [];
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
@@ -150,7 +153,7 @@ export default function Inventory() {
   const canOrder = isAdmin || isManager;
 
   const [showAddDialog, setShowAddDialog] = useState(false);
-  const [showConversionDialog, setShowConversionDialog] = useState(false);
+  const [showUnits, setShowUnits] = useState(false);
   const [showDaily, setShowDaily] = useState(false);
   const [editingSKU, setEditingSKU] = useState<SKU | null>(null);
   const [record, setRecord] = useState<StockPrefill | null>(null);
@@ -160,6 +163,18 @@ export default function Inventory() {
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [status, setStatus] = useState<StockStatus>("all");
   const [movementFilter, setMovementFilter] = useState("all");
+  const [movementItem, setMovementItem] = useState("");
+  const [movementFrom, setMovementFrom] = useState("");
+  const [movementTo, setMovementTo] = useState("");
+
+  // Units: pack sizes and the purchase unit for the item being added or edited.
+  const { bySku: unitsBySku, refetch: refetchUnits } = useItemUnits();
+  const [newPacks, setNewPacks] = useState<PackDraft[]>([]);
+  const [newPurchaseUnit, setNewPurchaseUnit] = useState("");
+  const [editPacks, setEditPacks] = useState<PackDraft[]>([]);
+  const [editPurchaseUnit, setEditPurchaseUnit] = useState("");
+  const [changeUnitFor, setChangeUnitFor] = useState<SKU | null>(null);
+  const [savingItem, setSavingItem] = useState(false);
 
   const [newSKU, setNewSKU] = useState({
     name: "", category: "Proteins", unit_of_measure: "kg",
@@ -168,13 +183,11 @@ export default function Inventory() {
 
   const { settings: invSettings, update: updateInvSettings } = useInventorySettings();
   const [showSetup, setShowSetup] = useState(false);
-  const [newConversion, setNewConversion] = useState({ from_unit: "", to_unit: "", conversion_factor: 1 });
 
   interface InventoryData {
     skus: SKU[];
     transactions: Transaction[];
     stockTakes: StockTake[];
-    unitConversions: UnitConversion[];
     movements: Movement[];
     movements30d: KPIMovement[];
     pendingRequests: number;
@@ -189,16 +202,15 @@ export default function Inventory() {
     enabled: !!user,
     queryFn: async () => {
       const since = new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10);
-      const [skusRes, txRes, takesRes, convRes, moveRes, reqRes, move30Res] = await Promise.all([
+      const [skusRes, txRes, takesRes, moveRes, reqRes, move30Res] = await Promise.all([
         supabase.from("skus").select("*").order("name"),
         supabase.from("transactions").select("*, skus(name, unit_of_measure, category)")
           .order("created_at", { ascending: false }).limit(150),
         supabase.from("stock_takes").select("*").order("created_at", { ascending: false }).limit(10),
-        supabase.from("unit_conversions").select("*"),
         (supabase as any).from("inventory_movements")
           .select("*, products(name, uom, category, sku_id)")
           .order("occurred_on", { ascending: false }).order("created_at", { ascending: false })
-          .limit(150),
+          .limit(1000),
         supabase.from("inventory_requests").select("id", { count: "exact", head: true }).eq("status", "pending"),
         (supabase as any).from("inventory_movements")
           .select("movement_type, quantity_change, unit_cost")
@@ -211,7 +223,6 @@ export default function Inventory() {
         skus: (skusRes.data || []) as SKU[],
         transactions: (txRes.data || []) as Transaction[],
         stockTakes: (takesRes.data || []) as StockTake[],
-        unitConversions: (convRes.data || []) as UnitConversion[],
         movements: ((moveRes as any).data || []) as Movement[],
         movements30d: ((move30Res as any).data || []) as KPIMovement[],
         pendingRequests: reqRes.count ?? 0,
@@ -222,11 +233,27 @@ export default function Inventory() {
   const skus = inventoryData?.skus ?? EMPTY_SKUS;
   const transactions = inventoryData?.transactions ?? EMPTY_TRANSACTIONS;
   const stockTakes = inventoryData?.stockTakes ?? EMPTY_STOCK_TAKES;
-  const unitConversions = inventoryData?.unitConversions ?? EMPTY_UNIT_CONVERSIONS;
   const movements = inventoryData?.movements ?? EMPTY_MOVEMENTS;
   const pendingRequests = inventoryData?.pendingRequests ?? 0;
 
+  const { data: profiles = [] } = useQuery<{ user_id: string; full_name: string | null }[]>({
+    queryKey: ["profiles-directory"],
+    queryFn: async () => {
+      const { data, error } = await supabase.from("profiles").select("user_id, full_name");
+      if (error) throw error;
+      return data ?? [];
+    },
+    staleTime: 5 * 60_000,
+  });
+  const nameByUserId = useMemo(() => Object.fromEntries(profiles.map(p => [p.user_id, p.full_name])), [profiles]);
+
+  const unitChoices = useMemo(
+    () => allUnits(invSettings.custom_units, skus.map(s => s.unit_of_measure)),
+    [invSettings.custom_units, skus],
+  );
+
   const fetchData = async () => {
+    refetchUnits();
     const { error } = await refetch();
     if (error) {
       console.error("Error fetching data:", error);
@@ -243,6 +270,10 @@ export default function Inventory() {
 
   const handleAddSKU = async () => {
     if (!newSKU.name.trim()) { toast({ title: "Please enter an item name", variant: "destructive" }); return; }
+    if (!normaliseUnit(newSKU.unit_of_measure)) { toast({ title: "Choose the unit this item is stocked in", variant: "destructive" }); return; }
+    const problems = packProblems(newSKU.unit_of_measure, newPacks);
+    if (problems.length) { toast({ title: "Check the pack sizes", description: problems.join(" "), variant: "destructive" }); return; }
+    setSavingItem(true);
     try {
       const { data: product, error } = await (supabase as any)
         .from("products")
@@ -255,6 +286,11 @@ export default function Inventory() {
         })
         .select("id").single();
       if (error) throw error;
+
+      // Pack sizes and the purchase unit, before any stock is recorded.
+      if (product && newPacks.some(p => normaliseUnit(p.name))) {
+        await saveItemUnits(product.id, newSKU.unit_of_measure, newPacks, newPurchaseUnit);
+      }
 
       // Opening stock goes through the ledger like every other movement:
       // Dr 1200 Inventory / Cr 3000 Owner's Equity at the item's cost.
@@ -279,23 +315,37 @@ export default function Inventory() {
     } catch (error) {
       console.error("Error adding item:", error);
       toast({ title: "Failed to add item", description: (error as Error).message, variant: "destructive" });
+    } finally {
+      setSavingItem(false);
     }
+  };
+
+  const openEdit = (sku: SKU) => {
+    const u = unitsBySku.get(sku.id);
+    setEditPacks((u?.units ?? []).slice(1).map(x => ({ name: x.name, factor: String(x.factor) })));
+    setEditPurchaseUnit(u?.purchaseUnit ?? normaliseUnit(sku.unit_of_measure));
+    setEditingSKU(sku);
   };
 
   const handleUpdateSKU = async () => {
     if (!editingSKU) return;
+    const problems = packProblems(editingSKU.unit_of_measure, editPacks);
+    if (problems.length) { toast({ title: "Check the pack sizes", description: problems.join(" "), variant: "destructive" }); return; }
+    setSavingItem(true);
     try {
       const { error } = await (supabase as any)
         .from("products")
         // Never `price`: that is the SELLING price invoices use, and this form
         // only edits cost. Cost goes through setProductCost so stock on hand is
         // revalued in the ledger rather than silently re-priced.
-        .update({
-          name: editingSKU.name, category: editingSKU.category,
-          uom: editingSKU.unit_of_measure,
-        })
+        // Not the unit either: it changes only through "Change stock unit",
+        // which restates the balance and the cost.
+        .update({ name: editingSKU.name, category: editingSKU.category })
         .eq("sku_id", editingSKU.id);
       if (error) throw error;
+
+      const productId = unitsBySku.get(editingSKU.id)?.productId;
+      if (productId) await saveItemUnits(productId, editingSKU.unit_of_measure, editPacks, editPurchaseUnit);
 
       const before = skus.find(s => s.id === editingSKU.id);
       // The reorder level on this form was shown but never saved.
@@ -323,6 +373,8 @@ export default function Inventory() {
     } catch (error) {
       console.error("Error updating item:", error);
       toast({ title: "Failed to update item", description: (error as Error).message, variant: "destructive" });
+    } finally {
+      setSavingItem(false);
     }
   };
 
@@ -335,23 +387,6 @@ export default function Inventory() {
     } catch (error) {
       console.error("Error archiving SKU:", error);
       toast({ title: "Failed to update item", variant: "destructive" });
-    }
-  };
-
-  const handleAddConversion = async () => {
-    if (!newConversion.from_unit || !newConversion.to_unit || newConversion.conversion_factor <= 0) {
-      toast({ title: "Please fill all fields with valid values", variant: "destructive" });
-      return;
-    }
-    try {
-      const { error } = await supabase.from("unit_conversions").insert({ ...newConversion, user_id: user!.id });
-      if (error) throw error;
-      toast({ title: "Unit conversion added successfully" });
-      setNewConversion({ from_unit: "", to_unit: "", conversion_factor: 1 });
-      fetchData();
-    } catch (error) {
-      console.error("Error adding conversion:", error);
-      toast({ title: "Failed to add unit conversion", variant: "destructive" });
     }
   };
 
@@ -381,10 +416,17 @@ export default function Inventory() {
     });
   };
 
-  const resetForm = () => setNewSKU({
-    name: "", category: "Proteins", unit_of_measure: "kg",
-    stock_quantity: 0, reorder_level: 0, cost_per_unit: 0, notes: "",
-  });
+  const resetForm = () => {
+    setNewSKU({
+      name: "", category: "Proteins", unit_of_measure: "kg",
+      stock_quantity: 0, reorder_level: 0, cost_per_unit: 0, notes: "",
+    });
+    setNewPacks([]);
+    setNewPurchaseUnit("");
+  };
+
+  // Items with a similar name to the one being added: PRAWNS, PUD PRAWNS…
+  const similar = useMemo(() => similarItems(newSKU.name, skus), [newSKU.name, skus]);
 
   // ── Derived ────────────────────────────────────────────────────────────────
   const activeSkus = useMemo(() => skus.filter(s => !s.is_archived), [skus]);
@@ -412,9 +454,14 @@ export default function Inventory() {
 
   const negativeSkus = useMemo(() => activeSkus.filter(s => Number(s.stock_quantity) < 0), [activeSkus]);
 
-  const filteredMovements = useMemo(() =>
-    movementFilter === "all" ? movements : movements.filter(m => m.movement_type === movementFilter),
-    [movements, movementFilter]);
+  const filteredMovements = useMemo(() => movements.filter(m =>
+    (movementFilter === "all" || m.movement_type === movementFilter)
+    && (!movementItem || m.products?.sku_id === movementItem)
+    && (!movementFrom || m.occurred_on >= movementFrom)
+    && (!movementTo || m.occurred_on <= movementTo)),
+    [movements, movementFilter, movementItem, movementFrom, movementTo]);
+  const movementFiltersOn = movementFilter !== "all" || !!movementItem || !!movementFrom || !!movementTo;
+  const itemOptions = useMemo(() => skus.map(s => ({ value: s.id, label: s.name })), [skus]);
 
   const itemPages = usePagination(filteredSKUs, 25);
   const movementPages = usePagination(filteredMovements, 25);
@@ -479,15 +526,21 @@ export default function Inventory() {
     {
       key: "qty", header: "On hand", align: "right",
       cell: (sku) => (
-        <span className={cn("tabular-nums font-semibold", sku.stock_quantity < 0 && "text-destructive")}>
+        <div className={cn("tabular-nums font-semibold", sku.stock_quantity < 0 && "text-destructive")}>
           {qty(sku.stock_quantity)} <span className="font-normal text-muted-foreground">{sku.unit_of_measure}</span>
-        </span>
+          {(() => {
+            // "28 kg, about 2.8 bag" when the item is bought in a pack size.
+            const full = withPurchaseEquivalent(Number(sku.stock_quantity), unitsBySku.get(sku.id));
+            const about = full.split(", ")[1];
+            return about ? <div className="text-xs font-normal text-muted-foreground">{about}</div> : null;
+          })()}
+        </div>
       ),
     },
     { key: "status", header: "Status", cell: statusPill },
     {
       key: "reorder", header: "Reorder at", align: "right", hideOnMobile: true,
-      cell: (sku) => <span className="tabular-nums text-muted-foreground">{qty(sku.reorder_level)}</span>,
+      cell: (sku) => <span className="tabular-nums text-muted-foreground">{qty(sku.reorder_level)} {sku.unit_of_measure}</span>,
     },
     {
       key: "value", header: "Value", align: "right", hideOnMobile: true,
@@ -532,7 +585,7 @@ export default function Inventory() {
                 )}
                 {canManage && <DropdownMenuSeparator />}
                 {canManage && !sku.is_archived && (
-                  <DropdownMenuItem onClick={() => setEditingSKU(sku)}>
+                  <DropdownMenuItem onClick={() => openEdit(sku)}>
                     <Edit2 className="mr-2 h-3.5 w-3.5" />Edit item
                   </DropdownMenuItem>
                 )}
@@ -557,13 +610,21 @@ export default function Inventory() {
   const movementColumns: ResponsiveColumn<Movement>[] = [
     {
       key: "item", header: "Item", primary: true,
-      cell: (m) => <span className="font-semibold">{m.products?.name ?? "—"}</span>,
+      cell: (m) => {
+        const old = m.products?.sku_id ? beforeUnitChange(m.created_at, unitsBySku.get(m.products.sku_id)?.resetAt) : false;
+        return (
+          <div className="min-w-0">
+            <span className="font-semibold">{m.products?.name ?? "—"}</span>
+            {old && <span className="ml-2 rounded border px-1.5 py-0.5 text-[11px] text-muted-foreground">before unit change</span>}
+          </div>
+        );
+      },
     },
     {
       key: "change", header: "Change", align: "right",
       cell: (m) => (
         <span className={cn("tabular-nums font-semibold", Number(m.quantity_change) >= 0 ? "text-green-700 dark:text-green-400" : "text-destructive")}>
-          {Number(m.quantity_change) >= 0 ? "+" : "−"}{qty(Math.abs(Number(m.quantity_change)))} {m.products?.uom ?? ""}
+          {movementQuantity(m, m.stock_unit ?? m.products?.uom ?? "")}
         </span>
       ),
     },
@@ -581,6 +642,10 @@ export default function Inventory() {
     {
       key: "note", header: "Note", hideOnMobile: true,
       cell: (m) => <span className="block max-w-xs truncate text-sm text-muted-foreground">{m.note || "—"}</span>,
+    },
+    {
+      key: "by", header: "Recorded by", hideOnMobile: true,
+      cell: (m) => <span className="whitespace-nowrap text-sm text-muted-foreground">{m.created_by ? nameByUserId[m.created_by] ?? "—" : "System"}</span>,
     },
   ];
 
@@ -638,8 +703,8 @@ export default function Inventory() {
                 </DropdownMenuItem>
               )}
               {canManage && (
-                <DropdownMenuItem onClick={() => setShowConversionDialog(true)}>
-                  <Ruler className="mr-2 h-4 w-4" />Unit conversions
+                <DropdownMenuItem onClick={() => setShowUnits(true)}>
+                  <Ruler className="mr-2 h-4 w-4" />Units
                 </DropdownMenuItem>
               )}
               {isAdmin && (
@@ -720,15 +785,40 @@ export default function Inventory() {
 
         {/* ── Movements ── */}
         <TabsContent value="movements" className="space-y-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-sm text-muted-foreground">Every stock-in, use, sale and correction, newest first. Tap one to open the item.</p>
-            <Select value={movementFilter} onValueChange={setMovementFilter}>
-              <SelectTrigger aria-label="Movement type" className="w-full sm:w-52"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All movements</SelectItem>
-                {Object.entries(MOVEMENT_META).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}
-              </SelectContent>
-            </Select>
+          <p className="text-sm text-muted-foreground">
+            Every stock-in, use, sale and correction, newest first, in the unit it was typed in. Tap one to open the item.
+            {movements.length >= 1000 && " Showing the latest 1,000; open an item for its full history."}
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[13rem_minmax(0,1fr)_auto_auto_auto] xl:items-end">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Type</Label>
+              <Select value={movementFilter} onValueChange={setMovementFilter}>
+                <SelectTrigger aria-label="Movement type"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All movements</SelectItem>
+                  {Object.entries(MOVEMENT_META).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Item</Label>
+              <SearchableSelect options={itemOptions} value={movementItem} onChange={setMovementItem}
+                title="Choose an item" placeholder="All items" emptyOptionLabel="All items" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="mv-from" className="text-xs">From</Label>
+              <Input id="mv-from" type="date" value={movementFrom} max={movementTo || undefined} onChange={(e) => setMovementFrom(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="mv-to" className="text-xs">To</Label>
+              <Input id="mv-to" type="date" value={movementTo} min={movementFrom || undefined} onChange={(e) => setMovementTo(e.target.value)} />
+            </div>
+            {movementFiltersOn && (
+              <Button variant="ghost" size="sm" className="justify-self-start"
+                onClick={() => { setMovementFilter("all"); setMovementItem(""); setMovementFrom(""); setMovementTo(""); }}>
+                Clear filters
+              </Button>
+            )}
           </div>
           <ResponsiveTable
             columns={movementColumns}
@@ -736,7 +826,7 @@ export default function Inventory() {
             rowKey={(m) => m.id}
             onRowClick={(m) => m.products?.sku_id && navigate(`/business/inventory/item/${m.products.sku_id}`)}
             mobileSubtitle={(m) => m.note || undefined}
-            emptyState={<EmptyState icon={History} tone="neutral" title="No movements yet" body="Recorded stock will appear here." />}
+            emptyState={<EmptyState icon={History} tone="neutral" title={movementFiltersOn ? "No movements match these filters" : "No movements yet"} body={movementFiltersOn ? undefined : "Recorded stock will appear here."} />}
           />
           <TablePagination page={movementPages.page} pageCount={movementPages.pageCount} total={movementPages.total}
             pageSize={movementPages.pageSize} onPageChange={movementPages.setPage} />
@@ -753,7 +843,11 @@ export default function Inventory() {
         <TabsContent value="analytics" className="space-y-6">
           <InventoryKPICards skus={activeSkus} transactions={transactions} movements30d={inventoryData?.movements30d} />
           <div className="grid gap-6 lg:grid-cols-3">
-            <div className="lg:col-span-2"><UsageAnalytics transactions={transactions} skus={skus} /></div>
+            <div className="lg:col-span-2"><UsageAnalytics
+              // Entries from before an item's unit change or opening count
+              // were in mixed units; they stay out of usage figures.
+              transactions={transactions.filter(t => !beforeUnitChange(t.created_at, unitsBySku.get(t.sku_id)?.resetAt))}
+              skus={skus} /></div>
             <CategoryBreakdown skus={activeSkus} />
           </div>
         </TabsContent>
@@ -767,15 +861,31 @@ export default function Inventory() {
 
       {/* ── Add Item Dialog ── */}
       <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-h-[90svh] max-w-lg overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Add New Item</DialogTitle>
-            <DialogDescription>Create a new inventory item</DialogDescription>
+            <DialogTitle>Add item</DialogTitle>
+            <DialogDescription>Choose the unit the kitchen counts it in. Everything about this item is kept in that unit.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-1.5">
-              <Label htmlFor="name">Item Name</Label>
+              <Label htmlFor="name">Item name</Label>
               <Input id="name" value={newSKU.name} onChange={(e) => setNewSKU({ ...newSKU, name: e.target.value })} placeholder="Enter item name" />
+              {similar.length > 0 && (
+                <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
+                  <p className="font-medium">Already in the list. Use one of these instead of adding it again?</p>
+                  <ul className="mt-1 space-y-0.5">
+                    {similar.map(it => (
+                      <li key={it.id}>
+                        <button type="button" className="text-left underline underline-offset-2"
+                          onClick={() => { setShowAddDialog(false); navigate(`/business/inventory/item/${it.id}`); }}>
+                          {it.name}
+                        </button>
+                        {" "}· {qty(it.stock_quantity)} {it.unit_of_measure}{it.is_archived ? " · archived" : ""}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="category">Category</Label>
@@ -793,39 +903,38 @@ export default function Inventory() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="uom">Stock unit</Label>
+              <select id="uom" className={unitSelectCls} value={normaliseUnit(newSKU.unit_of_measure)}
+                onChange={(e) => {
+                  setNewSKU({ ...newSKU, unit_of_measure: e.target.value });
+                  setNewPacks(p => p.filter(x => normaliseUnit(x.name) !== e.target.value));
+                  setNewPurchaseUnit("");
+                }}>
+                {unitChoices.map(unit => <option key={unit} value={unit}>{unit}</option>)}
+              </select>
+              <p className="text-xs text-muted-foreground">{STOCK_UNIT_RULE}</p>
+            </div>
+            <PackSizesEditor stockUnit={normaliseUnit(newSKU.unit_of_measure)} packs={newPacks} onChange={setNewPacks}
+              purchaseUnit={newPurchaseUnit} onPurchaseUnit={setNewPurchaseUnit} unitChoices={unitChoices} />
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <div className="space-y-1.5">
-                <Label htmlFor="uom">Unit</Label>
-                <Select value={newSKU.unit_of_measure} onValueChange={(v) => setNewSKU({ ...newSKU, unit_of_measure: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {UNITS_OF_MEASURE.map(unit => <SelectItem key={unit} value={unit}>{unit}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="opening">Opening Stock</Label>
-                <Input id="opening" type="number" value={newSKU.stock_quantity}
+                <Label htmlFor="opening">Opening stock ({newSKU.unit_of_measure})</Label>
+                <Input id="opening" type="number" min="0" step="any" value={newSKU.stock_quantity}
                   onChange={(e) => setNewSKU({ ...newSKU, stock_quantity: Number(e.target.value) })} />
               </div>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-1.5">
-                <Label htmlFor="reorder_level">Reorder Level</Label>
-                <Input id="reorder_level" type="number" value={newSKU.reorder_level}
+                <Label htmlFor="reorder_level">Reorder at ({newSKU.unit_of_measure})</Label>
+                <Input id="reorder_level" type="number" min="0" step="any" value={newSKU.reorder_level}
                   onChange={(e) => setNewSKU({ ...newSKU, reorder_level: Number(e.target.value) })} />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="cost_per_unit">Cost per Unit (₦)</Label>
-                <Input id="cost_per_unit" type="number" step="0.01" value={newSKU.cost_per_unit}
+                <Label htmlFor="cost_per_unit">Cost per {newSKU.unit_of_measure} (₦)</Label>
+                <Input id="cost_per_unit" type="number" min="0" step="0.01" value={newSKU.cost_per_unit}
                   onChange={(e) => setNewSKU({ ...newSKU, cost_per_unit: Number(e.target.value) })} />
               </div>
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="notes">Notes (Optional)</Label>
-              <Input id="notes" value={newSKU.notes} onChange={(e) => setNewSKU({ ...newSKU, notes: e.target.value })} placeholder="Additional notes" />
-            </div>
-            <Button onClick={handleAddSKU} className="w-full">Add Item</Button>
+            <Button onClick={handleAddSKU} className="w-full" disabled={savingItem}>Add item</Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -833,17 +942,17 @@ export default function Inventory() {
       {/* ── Edit Item Dialog ── */}
       {editingSKU && (
         <Dialog open={!!editingSKU} onOpenChange={() => setEditingSKU(null)}>
-          <DialogContent className="max-w-md">
+          <DialogContent className="max-h-[90svh] max-w-lg overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>Edit Item</DialogTitle>
-              <DialogDescription>Update item details</DialogDescription>
+              <DialogTitle>Edit item</DialogTitle>
+              <DialogDescription>Quantities and cost are in {editingSKU.unit_of_measure}, this item’s stock unit.</DialogDescription>
             </DialogHeader>
             <div className="space-y-4">
               <div className="space-y-1.5">
-                <Label htmlFor="edit_name">Item Name</Label>
+                <Label htmlFor="edit_name">Item name</Label>
                 <Input id="edit_name" value={editingSKU.name} onChange={(e) => setEditingSKU({ ...editingSKU, name: e.target.value })} />
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div className="space-y-1.5">
                   <Label htmlFor="edit_category">Category</Label>
                   <Select value={editingSKU.category} onValueChange={(v) => setEditingSKU({ ...editingSKU, category: v })}>
@@ -854,40 +963,56 @@ export default function Inventory() {
                   </Select>
                 </div>
                 <div className="space-y-1.5">
-                  <Label htmlFor="edit_uom">Unit</Label>
-                  <Select value={editingSKU.unit_of_measure} onValueChange={(v) => setEditingSKU({ ...editingSKU, unit_of_measure: v })}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {UNITS_OF_MEASURE.map(unit => <SelectItem key={unit} value={unit}>{unit}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
+                  <Label htmlFor="edit_uom">Stock unit</Label>
+                  <div className="flex gap-2">
+                    <Input id="edit_uom" value={editingSKU.unit_of_measure} disabled className="min-w-0" />
+                    <Button type="button" variant="outline" className="shrink-0"
+                      onClick={() => { setChangeUnitFor(editingSKU); setEditingSKU(null); }}>
+                      Change
+                    </Button>
+                  </div>
                 </div>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <PackSizesEditor stockUnit={normaliseUnit(editingSKU.unit_of_measure)} packs={editPacks} onChange={setEditPacks}
+                purchaseUnit={editPurchaseUnit} onPurchaseUnit={setEditPurchaseUnit} unitChoices={unitChoices} />
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <div className="space-y-1.5">
-                  <Label htmlFor="edit_stock">Current Stock</Label>
-                  <Input id="edit_stock" type="number" value={editingSKU.stock_quantity}
+                  <Label htmlFor="edit_stock">On hand ({editingSKU.unit_of_measure})</Label>
+                  <Input id="edit_stock" type="number" step="any" value={editingSKU.stock_quantity}
                     onChange={(e) => setEditingSKU({ ...editingSKU, stock_quantity: Number(e.target.value) })} />
                 </div>
                 <div className="space-y-1.5">
-                  <Label htmlFor="edit_reorder">Reorder Level</Label>
-                  <Input id="edit_reorder" type="number" value={editingSKU.reorder_level}
+                  <Label htmlFor="edit_reorder">Reorder at ({editingSKU.unit_of_measure})</Label>
+                  <Input id="edit_reorder" type="number" min="0" step="any" value={editingSKU.reorder_level}
                     onChange={(e) => setEditingSKU({ ...editingSKU, reorder_level: Number(e.target.value) })} />
                 </div>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="edit_cost">Cost per Unit (₦)</Label>
-                <Input id="edit_cost" type="number" step="0.01" value={editingSKU.cost_per_unit}
-                  onChange={(e) => setEditingSKU({ ...editingSKU, cost_per_unit: Number(e.target.value) })} />
+                <div className="space-y-1.5">
+                  <Label htmlFor="edit_cost">Cost per {editingSKU.unit_of_measure} (₦)</Label>
+                  <Input id="edit_cost" type="number" min="0" step="0.01" value={editingSKU.cost_per_unit}
+                    onChange={(e) => setEditingSKU({ ...editingSKU, cost_per_unit: Number(e.target.value) })} />
+                </div>
               </div>
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setEditingSKU(null)}>Cancel</Button>
-              <Button onClick={handleUpdateSKU}>Update Item</Button>
+              <Button onClick={handleUpdateSKU} disabled={savingItem}>Update item</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
       )}
+
+      <ChangeStockUnitDialog
+        open={!!changeUnitFor} onOpenChange={(o) => { if (!o) setChangeUnitFor(null); }}
+        item={changeUnitFor ? {
+          id: changeUnitFor.id, name: changeUnitFor.name, unit: normaliseUnit(changeUnitFor.unit_of_measure),
+          onHand: Number(changeUnitFor.stock_quantity), cost: Number(changeUnitFor.cost_per_unit || 0),
+          reorder: Number(changeUnitFor.reorder_level || 0),
+        } : null}
+        unitChoices={unitChoices} onDone={fetchData}
+      />
+
+      <UnitListDialog open={showUnits} onOpenChange={setShowUnits} custom={invSettings.custom_units} canEdit={isAdmin}
+        onSave={(units) => updateInvSettings.mutateAsync({ custom_units: units }).then(() => { toast({ title: "Units saved" }); })} />
 
       {/* ── Inventory Setup Dialog ── */}
       <Dialog open={showSetup} onOpenChange={setShowSetup}>
@@ -942,54 +1067,6 @@ export default function Inventory() {
                 </ul>
               </div>
             )}
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* ── Unit Conversions Dialog ── */}
-      <Dialog open={showConversionDialog} onOpenChange={setShowConversionDialog}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Unit Conversions</DialogTitle>
-            <DialogDescription>Set up conversion rates between different units</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-6">
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 items-end">
-              <div className="space-y-1.5">
-                <Label>From Unit</Label>
-                <Select value={newConversion.from_unit} onValueChange={(v) => setNewConversion({ ...newConversion, from_unit: v })}>
-                  <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
-                  <SelectContent>{UNITS_OF_MEASURE.map(unit => <SelectItem key={unit} value={unit}>{unit}</SelectItem>)}</SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <Label>To Unit</Label>
-                <Select value={newConversion.to_unit} onValueChange={(v) => setNewConversion({ ...newConversion, to_unit: v })}>
-                  <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
-                  <SelectContent>{UNITS_OF_MEASURE.map(unit => <SelectItem key={unit} value={unit}>{unit}</SelectItem>)}</SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <Label>Factor</Label>
-                <Input type="number" step="0.01" value={newConversion.conversion_factor}
-                  onChange={(e) => setNewConversion({ ...newConversion, conversion_factor: Number(e.target.value) })} />
-              </div>
-              <Button onClick={handleAddConversion}>Add</Button>
-            </div>
-            <div className="space-y-2">
-              <h4 className="font-medium text-sm">Existing Conversions</h4>
-              {unitConversions.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No conversions set up yet</p>
-              ) : (
-                <div className="space-y-2">
-                  {unitConversions.map(conversion => (
-                    <div key={conversion.id} className="flex items-center justify-between p-2 border rounded">
-                      <span className="text-sm">1 {conversion.from_unit} = {conversion.conversion_factor} {conversion.to_unit}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
           </div>
         </DialogContent>
       </Dialog>

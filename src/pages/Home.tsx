@@ -278,6 +278,24 @@ function LeadHome() {
     enabled: canSeeStock,
   });
 
+  // Stock figures are only right while usage keeps being recorded. Days since
+  // the last usage entry, stock count or production run.
+  const { data: daysSinceUsage = null } = useQuery<number | null>({
+    queryKey: ['home-last-usage'],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any).from('inventory_movements')
+        .select('occurred_on')
+        .in('movement_type', ['usage', 'stock_take', 'production_issue'])
+        .order('occurred_on', { ascending: false }).limit(1);
+      if (error) return null;
+      const last = data?.[0]?.occurred_on;
+      if (!last) return null;
+      return Math.floor((Date.now() - new Date(`${last}T00:00:00`).getTime()) / 86_400_000);
+    },
+    enabled: canSeeStock,
+    staleTime: 5 * 60_000,
+  });
+
   // HR marks the week; show where this week stands for them.
   const weekStart = weekStartOf(new Date());
   const { data: thisWeek } = useQuery({
@@ -330,6 +348,13 @@ function LeadHome() {
         title={lowStock.length ? `${lowStock.length} item${lowStock.length === 1 ? '' : 's'} below reorder level` : 'Stock levels are healthy'}
         sub={lowStock.length ? lowStock.slice(0, 3).map((s: any) => s.name).join(', ') : 'Nothing below its reorder level'} />,
     );
+    if (daysSinceUsage != null && daysSinceUsage >= 7) {
+      cards.push(
+        <AttentionCard key="usage" to="/business/inventory" icon={Package} tone="red" hot
+          title={`No stock usage recorded for ${daysSinceUsage} days`}
+          sub="Do a stock count, or record what was used, so stock and cost stay right" />,
+      );
+    }
   } else if (isManager && stockWaiting) {
     cards.push(
       <AttentionCard key="stockreq" to="/inbox?kind=inventory" icon={Package} tone="red"

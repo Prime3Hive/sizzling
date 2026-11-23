@@ -17,6 +17,8 @@ import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { PackageCheck, AlertCircle, TrendingUp, TrendingDown } from 'lucide-react';
 import type { LPO, LPOItem } from './LPOSheet';
+import { useItemUnits } from '@/hooks/useItemUnits';
+import { factorOf, fmtQty, normaliseUnit } from '@/lib/units';
 
 interface ReceiveGoodsDialogProps {
   lpo: LPO | null;
@@ -36,6 +38,8 @@ interface ReceiveLine {
   unit_price: number;       // actual received price (editable)
   qty_receiving: number;
   max_receivable: number;
+  /** Stock units in one ordered unit for THIS delivery; '' = the item's pack size. */
+  factor: string;
 }
 
 export default function ReceiveGoodsDialog({ lpo, open, onOpenChange, onSuccess }: ReceiveGoodsDialogProps) {
@@ -47,6 +51,17 @@ export default function ReceiveGoodsDialog({ lpo, open, onOpenChange, onSuccess 
   const [notes, setNotes] = useState('');
   const [lines, setLines] = useState<ReceiveLine[]>([]);
   const [saving, setSaving] = useState(false);
+  const { bySku: unitsBySku, ready: unitsReady } = useItemUnits();
+
+  // The order line is in the purchase unit; stock is kept in the stock unit.
+  const conv = (l: ReceiveLine) => {
+    const u = l.sku_id ? unitsBySku.get(l.sku_id) : undefined;
+    const unit = normaliseUnit(l.unit_of_measure);
+    const itemFactor = factorOf(u, unit) ?? 1;
+    const typed = parseFloat(l.factor);
+    const factor = typed > 0 ? typed : itemFactor;
+    return { u, unit, itemFactor, factor, converts: !!u && unit !== u.stockUnit, stockUnit: u?.stockUnit ?? unit };
+  };
 
   useEffect(() => {
     if (!lpo || !open) return;
@@ -68,6 +83,7 @@ export default function ReceiveGoodsDialog({ lpo, open, onOpenChange, onSuccess 
           unit_price: item.unit_price,
           qty_receiving: maxReceivable,
           max_receivable: maxReceivable,
+          factor: '',
         };
       }),
     );
@@ -114,14 +130,19 @@ export default function ReceiveGoodsDialog({ lpo, open, onOpenChange, onSuccess 
       if (rErr) throw rErr;
 
       // 2. Create GRN line items (using actual received prices)
-      const receiptItems = activeLines.map(l => ({
-        receipt_id: receipt.id,
-        lpo_item_id: l.lpo_item_id,
-        item_name: l.item_name,
-        quantity_received: l.qty_receiving,
-        unit_price: l.unit_price,
-        total_price: l.qty_receiving * l.unit_price,
-      }));
+      const receiptItems = activeLines.map(l => {
+        const c = conv(l);
+        return {
+          receipt_id: receipt.id,
+          lpo_item_id: l.lpo_item_id,
+          item_name: l.item_name,
+          quantity_received: l.qty_receiving,
+          unit_price: l.unit_price,
+          total_price: l.qty_receiving * l.unit_price,
+          // Only when this delivery's bag was a different weight from usual.
+          ...(unitsReady && c.converts && c.factor !== c.itemFactor ? { conversion_factor: c.factor } : {}),
+        };
+      });
       const { error: riErr } = await (supabase as any).from('lpo_receipt_items').insert(receiptItems);
       if (riErr) throw riErr;
 
@@ -166,11 +187,14 @@ export default function ReceiveGoodsDialog({ lpo, open, onOpenChange, onSuccess 
       for (const line of activeLines) {
         if (!line.sku_id) continue;
 
+        // In stock units, like every other row in this table.
+        const c = conv(line);
+        const f = unitsReady ? c.factor : 1;
         await supabase.from('transactions').insert({
           sku_id:           line.sku_id,
           transaction_type: 'PURCHASE',
-          quantity:         line.qty_receiving,
-          unit_price:       line.unit_price,
+          quantity:         line.qty_receiving * f,
+          unit_price:       line.unit_price / f,
           total_amount:     line.qty_receiving * line.unit_price,
           notes:            `GRN ${receiptNumber} — ${lpo.lpo_number}`,
           user_id:          user?.id,
@@ -268,7 +292,7 @@ export default function ReceiveGoodsDialog({ lpo, open, onOpenChange, onSuccess 
                     Items to Receive
                   </h3>
                   <p className="text-xs text-muted-foreground">
-                    Actual unit prices may differ from the LPO — edit as needed
+Quantities and prices are in the unit ordered. Stock is added in the item’s stock unit.
                   </p>
                 </div>
 
@@ -296,7 +320,29 @@ export default function ReceiveGoodsDialog({ lpo, open, onOpenChange, onSuccess 
                         {/* Item name */}
                         <div>
                           <p className="font-medium leading-tight">{line.item_name}</p>
-                          <p className="text-xs text-muted-foreground">{line.unit_of_measure}</p>
+                          {(() => {
+                            const c = conv(line);
+                            if (!c.converts || !unitsReady) return <p className="text-xs text-muted-foreground">{line.unit_of_measure}</p>;
+                            return (
+                              <div className="mt-0.5 flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
+                                <span>1 {c.unit} =</span>
+                                <Input
+                                  type="number" min="0" step="any" aria-label={`${c.stockUnit} in one ${c.unit} for this delivery`}
+                                  className="h-6 w-16 px-1 text-xs"
+                                  placeholder={String(c.itemFactor)}
+                                  value={line.factor}
+                                  onChange={e => patchLine(line.lpo_item_id, { factor: e.target.value })}
+                                  disabled={disabled}
+                                />
+                                <span>{c.stockUnit}</span>
+                                {line.qty_receiving > 0 && (
+                                  <span className="font-medium text-foreground">
+                                    · {fmtQty(line.qty_receiving)} {c.unit} = {fmtQty(line.qty_receiving * c.factor)} {c.stockUnit}
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </div>
 
                         {/* Ordered */}

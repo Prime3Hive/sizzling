@@ -18,6 +18,7 @@ import ExpenseSummary from '@/components/expenses/ExpenseSummary';
 import { useExpenseCategories } from '@/hooks/useExpenseReference';
 import { formatMinor, sumMinor } from '@/lib/money';
 import { FilterChips, PageHeader, StatTile } from '@/components/shell/ui';
+import ReceiveExpenseStock, { isStockCategory } from '@/components/expenses/ReceiveExpenseStock';
 
 type StatusFilter = 'all' | 'pending' | 'approved' | 'rejected';
 type ReceiptFilter = 'all' | 'missing' | 'unexplained';
@@ -28,13 +29,16 @@ const db = supabase as any;
 
 const Expenses = () => {
   const { user } = useAuth();
-  const { isAdmin } = useRoles();
+  const { isAdmin, isManager, hasPermission } = useRoles();
+  // Same rule the database applies to recording stock.
+  const canReceiveStock = hasPermission('inventory', 'create') || isManager;
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
   const [editingExpense, setEditingExpense] = useState<EditingExpense | null>(null);
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [receiving, setReceiving] = useState<ExpenseRow | null>(null);
 
   const [filterStartDate, setFilterStartDate] = useState<Date | undefined>();
   const [filterEndDate, setFilterEndDate] = useState<Date | undefined>();
@@ -106,6 +110,18 @@ const Expenses = () => {
   const noReceipt = (e: ExpenseRow) => !e.receipt_path && minorOf(e) >= RECEIPT_THRESHOLD_MINOR;
   const noReceiptN = useMemo(() => expenses.filter(noReceipt).length, [expenses]);
   const unexplainedN = useMemo(() => expenses.filter((e) => noReceipt(e) && !e.no_receipt_reason).length, [expenses]);
+
+  // Which expenses already have a stock-in linked to them.
+  const { data: stockReceived = new Set<string>() } = useQuery<Set<string>>({
+    queryKey: ['expense-stock-received'],
+    enabled: canReceiveStock,
+    queryFn: async () => {
+      const { data, error } = await db.from('inventory_movements')
+        .select('reference_id').eq('reference_type', 'expense').limit(10000);
+      if (error) return new Set<string>();
+      return new Set<string>((data ?? []).map((r: any) => r.reference_id).filter(Boolean));
+    },
+  });
 
   const filteredExpenses = useMemo(
     () =>
@@ -280,8 +296,13 @@ const Expenses = () => {
         onEdit={(e) => { setEditingExpense(e as EditingExpense); setIsEditOpen(true); }}
         onDelete={(id) => setDeleteId(id)}
         onSetStatus={isAdmin ? (id, status) => setStatusMutation.mutate({ id, status }) : undefined}
+        onReceiveStock={canReceiveStock ? (e) => setReceiving(e) : undefined}
+        isStockPurchase={(e) => isStockCategory(e.category) && e.source !== 'grn' && (e.status ?? 'approved') !== 'rejected'}
+        stockReceived={stockReceived}
         nameOf={nameOf}
       />
+
+      <ReceiveExpenseStock expense={receiving} onClose={() => setReceiving(null)} />
 
       {editingExpense && (
         <ExpenseFormDialog

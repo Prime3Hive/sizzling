@@ -6,14 +6,19 @@ export interface StockLine {
   /** One of the two identifies the item; the other is resolved server-side. */
   sku_id?: string;
   product_id?: string;
-  /** + in / - out */
+  /** + in / - out, in `unit` (the item's stock unit when `unit` is left out). */
   quantity_change: number;
+  /** The unit the quantity was typed in: the stock unit or one of the item's pack sizes. */
+  unit?: string;
+  /** Stock units in one `unit` for this entry only (a bag that weighed 9.5 kg). */
+  factor?: number;
   /**
-   * Unit cost of a stock-in (purchase price, opening-stock cost). It values the
-   * movement in the ledger and feeds the item's moving-average cost. Leave it
-   * out for stock-outs: they are valued at the current average.
+   * Price of a stock-in per `unit` (purchase price, opening-stock cost). It
+   * feeds the item's average cost per stock unit. Leave it out for stock-outs.
    */
   unit_price?: number;
+  /** What was paid for the whole line. Wins over unit_price. */
+  total_price?: number;
   /**
    * Stock-outs of a lot-tracked item: take from this lot first. Without it,
    * lots are drawn earliest expiry first.
@@ -34,7 +39,7 @@ export async function recordStockMovements(opts: {
   occurredOn?: string;
   transactionType?: 'PURCHASE' | 'SALE' | 'ADJUSTMENT';
   /** 'opening' posts Dr Inventory / Cr Owner's Equity instead of a COGS reclass. */
-  referenceType?: 'manual' | 'opening' | 'request' | 'stock_take';
+  referenceType?: 'manual' | 'opening' | 'request' | 'stock_take' | 'expense';
   referenceId?: string;
 }): Promise<number> {
   const { data, error } = await (supabase as any).rpc('record_stock_movements', {

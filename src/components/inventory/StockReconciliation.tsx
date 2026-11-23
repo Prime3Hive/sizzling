@@ -14,6 +14,8 @@ import { toast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import { getCategoryColor, getCategoryLabel } from "@/lib/inventoryConstants";
 import { recordStockMovements } from "@/lib/stockMovements";
+import { useRoles } from "@/hooks/useRoles";
+import { fmtQty } from "@/lib/units";
 
 interface SKU {
   id: string;
@@ -22,6 +24,7 @@ interface SKU {
   unit_of_measure: string;
   stock_quantity: number;
   cost_per_unit: number;
+  is_archived?: boolean;
 }
 
 interface StockTake {
@@ -50,8 +53,15 @@ interface StockReconciliationProps {
   onComplete: () => void;
 }
 
-export function StockReconciliation({ skus, stockTakes, onComplete }: StockReconciliationProps) {
+export function StockReconciliation({ skus: allSkus, stockTakes, onComplete }: StockReconciliationProps) {
   const { user } = useAuth();
+  const { isAdmin } = useRoles();
+  // Archived items are not on the shelf, so they are not on the count sheet.
+  const skus = allSkus.filter(s => !s.is_archived);
+  // What a shortfall is recorded as. A weekly count IS the usage record: what
+  // is missing since the last count was used. An opening count is a fresh
+  // start after the units were set up.
+  const [kind, setKind] = useState<'usage' | 'correction' | 'opening'>('usage');
   const [showReconciliationDialog, setShowReconciliationDialog] = useState(false);
   const [stockCounts, setStockCounts] = useState<Record<string, number>>({});
   const [notes, setNotes] = useState('');
@@ -64,6 +74,7 @@ export function StockReconciliation({ skus, stockTakes, onComplete }: StockRecon
     });
     setStockCounts(counts);
     setNotes('');
+    setKind('usage');
   };
 
   const handleStartReconciliation = () => {
@@ -144,24 +155,48 @@ export function StockReconciliation({ skus, stockTakes, onComplete }: StockRecon
         .map(sku => ({ sku, diff: (stockCounts[sku.id] ?? sku.stock_quantity) - sku.stock_quantity }))
         .filter(v => v.diff !== 0);
       if (variances.length > 0) {
+        const common = {
+          referenceType: 'stock_take' as const,
+          referenceId: stockTake.id,
+          occurredOn: stockTake.take_date,
+        };
+        const label = kind === 'opening' ? 'Opening count' : kind === 'usage' ? 'Weekly count' : 'Stock take';
+        const note = `${label} ${stockTake.take_date}${notes ? ` — ${notes}` : ''}`;
+        // Weekly count: what is missing was used. Everything else is a count
+        // difference (found more than shown, or a plain correction).
+        const used = kind === 'usage' ? variances.filter(v => v.diff < 0) : [];
+        const counted = variances.filter(v => !used.includes(v));
         try {
-          await recordStockMovements({
-            lines: variances.map(v => ({ sku_id: v.sku.id, quantity_change: v.diff })),
-            type: 'stock_take',
-            referenceType: 'stock_take',
-            referenceId: stockTake.id,
-            note: `Stock take ${stockTake.take_date}${notes ? ` — ${notes}` : ''}`,
-            occurredOn: stockTake.take_date,
-            transactionType: 'ADJUSTMENT',
-          });
+          if (used.length) {
+            await recordStockMovements({
+              ...common, type: 'usage', transactionType: 'SALE',
+              note: `${note} (used since the last count)`,
+              lines: used.map(v => ({ sku_id: v.sku.id, quantity_change: v.diff })),
+            });
+          }
+          if (counted.length) {
+            await recordStockMovements({
+              ...common, type: 'stock_take', transactionType: 'ADJUSTMENT', note,
+              lines: counted.map(v => ({ sku_id: v.sku.id, quantity_change: v.diff })),
+            });
+          }
         } catch (e) {
-          // Nothing was adjusted; don't leave a "completed" count behind.
-          await supabase.from('stock_takes').delete().eq('id', stockTake.id);
+          // Nothing (or only part) was adjusted; don't leave a "completed" count behind.
+          if (!used.length || !counted.length) await supabase.from('stock_takes').delete().eq('id', stockTake.id);
           throw e;
         }
       }
 
-      toast({ title: 'Stock reconciliation completed successfully' });
+      // An opening count starts the item's history afresh: movements before it
+      // are marked "before unit change" and left out of usage figures.
+      if (kind === 'opening') {
+        const { error: markErr } = await (supabase as any).rpc('fn_mark_opening_count', {
+          p_note: notes?.trim() || `Opening count ${stockTake.take_date}`,
+        });
+        if (markErr) throw new Error(`The count was saved, but it could not be marked as the opening count: ${markErr.message}`);
+      }
+
+      toast({ title: kind === 'opening' ? 'Opening count posted' : kind === 'usage' ? 'Count saved and usage recorded' : 'Stock take completed' });
       setShowReconciliationDialog(false);
       onComplete();
     } catch (error) {
@@ -179,12 +214,12 @@ export function StockReconciliation({ skus, stockTakes, onComplete }: StockRecon
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
           <div>
-            <CardTitle className="text-base">Stock Reconciliation</CardTitle>
-            <CardDescription>Verify physical stock against system records</CardDescription>
+            <CardTitle className="text-base">Stock count</CardTitle>
+            <CardDescription>Count what is on the shelf once a week. What is missing since the last count is recorded as the week’s usage.</CardDescription>
           </div>
           <Button onClick={handleStartReconciliation}>
             <ClipboardCheck className="h-4 w-4 mr-2" />
-            New Stock Take
+            Start a count
           </Button>
         </CardHeader>
         <CardContent>
@@ -232,11 +267,30 @@ export function StockReconciliation({ skus, stockTakes, onComplete }: StockRecon
               Stock Take - {format(new Date(), 'MMM dd, yyyy')}
             </DialogTitle>
             <DialogDescription>
-              Count physical inventory and record any variances
+              Enter what is on the shelf, in each item’s stock unit. Leave a line alone if it matches.
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">
+            <div role="radiogroup" aria-label="What this count is" className="grid gap-2 sm:grid-cols-3">
+              {([
+                ['usage', 'Weekly count', 'What is missing is recorded as usage'],
+                ['correction', 'Correction only', 'Differences are recorded as count corrections'],
+                ...(isAdmin ? [['opening', 'Opening count', 'A fresh start after units were set up']] : []),
+              ] as [typeof kind, string, string][]).map(([v, label, hint]) => (
+                <button key={v} type="button" role="radio" aria-checked={kind === v} onClick={() => setKind(v)}
+                  className={`rounded-xl border p-3 text-left ${kind === v ? 'border-primary bg-primary/5' : 'text-muted-foreground'}`}>
+                  <span className="block text-sm font-semibold">{label}</span>
+                  <span className="block text-xs">{hint}</span>
+                </button>
+              ))}
+            </div>
+            {kind === 'opening' && (
+              <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
+                Do this once, after every item has its correct stock unit and pack sizes. Earlier movements stay on record,
+                marked “before unit change”, and are left out of balances and usage figures from now on.
+              </p>
+            )}
             {/* Summary */}
             <div className="grid grid-cols-3 gap-4 p-4 bg-muted/50 rounded-lg">
               <div className="text-center">
@@ -284,24 +338,29 @@ export function StockReconciliation({ skus, stockTakes, onComplete }: StockRecon
                             {getCategoryLabel(sku.category)}
                           </Badge>
                         </TableCell>
-                        <TableCell className="text-right">
-                          {sku.stock_quantity} {sku.unit_of_measure}
+                        <TableCell className="text-right whitespace-nowrap">
+                          {fmtQty(Number(sku.stock_quantity))} {sku.unit_of_measure}
                         </TableCell>
                         <TableCell className="text-right">
-                          <Input
-                            type="number"
-                            step="0.01"
-                            value={stockCounts[sku.id] ?? sku.stock_quantity}
-                            onChange={(e) => updateCount(sku.id, Number(e.target.value))}
-                            className="w-24 text-right"
-                          />
+                          <div className="flex items-center justify-end gap-1.5">
+                            <Input
+                              type="number"
+                              min="0"
+                              step="any"
+                              aria-label={`Counted ${sku.name} in ${sku.unit_of_measure}`}
+                              value={stockCounts[sku.id] ?? sku.stock_quantity}
+                              onChange={(e) => updateCount(sku.id, Math.max(0, Number(e.target.value)))}
+                              className="w-24 text-right"
+                            />
+                            <span className="w-12 text-left text-xs text-muted-foreground">{sku.unit_of_measure}</span>
+                          </div>
                         </TableCell>
                         <TableCell className="text-right">
                           {variance !== 0 && (
                             <div className="flex items-center justify-end gap-1">
                               <AlertTriangle className="h-3 w-3 text-orange-500" />
                               <span className={variance > 0 ? 'text-green-600' : 'text-destructive'}>
-                                {variance > 0 ? '+' : ''}{variance}
+                                {variance > 0 ? '+' : ''}{fmtQty(variance)} {sku.unit_of_measure}
                               </span>
                             </div>
                           )}
@@ -330,7 +389,7 @@ export function StockReconciliation({ skus, stockTakes, onComplete }: StockRecon
             </Button>
             <Button onClick={handleSaveReconciliation} disabled={saving}>
               <Save className="h-4 w-4 mr-2" />
-              {saving ? 'Saving...' : 'Complete Stock Take'}
+              {saving ? 'Saving...' : kind === 'opening' ? 'Post opening count' : 'Save count'}
             </Button>
           </DialogFooter>
         </DialogContent>

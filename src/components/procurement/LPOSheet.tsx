@@ -33,6 +33,11 @@ const LPO_PAYMENT_METHODS = ['Credit', 'Transfer', 'Cash', 'POS', 'Card'] as con
 import { generateLPOPDF, getStoredCompany, saveCompanyDetails, CompanyDetails } from '@/lib/lpo-pdf';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+import { useItemUnits, type ItemUnitInfo } from '@/hooks/useItemUnits';
+import { factorOf, fmtQty, normaliseUnit } from '@/lib/units';
+
+const NO_UNITS = new Map<string, ItemUnitInfo>();
+
 export interface LPOItem {
   id: string;
   lpo_id: string;
@@ -369,6 +374,10 @@ export default function LPOSheet({ mode, lpo, templateLPO, sourceRequest, open, 
   const { data: payees = [] } = usePayees();
   const supplierNames = payees.filter(p => p.kind === 'supplier').map(p => p.name);
   const [lines, setLines] = useState<LineDraft[]>([newLine()]);
+  // Pack sizes are offered only once goods received notes convert them
+  // (migration 20261123200000); before that an order stays in the stock unit.
+  const { bySku: allUnitsBySku, ready: unitsReady } = useItemUnits();
+  const unitsBySku = unitsReady ? allUnitsBySku : NO_UNITS;
   const [saving, setSaving] = useState(false);
   const [showCreateSKU, setShowCreateSKU] = useState(false);
   const [showCompanyDlg, setShowCompanyDlg] = useState(false);
@@ -815,9 +824,13 @@ export default function LPOSheet({ mode, lpo, templateLPO, sourceRequest, open, 
                               <ProductCombobox
                                 value={line.item_name}
                                 products={products}
-                                onSelect={(name, productId, skuId, uom, price) =>
-                                  updateLine(line._key, { item_name: name, product_id: productId, sku_id: skuId, unit_of_measure: uom, unit_price: price, total_price: line.quantity * price })
-                                }
+                                onSelect={(name, productId, skuId, uom, price) => {
+                                  // Order in the unit it is bought in, priced per that unit.
+                                  const u = skuId ? unitsBySku.get(skuId) : undefined;
+                                  const unit = u?.purchaseUnit ?? uom;
+                                  const perUnit = Math.round(price * (factorOf(u, unit) ?? 1) * 100) / 100;
+                                  updateLine(line._key, { item_name: name, product_id: productId, sku_id: skuId, unit_of_measure: unit, unit_price: perUnit, total_price: line.quantity * perUnit });
+                                }}
                                 onCreateNew={() => setShowCreateSKU(true)}
                               />
                             ) : (
@@ -843,17 +856,44 @@ export default function LPOSheet({ mode, lpo, templateLPO, sourceRequest, open, 
                             />
                           </div>
                           <div>
-                            <Label className="text-xs">UOM</Label>
-                            <Input
-                              className="mt-0.5 h-8 text-sm"
-                              value={line.unit_of_measure}
-                              onChange={e => updateLine(line._key, { unit_of_measure: e.target.value })}
-                              placeholder="kg, unit…"
-                              // A stocked item is ordered in its own unit; the
-                              // database refuses any other (unless a pack size exists).
-                              disabled={!isEditable || !!line.product_id}
-                              title={line.product_id ? "Ordered in the item's stock unit" : undefined}
-                            />
+                            <Label className="text-xs">Unit</Label>
+                            {line.sku_id && unitsBySku.get(line.sku_id) ? (() => {
+                              // A stocked item is ordered in its stock unit or one
+                              // of its pack sizes; the database refuses any other.
+                              const u = unitsBySku.get(line.sku_id!)!;
+                              const current = normaliseUnit(line.unit_of_measure);
+                              const f = factorOf(u, current);
+                              return (
+                                <>
+                                  <select
+                                    aria-label="Unit"
+                                    className="mt-0.5 h-8 w-full rounded-md border border-input bg-background px-2 text-sm disabled:opacity-60"
+                                    value={current}
+                                    disabled={!isEditable}
+                                    onChange={e => {
+                                      // Keep the same price per stock unit when the unit changes.
+                                      const nf = factorOf(u, e.target.value) ?? 1;
+                                      const price = Math.round((line.unit_price / (f ?? 1)) * nf * 100) / 100;
+                                      updateLine(line._key, { unit_of_measure: e.target.value, unit_price: price, total_price: line.quantity * price });
+                                    }}
+                                  >
+                                    {f == null && <option value={current}>{current}</option>}
+                                    {u.units.map(x => <option key={x.name} value={x.name}>{x.name}</option>)}
+                                  </select>
+                                  {f != null && f !== 1 && line.quantity > 0 && (
+                                    <p className="mt-0.5 text-[11px] text-muted-foreground">= {fmtQty(line.quantity * f)} {u.stockUnit}</p>
+                                  )}
+                                </>
+                              );
+                            })() : (
+                              <Input
+                                className="mt-0.5 h-8 text-sm"
+                                value={line.unit_of_measure}
+                                onChange={e => updateLine(line._key, { unit_of_measure: e.target.value })}
+                                placeholder="kg, bag…"
+                                disabled={!isEditable}
+                              />
+                            )}
                           </div>
                           <div>
                             <Label className="text-xs">Unit Price (₦)</Label>

@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { format, isToday, isYesterday, parseISO } from 'date-fns';
 import {
   ArrowDown, ArrowUp, ArrowUpDown, Check, Download, Eye, Paperclip,
-  Pencil, Plus, Trash2, TriangleAlert, X,
+  PackagePlus, PackageCheck, Pencil, Plus, Trash2, TriangleAlert, X,
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -47,6 +47,8 @@ export interface ExpenseRow {
   submitted_by?: string | null;
   budgets?: { title: string } | null;
   payees?: { name: string } | null;
+  /** 'grn' expenses were created by a goods received note, which stocked the goods. */
+  source?: string | null;
 }
 
 type SortKey =
@@ -62,6 +64,12 @@ interface Props {
   onEdit?: (expense: ExpenseRow) => void;
   onDelete?: (id: string) => void;
   onSetStatus?: (id: string, status: 'approved' | 'rejected') => void;
+  /** Offered on purchases of stock items that have not reached inventory yet. */
+  onReceiveStock?: (expense: ExpenseRow) => void;
+  /** Whether this expense is a purchase of something kept in stock. */
+  isStockPurchase?: (expense: ExpenseRow) => boolean;
+  /** Ids of expenses already received into stock. */
+  stockReceived?: Set<string>;
   /** user_id → display name, for the approver column. */
   nameOf?: (id: string | null | undefined) => string;
 }
@@ -114,7 +122,7 @@ function TruncatedText({ text, max, className }: { text: string; max: number; cl
 
 export default function ExpenseTable({
   expenses, totalCount, hasActiveFilters, onClearFilters, onAddExpense,
-  onEdit, onDelete, onSetStatus, nameOf,
+  onEdit, onDelete, onSetStatus, onReceiveStock, isStockPurchase, stockReceived, nameOf,
 }: Props) {
   const { toast } = useToast();
   const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'date', dir: 'desc' });
@@ -365,6 +373,15 @@ export default function ExpenseTable({
                   </TableCell>
                   <TableCell>
                     <div className="flex gap-1 justify-center">
+                      {onReceiveStock && isStockPurchase?.(e) && (stockReceived?.has(e.id) ? (
+                        <span className="inline-flex h-9 w-9 items-center justify-center text-emerald-600" title="Received into stock">
+                          <PackageCheck className="h-4 w-4" aria-label="Received into stock" />
+                        </span>
+                      ) : (
+                        <Button variant="ghost" className="h-9 w-9 p-0" aria-label="Receive into stock" title="Receive into stock" onClick={() => onReceiveStock(e)}>
+                          <PackagePlus className="h-4 w-4" aria-hidden />
+                        </Button>
+                      ))}
                       {onEdit && (
                         <Button variant="ghost" className="h-9 w-9 p-0" aria-label="Edit expense" onClick={() => onEdit(e)}>
                           <Pencil className="h-3.5 w-3.5" aria-hidden />
@@ -434,7 +451,7 @@ export default function ExpenseTable({
                         ) : null}
                       </div>
 
-                      {(onEdit || onDelete || (onSetStatus && st === 'pending')) && (
+                      {(onEdit || onDelete || (onSetStatus && st === 'pending') || (onReceiveStock && isStockPurchase?.(e) && !stockReceived?.has(e.id))) && (
                         <div className="flex gap-2">
                           {onSetStatus && st === 'pending' && (
                             <>
@@ -445,6 +462,11 @@ export default function ExpenseTable({
                                 <Check className="h-4 w-4" aria-hidden />Approve
                               </Button>
                             </>
+                          )}
+                          {onReceiveStock && isStockPurchase?.(e) && !stockReceived?.has(e.id) && (
+                            <Button variant="outline" className="h-11 flex-1" onClick={() => onReceiveStock(e)}>
+                              <PackagePlus className="h-4 w-4" aria-hidden />Receive into stock
+                            </Button>
                           )}
                           {onEdit && (
                             <Button variant="ghost" className="h-11 w-11 p-0" aria-label="Edit expense" onClick={() => onEdit(e)}>
