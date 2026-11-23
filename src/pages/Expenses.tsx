@@ -10,6 +10,8 @@ import { useRoles } from '@/hooks/useRoles';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import ExpenseFormDialog, { type EditingExpense } from '@/components/expenses/ExpenseFormDialog';
 import BulkExpenseDialog from '@/components/expenses/BulkExpenseDialog';
+import ExpenseRulesDialog from '@/components/expenses/ExpenseRulesDialog';
+import { RECEIPT_THRESHOLD_MINOR } from '@/lib/expenseConfig';
 import ExpenseFilters from '@/components/expenses/ExpenseFilters';
 import ExpenseTable, { type ExpenseRow } from '@/components/expenses/ExpenseTable';
 import ExpenseSummary from '@/components/expenses/ExpenseSummary';
@@ -18,6 +20,7 @@ import { formatMinor, sumMinor } from '@/lib/money';
 import { FilterChips, PageHeader, StatTile } from '@/components/shell/ui';
 
 type StatusFilter = 'all' | 'pending' | 'approved' | 'rejected';
+type ReceiptFilter = 'all' | 'missing' | 'unexplained';
 const minorOf = (e: ExpenseRow): bigint =>
   BigInt(e.amount_minor ?? Math.round((Number(e.amount) || 0) * 100));
 
@@ -38,6 +41,7 @@ const Expenses = () => {
   const [filterCategory, setFilterCategory] = useState('all');
   const [filterBudget, setFilterBudget] = useState('all');
   const [status, setStatus] = useState<StatusFilter>('all');
+  const [receipts, setReceipts] = useState<ReceiptFilter>('all');
 
   // "New expense" from Home or the search palette lands here with ?new=1.
   const [searchParams, setSearchParams] = useSearchParams();
@@ -98,6 +102,11 @@ const Expenses = () => {
     return (id: string | null | undefined) => (id ? (map[id] ?? '—') : '—');
   }, [profiles]);
 
+  // The "no receipt" report: at or above the receipt threshold, nothing attached.
+  const noReceipt = (e: ExpenseRow) => !e.receipt_path && minorOf(e) >= RECEIPT_THRESHOLD_MINOR;
+  const noReceiptN = useMemo(() => expenses.filter(noReceipt).length, [expenses]);
+  const unexplainedN = useMemo(() => expenses.filter((e) => noReceipt(e) && !e.no_receipt_reason).length, [expenses]);
+
   const filteredExpenses = useMemo(
     () =>
       expenses.filter((e) => {
@@ -106,9 +115,11 @@ const Expenses = () => {
         if (filterCategory !== 'all' && e.category !== filterCategory) return false;
         if (filterBudget !== 'all' && e.budget_id !== filterBudget) return false;
         if (status !== 'all' && (e.status ?? 'approved') !== status) return false;
+        if (receipts === 'missing' && !noReceipt(e)) return false;
+        if (receipts === 'unexplained' && !(noReceipt(e) && !e.no_receipt_reason)) return false;
         return true;
       }),
-    [expenses, filterStartDate, filterEndDate, filterCategory, filterBudget, status],
+    [expenses, filterStartDate, filterEndDate, filterCategory, filterBudget, status, receipts],
   );
 
   const statusOf = (e: ExpenseRow) => e.status ?? 'approved';
@@ -130,7 +141,7 @@ const Expenses = () => {
   const activeCount =
     (filterStartDate ? 1 : 0) + (filterEndDate ? 1 : 0) +
     (filterCategory !== 'all' ? 1 : 0) + (filterBudget !== 'all' ? 1 : 0) +
-    (status !== 'all' ? 1 : 0);
+    (status !== 'all' ? 1 : 0) + (receipts !== 'all' ? 1 : 0);
   const hasActiveFilters = activeCount > 0;
 
   const clearFilters = () => {
@@ -139,6 +150,7 @@ const Expenses = () => {
     setFilterCategory('all');
     setFilterBudget('all');
     setStatus('all');
+    setReceipts('all');
   };
 
   const refresh = () => {
@@ -204,6 +216,7 @@ const Expenses = () => {
         title="Expenses"
         description="Money out, and what still needs sign-off."
         actions={<>
+          {isAdmin && <ExpenseRulesDialog />}
           <BulkExpenseDialog onDone={refresh} />
           <ExpenseFormDialog onExpenseAdded={refresh} openOnMount={openNew} />
         </>}
@@ -228,6 +241,19 @@ const Expenses = () => {
           value: v, label: v === 'all' ? 'All' : v[0].toUpperCase() + v.slice(1), count: countOf(v),
         }))}
       />
+
+      {noReceiptN > 0 && (
+        <FilterChips<ReceiptFilter>
+          label="Receipts"
+          value={receipts}
+          onChange={setReceipts}
+          options={[
+            { value: 'all', label: 'All' },
+            { value: 'missing', label: 'No receipt', count: noReceiptN },
+            { value: 'unexplained', label: 'No receipt, no reason', count: unexplainedN },
+          ]}
+        />
+      )}
 
       <ExpenseFilters
         filterStartDate={filterStartDate}

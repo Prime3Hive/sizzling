@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { formatNairaCompact } from '@/lib/currency';
-import { format } from 'date-fns';
+import { format, differenceInCalendarDays } from 'date-fns';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -285,7 +285,19 @@ export default function Procurement() {
       key: 'status', header: 'Status',
       cell: (lpo) => {
         const sc = STATUS_CFG[lpo.status] ?? STATUS_CFG.draft;
-        return <Badge variant="outline" className={`border text-xs ${sc.cls}`}>{sc.label}</Badge>;
+        const age = lpo.status === 'draft' && (lpo as any).created_at
+          ? differenceInCalendarDays(new Date(), new Date((lpo as any).created_at))
+          : 0;
+        return (
+          <div>
+            <Badge variant="outline" className={`border text-xs ${sc.cls}`}>{sc.label}</Badge>
+            {age > 7 && (
+              <div className="mt-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-400">
+                Draft for {age} days: send or cancel
+              </div>
+            )}
+          </div>
+        );
       },
     },
     {

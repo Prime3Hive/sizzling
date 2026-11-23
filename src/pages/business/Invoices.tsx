@@ -39,6 +39,19 @@ const PAYMENT_BADGE: Record<string, string> = {
 
 type TabValue = "all" | InvoiceStatus | InvoiceType;
 
+/** Days a quotation stays open when it carries no validity date of its own. */
+const QUOTE_VALID_DAYS = 14;
+
+/** An open quotation past its validity date (or older than the default validity). */
+const isExpiredQuote = (inv: { status: string; valid_until?: string | null; issue_date: string }) => {
+  if (inv.status !== "quotation") return false;
+  const today = format(new Date(), "yyyy-MM-dd");
+  if (inv.valid_until) return inv.valid_until < today;
+  const limit = new Date(inv.issue_date);
+  limit.setDate(limit.getDate() + QUOTE_VALID_DAYS);
+  return format(limit, "yyyy-MM-dd") < today;
+};
+
 export default function Invoices() {
   const { user } = useAuth();
 
@@ -93,7 +106,8 @@ export default function Invoices() {
     const outstanding = active
       .filter((i) => i.payment_status !== "paid")
       .reduce((s, i) => s + (i.total_amount - i.amount_paid), 0);
-    return { quotations: quotations.length, active: active.length, totalRevenue, outstanding };
+    const expired = quotations.filter(isExpiredQuote).length;
+    return { quotations: quotations.length, expired, active: active.length, totalRevenue, outstanding };
   }, [invoices]);
 
   // Filtered list
@@ -191,6 +205,13 @@ export default function Invoices() {
       cell: (inv) => (
         <div>
           <Badge variant="outline" className={`text-xs ${STATUS_BADGE[inv.status]}`}>{STATUS_LABELS[inv.status]}</Badge>
+          {isExpiredQuote(inv) && (
+            <div className="mt-0.5">
+              <Badge variant="outline" className="text-[10px] border-amber-300 bg-amber-50 text-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
+                Expired: convert or cancel
+              </Badge>
+            </div>
+          )}
           {inv.archived && (
             <div className="mt-0.5"><Badge variant="outline" className="text-[9px] bg-muted text-muted-foreground border-muted-foreground/30">Archived</Badge></div>
           )}
@@ -241,6 +262,9 @@ export default function Invoices() {
             <div className="flex items-center gap-2">
               <Clock className="h-5 w-5 text-amber-500" />
               <span className="text-2xl font-bold">{stats.quotations}</span>
+              {stats.expired > 0 && (
+                <span className="ml-2 text-xs font-medium text-amber-700 dark:text-amber-400">{stats.expired} expired</span>
+              )}
             </div>
           </CardContent>
         </Card>

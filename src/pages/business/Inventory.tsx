@@ -27,6 +27,7 @@ import { INVENTORY_CATEGORIES, UNITS_OF_MEASURE, getCategoryLabel, MOVEMENT_META
 import { ResponsiveTable, type ResponsiveColumn } from "@/components/ui/responsive-table";
 import { TablePagination } from "@/components/ui/table-pagination";
 import { EmptyState, FilterChips, PageHeader, StatusPill } from "@/components/shell/ui";
+import ReorderLevelsDialog, { setReorderLevels } from "@/components/inventory/ReorderLevelsDialog";
 import { InventoryKPICards, type KPIMovement } from "@/components/inventory/InventoryKPICards";
 import { CategoryBreakdown } from "@/components/inventory/CategoryBreakdown";
 import { StockReconciliation } from "@/components/inventory/StockReconciliation";
@@ -262,9 +263,14 @@ export default function Inventory() {
           lines: [{ product_id: product.id, quantity_change: newSKU.stock_quantity, unit_price: newSKU.cost_per_unit || undefined }],
           type: "adjustment", referenceType: "opening", note: `Opening stock — ${newSKU.name.trim()}`,
         });
-        await supabase.from("inventory")
-          .update({ reorder_level: newSKU.reorder_level || 10 })
-          .eq("product_id", product.id);
+      }
+      // The level typed on the form, in the item's own unit. It used to be
+      // saved only alongside opening stock, and as 10 when left at 0.
+      if (product) {
+        const { data: made } = await (supabase as any).from("products").select("sku_id").eq("id", product.id).maybeSingle();
+        if (made?.sku_id) {
+          await setReorderLevels([{ sku_id: made.sku_id, level: Number(newSKU.reorder_level) || 0 }]).catch(() => {});
+        }
       }
       toast({ title: "Item added successfully" });
       setShowAddDialog(false);
@@ -292,6 +298,10 @@ export default function Inventory() {
       if (error) throw error;
 
       const before = skus.find(s => s.id === editingSKU.id);
+      // The reorder level on this form was shown but never saved.
+      if (before && Number(editingSKU.reorder_level) !== Number(before.reorder_level)) {
+        await setReorderLevels([{ sku_id: editingSKU.id, level: Number(editingSKU.reorder_level) || 0 }]);
+      }
       let revalued = 0;
       if (before && Number(editingSKU.cost_per_unit) !== Number(before.cost_per_unit)) {
         revalued = await setProductCost(editingSKU.id, Number(editingSKU.cost_per_unit), "item edit");
@@ -378,6 +388,7 @@ export default function Inventory() {
 
   // ── Derived ────────────────────────────────────────────────────────────────
   const activeSkus = useMemo(() => skus.filter(s => !s.is_archived), [skus]);
+  const [showReorder, setShowReorder] = useState(false);
   const counts = useMemo(() => ({
     low: activeSkus.filter(s => stockState(s) === "low").length,
     out: activeSkus.filter(s => ["out", "negative"].includes(stockState(s))).length,
@@ -622,6 +633,11 @@ export default function Inventory() {
               {(canManage || isAdmin) && <DropdownMenuSeparator />}
               {(canManage || isAdmin) && <DropdownMenuLabel className="text-xs text-muted-foreground">Setup</DropdownMenuLabel>}
               {canManage && (
+                <DropdownMenuItem onClick={() => setShowReorder(true)}>
+                  <Settings2 className="mr-2 h-4 w-4" />Reorder levels
+                </DropdownMenuItem>
+              )}
+              {canManage && (
                 <DropdownMenuItem onClick={() => setShowConversionDialog(true)}>
                   <Ruler className="mr-2 h-4 w-4" />Unit conversions
                 </DropdownMenuItem>
@@ -635,6 +651,8 @@ export default function Inventory() {
           </DropdownMenu>
         </>}
       />
+
+      <ReorderLevelsDialog open={showReorder} onOpenChange={setShowReorder} items={activeSkus} onDone={fetchData} />
 
       {/* ── What needs attention ── */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">

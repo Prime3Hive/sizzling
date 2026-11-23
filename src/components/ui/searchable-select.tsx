@@ -14,8 +14,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 // §5.2: "Selects with more than 8 options become a searchable sheet on mobile,
 // not a native dropdown — the category list has 13 and the budget list has 12."
 //
-// Under the threshold it stays an ordinary Select, because a searchable sheet
-// for three cost centres is worse than a dropdown, not better.
+// Under the threshold a phone keeps an ordinary Select, because a searchable
+// sheet for three cost centres is worse than a dropdown, not better. On a
+// desktop every list, short or long, is the same popover: its options exist in
+// the page only while it is open, and Escape closes it and nothing else. (An
+// ordinary Select keeps a hidden copy of its whole option list in the page for
+// as long as the form is mounted, one per field per row.)
 //
 // Exactly one overlay is mounted at a time. Rendering the Sheet and the Popover
 // together and hiding one with `sm:hidden` does not work — both portal to
@@ -122,8 +126,8 @@ export function SearchableSelect({
     );
   }
 
-  // Short lists keep the ordinary control.
-  if (!searchable) {
+  // Short lists keep the ordinary control on a phone.
+  if (!searchable && !isDesktop) {
     return (
       <Select value={current} onValueChange={(v) => onChange(v === NONE ? '' : v)} disabled={disabled}>
         <SelectTrigger
@@ -177,31 +181,60 @@ export function SearchableSelect({
     </Button>
   );
 
+  const pick = (v: string) => {
+    onChange(v);
+    close();
+  };
+
+  // Escape closes the list and stops there: it must not reach the form behind
+  // it, which would ask to discard the whole entry. Up/Down move through the
+  // options and Enter in the search box takes the first match.
+  const onListKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      close();
+      return;
+    }
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    const rows = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('[role="option"]'));
+    if (rows.length === 0) return;
+    e.preventDefault();
+    const at = rows.indexOf(document.activeElement as HTMLElement);
+    const next = e.key === 'ArrowDown' ? Math.min(at + 1, rows.length - 1) : Math.max(at - 1, 0);
+    rows[next].focus();
+  };
+
   const list = (
-    <div className="flex flex-col min-h-0">
-      <div className="relative px-1 pb-2">
-        <Search
-          className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground"
-          aria-hidden
-        />
-        <Input
-          autoFocus
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search…"
-          aria-label={`Search ${title ?? 'options'}`}
-          className="pl-9 h-11 text-base"
-        />
-      </div>
-      <div className="overflow-y-auto -mx-1 px-1" style={{ maxHeight: '60vh' }} role="listbox">
+    <div className="flex flex-col min-h-0" onKeyDown={onListKeyDown} data-searchable-select-list>
+      {searchable && (
+        <div className="relative px-1 pb-2">
+          <Search
+            className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground"
+            aria-hidden
+          />
+          <Input
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && filtered.length > 0) {
+                e.preventDefault();
+                pick(filtered[0].value);
+              }
+            }}
+            placeholder="Search…"
+            aria-label={`Search ${title ?? 'options'}`}
+            className="pl-9 h-11 text-base"
+          />
+        </div>
+      )}
+      <div className="overflow-y-auto -mx-1 px-1" style={{ maxHeight: '60vh' }} role="listbox" aria-label={title ?? placeholder}>
         {emptyOptionLabel && (
           <OptionRow
             label={emptyOptionLabel}
             selected={!current}
-            onSelect={() => {
-              onChange('');
-              close();
-            }}
+            onSelect={() => pick('')}
           />
         )}
         {filtered.length === 0 && (
@@ -215,10 +248,7 @@ export function SearchableSelect({
             label={o.label}
             hint={o.hint}
             selected={o.value === current}
-            onSelect={() => {
-              onChange(o.value);
-              close();
-            }}
+            onSelect={() => pick(o.value)}
           />
         ))}
       </div>

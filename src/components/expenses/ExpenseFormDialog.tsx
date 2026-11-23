@@ -8,6 +8,10 @@ import { MoneyInput } from '@/components/ui/money-input';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import ReceiptUpload from '@/components/expenses/ReceiptUpload';
 import SplitLinesDialog, { type DraftLine } from '@/components/expenses/SplitLinesDialog';
+import PayeeField, { ONE_OFF } from '@/components/expenses/PayeeField';
+import { BULK_PREFILL_EVENT, type BulkPrefill } from '@/components/expenses/BulkExpenseDialog';
+import { budgetAlert, budgetForDate } from '@/lib/bulkExpense';
+import { RECEIPT_THRESHOLD_MINOR } from '@/lib/expenseConfig';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useRoles } from '@/hooks/useRoles';
@@ -24,9 +28,9 @@ import {
 } from '@/lib/expenseValidation';
 import { PAYMENT_METHODS } from '@/lib/expenseConstants';
 import {
-  useExpenseCategories, useCostCentres, usePayees, useExpenseAccounts,
+  useExpenseCategories, useCostCentres, useExpenseAccounts,
   useBankAccounts, useLockedThrough, useBudgetsWithSpend,
-  categoryOptions, costCentreOptions, payeeOptions, accountOptions,
+  categoryOptions, costCentreOptions, accountOptions,
   bankOptions, budgetOptions,
 } from '@/hooks/useExpenseReference';
 
@@ -43,7 +47,6 @@ import {
 
 const db = supabase as any;
 
-const ONE_OFF = '__one_off__';
 
 interface FormState {
   amount: string;
@@ -60,6 +63,7 @@ interface FormState {
   vat: string;
   wht: string;
   reference: string;
+  noReceiptReason: string;
 }
 
 const blank = (): FormState => ({
@@ -79,6 +83,7 @@ const blank = (): FormState => ({
   vat: '',
   wht: '',
   reference: '',
+  noReceiptReason: '',
 });
 
 export interface EditingExpense {
@@ -100,6 +105,7 @@ export interface EditingExpense {
   vat_minor?: number | null;
   wht_minor?: number | null;
   bank_account_id?: string | null;
+  no_receipt_reason?: string | null;
 }
 
 interface Props {
@@ -148,7 +154,6 @@ export default function ExpenseFormDialog({
 
   const { data: categories = [] } = useExpenseCategories();
   const { data: costCentres = [] } = useCostCentres();
-  const { data: payees = [] } = usePayees();
   const { data: accounts = [] } = useExpenseAccounts();
   const { data: banks = [] } = useBankAccounts();
   const { data: lockedThrough } = useLockedThrough();
@@ -181,6 +186,7 @@ export default function ExpenseFormDialog({
       vat: editingExpense.vat_minor ? (editingExpense.vat_minor / 100).toString() : '',
       wht: editingExpense.wht_minor ? (editingExpense.wht_minor / 100).toString() : '',
       reference: editingExpense.reference ?? '',
+      noReceiptReason: editingExpense.no_receipt_reason ?? '',
     });
     setExistingReceipt(editingExpense.receipt_path);
     setReceiptFile(null);
@@ -210,18 +216,12 @@ export default function ExpenseFormDialog({
   }, [costCentres, form.costCentreId]);
 
   // ── Budget follows the date: the budget covering it, monthly first ───────
-  const budgetForDate = useMemo(() => {
-    const covering = budgetRows.filter((b: any) => b.start_date && b.end_date && b.start_date <= form.date && b.end_date >= form.date);
-    covering.sort((a: any, b: any) =>
-      (new Date(a.end_date).getTime() - new Date(a.start_date).getTime()) -
-      (new Date(b.end_date).getTime() - new Date(b.start_date).getTime()));
-    return covering[0]?.id ?? '';
-  }, [budgetRows, form.date]);
+  const dateBudgetId = useMemo(() => budgetForDate(budgetRows, form.date)?.id ?? '', [budgetRows, form.date]);
   const budgetTouched = useRef(false);
   useEffect(() => {
     if (budgetTouched.current || isEditMode) return;
-    if (budgetForDate !== form.budgetId) setForm((p) => ({ ...p, budgetId: budgetForDate }));
-  }, [budgetForDate, form.budgetId, isEditMode]);
+    if (dateBudgetId !== form.budgetId) setForm((p) => ({ ...p, budgetId: dateBudgetId }));
+  }, [dateBudgetId, form.budgetId, isEditMode]);
 
   const amountParsed = form.amount.trim() === '' ? null : parseMoney(form.amount);
   const amountMinor = amountParsed && !isMoneyError(amountParsed) ? amountParsed.minor : 0n;
@@ -230,7 +230,11 @@ export default function ExpenseFormDialog({
   const budgetRemaining = selectedBudget
     ? nairaToMinor(selectedBudget.total_budget - selectedBudget.spent)
     : null;
-  const overBudget = budgetRemaining !== null && amountMinor > budgetRemaining;
+  // Warn at 80% of the budget and again once it is exceeded.
+  const budgetWarning = selectedBudget
+    ? budgetAlert(nairaToMinor(selectedBudget.spent), amountMinor, nairaToMinor(selectedBudget.total_budget))
+    : null;
+  const needsReceipt = amountMinor >= RECEIPT_THRESHOLD_MINOR;
 
   const needsBank = METHODS_NEEDING_BANK.has(form.paymentMethod.toLowerCase());
 
@@ -247,6 +251,7 @@ export default function ExpenseFormDialog({
     wht: form.wht,
     reference: form.reference.trim() || (isEditMode ? '' : autoRef),
     receipt_path: receiptFile ? 'pending-upload' : existingReceipt,
+    no_receipt_reason: form.noReceiptReason,
     date: form.date,
     payment_method: form.paymentMethod,
     bank_account_id: form.bankAccountId || null,
@@ -355,6 +360,7 @@ export default function ExpenseFormDialog({
         wht_minor: Number(value.wht_minor),
         reference: value.reference,
         receipt_path: receiptPath,
+        no_receipt_reason: receiptPath ? null : value.no_receipt_reason,
         payee_id: value.payee_id,
         payee_name: value.payee_name,
         // Typed by a person: the full capture-time rules apply.
@@ -398,24 +404,31 @@ export default function ExpenseFormDialog({
   };
 
   const applySplit = (lines: DraftLine[]) => {
-    // The single-entry form holds one expense. The split belongs on a claim,
-    // so keep the first line here and tell the user where the rest went.
-    const [first, ...rest] = lines;
-    if (first) {
-      set({ amount: first.amount, description: first.description, categoryId: first.categoryId });
+    if (lines.length <= 1) {
+      const [only] = lines;
+      if (only) set({ amount: only.amount, description: only.description, categoryId: only.categoryId });
+      return;
     }
-    if (rest.length > 0) {
-      toast({
-        title: `${rest.length} more line${rest.length === 1 ? '' : 's'} detected`,
-        description: 'Use "Add Multiple" to enter them all at once — this form records one expense.',
-      });
-    }
+    // This form holds one expense. A list becomes one row per line in the
+    // multiple-entry form, carrying over what was already filled in here, so
+    // nothing has to be typed twice and no line is dropped.
+    const detail: BulkPrefill = {
+      rows: lines.map((l) => ({ description: l.description, amount: l.amount, categoryId: l.categoryId })),
+      date: form.date,
+      payeeId: form.payeeId,
+      payeeName: form.payeeName,
+      paymentMethod: form.paymentMethod,
+    };
+    setDirty(false);
+    setOpen(false);
+    reset();
+    // After this sheet has closed, so the two never fight over focus.
+    setTimeout(() => window.dispatchEvent(new CustomEvent(BULK_PREFILL_EVENT, { detail })), 150);
+    toast({
+      title: `${lines.length} lines ready`,
+      description: 'Each purchase is now its own row. Check them and save.',
+    });
   };
-
-  const payeeSelectOptions = [
-    { value: ONE_OFF, label: 'One-off payee — type a name' },
-    ...payeeOptions(payees),
-  ];
 
   const body = (
     <form
@@ -467,28 +480,17 @@ export default function ExpenseFormDialog({
         label="Payee / supplier"
         required
         error={errorFor('payee')}
-        hint="Who received the money."
+        hint="Who received the money. Not on the list? Type the name and save it as a supplier."
       >
-        <SearchableSelect
+        <PayeeField
           id="expense-payee"
-          options={payeeSelectOptions}
           value={form.payeeId}
-          onChange={(v) => set({ payeeId: v, payeeName: v === ONE_OFF ? form.payeeName : '' })}
-          placeholder="Choose a supplier"
-          title="Choose a payee"
+          name={form.payeeName}
+          onChange={(v, n) => set({ payeeId: v, payeeName: n })}
+          onBlur={() => setTouched((t) => ({ ...t, payee: true }))}
           required
           invalid={!!errorFor('payee')}
         />
-        {form.payeeId === ONE_OFF && (
-          <Input
-            aria-label="One-off payee name"
-            placeholder="Name of the person or business paid"
-            value={form.payeeName}
-            onChange={(e) => set({ payeeName: e.target.value })}
-            onBlur={() => setTouched((t) => ({ ...t, payee: true }))}
-            className="h-11 text-base mt-2"
-          />
-        )}
       </Field>
 
       {/* 4 Description */}
@@ -497,7 +499,7 @@ export default function ExpenseFormDialog({
         label="Description"
         required
         error={errorFor('description')}
-        hint="One purchase. Paste a list and it will be split for you."
+        hint="One purchase. Paste a list and each line becomes its own expense."
       >
         <Textarea
           id="expense-description"
@@ -563,12 +565,13 @@ export default function ExpenseFormDialog({
             placeholder="This month's budget"
             title="Choose a budget"
           />
-          {overBudget && (
+          {budgetWarning && (
             <p role="alert" className="text-xs text-amber-600 flex items-start gap-1 mt-1">
               <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" aria-hidden />
               <span>
-                This takes the budget {formatMinor(amountMinor - budgetRemaining!)} over. You can still
-                save it — it will show as overspent.
+                {budgetWarning.level === 'over'
+                  ? `This takes the budget ${formatMinor(budgetWarning.overByMinor)} over.`
+                  : `This brings the budget to ${budgetWarning.pct.toFixed(0)}% used.`}
               </span>
             </p>
           )}
@@ -697,7 +700,7 @@ export default function ExpenseFormDialog({
       <Field
         id="expense-receipt"
         label="Receipt"
-        required={amountMinor >= 1_000_000n}
+        required={needsReceipt && !form.noReceiptReason.trim()}
         error={errorFor('receipt')}
       >
         <ReceiptUpload
@@ -706,10 +709,27 @@ export default function ExpenseFormDialog({
           onChange={(f) => { setReceiptFile(f); setDirty(true); }}
           existingPath={existingReceipt}
           onRemoveExisting={() => { setExistingReceipt(null); setDirty(true); }}
-          required={amountMinor >= 1_000_000n}
+          required={needsReceipt && !form.noReceiptReason.trim()}
           error={errorFor('receipt')}
         />
       </Field>
+      {needsReceipt && !receiptFile && !existingReceipt && (
+        <Field
+          id="expense-no_receipt_reason"
+          label="No receipt? Say why"
+          error={errorFor('no_receipt_reason')}
+          hint="Expenses saved without a receipt are listed under Expenses → No receipt."
+        >
+          <Input
+            id="expense-no_receipt_reason"
+            value={form.noReceiptReason}
+            onChange={(e) => set({ noReceiptReason: e.target.value })}
+            onBlur={() => setTouched((t) => ({ ...t, no_receipt_reason: true }))}
+            placeholder="e.g. Roadside seller with no receipt book"
+            className="h-11 text-base"
+          />
+        </Field>
+      )}
       {dupes && dupes.length > 0 && (
         <div role="alert" className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-900/10 p-3 text-sm space-y-1">
           <p className="font-semibold text-amber-800 dark:text-amber-300 flex items-center gap-1.5">

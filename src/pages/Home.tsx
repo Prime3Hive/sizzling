@@ -3,14 +3,14 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { format, formatDistanceToNow, parseISO } from 'date-fns';
 import {
-  CalendarCheck, CalendarDays, ChevronRight, Inbox as InboxIcon, Package, Plus, Search, Users,
+  CalendarCheck, CalendarDays, ChevronRight, Inbox as InboxIcon, Package, Plus, Receipt, Search, Users,
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useRoles } from '@/hooks/useRoles';
 import { useInbox } from '@/hooks/useInbox';
 import { useMySummary } from '@/hooks/useMySummary';
-import { useProfitAndLoss, useCashCollected } from '@/hooks/useProfitAndLoss';
+import { useProfitAndLoss, useCashCollected, totalCost, monthChange } from '@/hooks/useProfitAndLoss';
 import { needsReorder } from '@/lib/stockStatus';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -235,28 +235,28 @@ function useFinanceSnapshot(enabled: boolean, withPayroll: boolean) {
     const revenue = months.map(({ y, m, label }) => ({ label, value: glRow(y, m)?.revenue ?? 0 }));
     const spend = months.map(({ y, m }) => {
       const r = glRow(y, m);
-      return r ? r.cogs + r.opex + r.payroll + r.commission : 0;
+      return r ? totalCost(r) : 0;
     });
     void inMonth;
     const receivables = d.outstanding.reduce((s, i) => s + Number(i.total_amount) - Number(i.amount_paid ?? 0), 0);
-    const overdue = d.outstanding.filter((i) => (Date.now() - parseISO(i.issue_date).getTime()) / 86_400_000 > 30).length;
+    const ageOf = (i: any) => (Date.now() - parseISO(i.issue_date).getTime()) / 86_400_000;
+    const owed = (i: any) => Number(i.total_amount) - Number(i.amount_paid ?? 0);
+    const late = d.outstanding.filter((i) => ageOf(i) > 30);
+    const overdue = late.length;
+    const overdueAmount = late.reduce((s, i) => s + owed(i), 0);
+    const over90 = d.outstanding.filter((i) => ageOf(i) > 90);
+    const over90Amount = over90.reduce((s, i) => s + owed(i), 0);
     return {
       revenue,
       thisRevenue: revenue[5].value, lastRevenue: revenue[4].value,
       thisSpend: spend[5], lastSpend: spend[4],
-      receivables, overdue,
+      receivables, overdue, overdueAmount, over90: over90.length, over90Amount,
       payrollPending: d.payroll.reduce((s, r) => s + Number(r.net_pay), 0),
       payrollCount: d.payroll.length,
       cash: cashIn.data ?? d.cash,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q.data, pl.rows, cashIn.data]);
-}
-
-function delta(now: number, before: number): { text: string; up: boolean } | null {
-  if (!before) return null;
-  const pct = ((now - before) / before) * 100;
-  return { text: `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`, up: pct >= 0 };
 }
 
 function LeadHome() {
@@ -341,8 +341,19 @@ function LeadHome() {
     );
   }
 
-  const sales = fin ? delta(fin.thisRevenue, fin.lastRevenue) : null;
-  const spend = fin ? delta(fin.thisSpend, fin.lastSpend) : null;
+  // Money owed for more than 30 days belongs in the list of things to act on.
+  if (financials && fin && fin.overdue > 0) {
+    cards.push(
+      <AttentionCard key="overdue" to="/business/invoices" icon={Receipt} tone="red" hot
+        title={`${fin.overdue} invoice${fin.overdue === 1 ? '' : 's'} overdue · ${formatNairaShort(fin.overdueAmount)}`}
+        sub={fin.over90
+          ? `${formatNairaShort(fin.over90Amount)} is more than 90 days old (${fin.over90} invoice${fin.over90 === 1 ? '' : 's'})`
+          : 'Unpaid for more than 30 days'} />,
+    );
+  }
+
+  const sales = fin ? monthChange(fin.thisRevenue, fin.lastRevenue) : null;
+  const spend = fin ? monthChange(fin.thisSpend, fin.lastSpend) : null;
 
   return (
     <div className="flex flex-col gap-7">
@@ -375,9 +386,9 @@ function LeadHome() {
           ) : (
             <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
               <StatTile label="Revenue" value={formatNairaShort(fin.thisRevenue)}
-                sub={sales ? <><b className={sales.up ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'}>{sales.text}</b> vs last month</> : 'Net of VAT'} />
+                sub={sales ? <b className={sales.up ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'}>{sales.text}</b> : 'Net of VAT'} />
               <StatTile label="Expenses" value={formatNairaShort(fin.thisSpend)}
-                sub={spend ? <><b className={spend.up ? 'text-red-700 dark:text-red-400' : 'text-emerald-700 dark:text-emerald-400'}>{spend.text}</b> vs last month</> : 'Approved only'} />
+                sub={spend ? <b className={spend.up ? 'text-red-700 dark:text-red-400' : 'text-emerald-700 dark:text-emerald-400'}>{spend.text}</b> : 'Costs, payroll and commission'} />
               {isAdmin ? (
                 <StatTile label="Payroll awaiting payment" value={formatNairaShort(fin.payrollPending)}
                   sub={`${fin.payrollCount} payslip${fin.payrollCount === 1 ? '' : 's'} pending`} />

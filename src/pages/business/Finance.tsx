@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { formatNairaCompact, formatNairaShort } from "@/lib/currency";
 import {
   format, startOfMonth, endOfMonth, subMonths,
-  differenceInDays, parseISO, getMonth, getYear,
+  differenceInDays, parseISO,
 } from "date-fns";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -28,7 +28,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { usePagination } from "@/hooks/usePagination";
-import { useProfitAndLoss } from "@/hooks/useProfitAndLoss";
+import { useProfitAndLoss, useMoneyReceived, totalCost } from "@/hooks/useProfitAndLoss";
 import { TablePagination } from "@/components/ui/table-pagination";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -272,22 +272,6 @@ export default function Finance() {
     },
   });
 
-  // Payments in period (source of truth for cash collected from sales)
-  const { data: periodPayments = [] } = useQuery<PaymentRow[]>({
-    queryKey: ["fin-payments", periodStart, periodEnd],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("payments")
-        .select("id, sale_id, amount, payment_method, payment_date, status, bank_reference, sales(customer_name, sale_number, sale_type)")
-        .eq("status", "completed")
-        .gte("payment_date", periodStart)
-        .lte("payment_date", periodEnd)
-        .order("payment_date", { ascending: false });
-      if (error) throw error;
-      return (data ?? []) as PaymentRow[];
-    },
-  });
-
   // Expenses in period
   const { data: periodExpenses = [] } = useQuery<ExpenseRow[]>({
     queryKey: ["fin-expenses", periodStart, periodEnd],
@@ -362,86 +346,14 @@ export default function Finance() {
     },
   });
 
-  // 6-month sales for chart
-  const { data: sixMonthSales = [] } = useQuery<SaleRow[]>({
-    queryKey: ["fin-6m-sales"],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("sales")
-        .select("sale_date, total_amount, vat_amount, status")
-        .gte("sale_date", sixAgo)
-        .neq("status", "cancelled");
-      if (error) throw error;
-      return (data ?? []) as SaleRow[];
-    },
-  });
-
-  // 6-month expenses for chart
-  const { data: sixMonthExpenses = [] } = useQuery<ExpenseRow[]>({
-    queryKey: ["fin-6m-expenses"],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("expenses")
-        .select("date, amount")
-        .eq("status", "approved")
-        .gte("date", sixAgo);
-      if (error) throw error;
-      return (data ?? []) as ExpenseRow[];
-    },
-  });
-
-  // 6-month invoices for chart (invoice revenue is the primary revenue source)
-  const { data: sixMonthInvoices = [] } = useQuery<InvoiceRow[]>({
-    queryKey: ["fin-6m-invoices"],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("invoices")
-        .select("issue_date, total_amount, tax_amount, status")
-        .eq("status", "invoice")
-        .gte("issue_date", sixAgo);
-      if (error) throw error;
-      return (data ?? []) as InvoiceRow[];
-    },
-  });
-
-  // Dated invoice cash receipts in period (cash basis — authoritative source).
-  // Reads the dated invoice_payments ledger, independent of "Record in Finance".
-  const { data: periodInvoiceReceipts = [] } = useQuery<{ amount: number }[]>({
-    queryKey: ["fin-invoice-receipts", periodStart, periodEnd],
-    queryFn: async () => {
-      const { data, error } = await (supabase as any)
-        .from("invoice_payments")
-        .select("amount, payment_date")
-        .gte("payment_date", periodStart)
-        .lte("payment_date", periodEnd);
-      if (error) throw error;
-      return data ?? [];
-    },
-  });
-
-  // Paid payroll for the period (a real operating cost — must hit net profit).
-  // Costed at GROSS + employer pension: deductions withheld from staff are
-  // still the employer's expense, and this matches how the ledger books it.
-  const { data: periodPayroll = [] } = useQuery<{ net_pay: number; basic_salary: number; allowances: number; pension_employer?: number | null }[]>({
-    queryKey: ["fin-payroll", periodStart, periodEnd],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("payroll_records")
-        .select("net_pay, basic_salary, allowances, pension_employer, status, period_start")
-        .eq("status", "paid")
-        .gte("period_start", periodStart)
-        .lte("period_start", periodEnd);
-      if (error) throw error;
-      return data ?? [];
-    },
-  });
-
   // THE P&L for the period — the same ledger function the Finance overview and
   // P&L page use, so all three agree to the kobo.
   const gl = useProfitAndLoss(periodStart, periodEnd);
-
-  const payrollGross = (p: { basic_salary: number; allowances: number; pension_employer?: number | null }) =>
-    Number(p.basic_salary) + Number(p.allowances) + Number(p.pension_employer ?? 0);
+  // The same function drives the six-month chart, so the chart and the cards agree.
+  const gl6 = useProfitAndLoss(sixAgo, format(today, "yyyy-MM-dd"));
+  // Every payment received in the period: sale payments, invoice payments and
+  // takings paid on the spot. The Payments page lists these same rows.
+  const received = useMoneyReceived(periodStart, periodEnd);
 
   // Unpaid legacy sales (receivable that revenue recognition would otherwise leak)
   const { data: unpaidSales = [] } = useQuery<UnpaidSaleRow[]>({
@@ -497,17 +409,20 @@ export default function Finance() {
   // ── KPI Derivations ──────────────────────────────────────────────────────────
 
   const kpi = useMemo(() => {
-    // Revenue (accrual): issued invoices (primary) + non-cancelled legacy sales (historical)
-    const salesRevenue   = periodSales.reduce((s, r) => s + (Number(r.total_amount) - Number((r as any).vat_amount ?? 0)), 0);
-    const invoiceRevenue = periodInvoices.reduce((s, r) => s + netOfVat(r), 0);
-    // Company revenue is the ledger's; the split above is for the breakdown.
+    // Revenue and its split: the ledger P&L. salesRevenue + invoiceRevenue
+    // (+ otherRevenue) = totalRevenue by construction.
+    const salesRevenue   = gl.totals.salesDaily + gl.totals.salesEvent;
+    const invoiceRevenue = gl.totals.invoiceDaily + gl.totals.invoiceEvent;
+    const otherRevenue   = gl.totals.otherRevenue;
     const totalRevenue   = gl.totals.revenue;
 
-    // Cash collected (cash basis) — dated payment events only.
-    // Sales: payments by payment_date. Invoices: ledger payment_received by entry_date.
-    const cashFromSales    = periodPayments.reduce((s, p) => s + Number(p.amount), 0);
-    const cashFromInvoices = periodInvoiceReceipts.reduce((s, r) => s + Number(r.amount), 0);
-    const totalCash        = cashFromSales + cashFromInvoices;
+    // Cash collected (cash basis): the period's payment records, one list.
+    const sum = (rows: { amount: number }[]) => rows.reduce((t, r) => t + Math.round(r.amount * 100), 0) / 100;
+    const salesReceipts    = received.rows.filter(r => r.kind !== "invoice_payment");
+    const cashFromSales    = sum(salesReceipts);
+    const cashFromInvoices = sum(received.rows.filter(r => r.kind === "invoice_payment"));
+    const totalCash        = received.total;
+    const salesReceiptCount = salesReceipts.length;
 
     // Costs and profit: the ledger P&L (cost of sales + OpEx, payroll + commission).
     const expenseTotal  = gl.totals.cogs + gl.totals.opex;
@@ -539,36 +454,23 @@ export default function Finance() {
     const budgetPct     = totalBudgeted > 0 ? Math.min((totalSpent / totalBudgeted) * 100, 100) : 0;
 
     return {
-      salesRevenue, invoiceRevenue, totalRevenue,
-      cashFromSales, cashFromInvoices, totalCash,
+      salesRevenue, invoiceRevenue, otherRevenue, totalRevenue,
+      cashFromSales, cashFromInvoices, totalCash, salesReceiptCount,
       expenseTotal, payrollCost, totalExpenses, netProfit, margin,
       totalOutstanding, overdueCount, receivableCount, salesOutstanding,
       totalBudgeted, totalSpent, budgetPct, activeBudgetCount: activeBudgets.length,
     };
-  }, [periodSales, periodPayments, periodInvoiceReceipts, periodPayroll, periodExpenses, periodInvoices, outstandingInvoices, salesReceivables, allBudgets, periodStart, periodEnd, gl.rows]);
+  }, [received.rows, periodExpenses, outstandingInvoices, salesReceivables, allBudgets, periodStart, periodEnd, gl.rows]);
 
   // ── 6-month Chart Data ───────────────────────────────────────────────────────
 
   const chartData = useMemo(() => Array.from({ length: 6 }, (_, i) => {
     const d = subMonths(today, 5 - i);
-    const m = getMonth(d);
-    const y = getYear(d);
-    const label = format(d, "MMM");
-
-    const sales = sixMonthSales
-      .filter(s => getMonth(parseISO(s.sale_date)) === m && getYear(parseISO(s.sale_date)) === y)
-      .reduce((acc, s) => acc + Number(s.total_amount) - Number((s as any).vat_amount ?? 0), 0);
-
-    const invoicesNet = sixMonthInvoices
-      .filter(inv => getMonth(parseISO(inv.issue_date)) === m && getYear(parseISO(inv.issue_date)) === y)
-      .reduce((acc, inv) => acc + netOfVat(inv), 0);
-
-    const expenses = sixMonthExpenses
-      .filter(e => getMonth(parseISO(e.date)) === m && getYear(parseISO(e.date)) === y)
-      .reduce((acc, e) => acc + Number(e.amount), 0);
-
-    return { name: label, Revenue: sales + invoicesNet, Expenses: expenses };
-  }), [sixMonthSales, sixMonthInvoices, sixMonthExpenses]);
+    const key = format(d, "yyyy-MM");
+    const row = gl6.rows.find(r => r.month.slice(0, 7) === key);
+    return { name: format(d, "MMM"), Revenue: row?.revenue ?? 0, Expenses: row ? totalCost(row) : 0 };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [gl6.rows]);
 
   // ── Expense breakdown by category ───────────────────────────────────────────
 
@@ -581,6 +483,8 @@ export default function Finance() {
     if (gl.totals.commission > 0) map["sales commission"] = (map["sales commission"] ?? 0) + gl.totals.commission;
     return Object.entries(map).sort((a, b) => b[1] - a[1]);
   }, [periodExpenses, gl.rows]);
+  // Shares are of what is listed, so they always add up to 100%.
+  const expenseBreakdownTotal = expenseByCategory.reduce((s, [, amt]) => s + amt, 0);
 
   // ── Budget utilization per budget ────────────────────────────────────────────
 
@@ -599,12 +503,12 @@ export default function Finance() {
 
   const paymentsByMethod = useMemo(() => {
     const map: Record<string, number> = {};
-    periodPayments.forEach(p => {
-      const key = p.payment_method?.toLowerCase() ?? "other";
+    received.rows.forEach(p => {
+      const key = (p.method || "other").replace(/_/g, " ");
       map[key] = (map[key] ?? 0) + Number(p.amount);
     });
     return Object.entries(map).sort((a, b) => b[1] - a[1]);
-  }, [periodPayments]);
+  }, [received.rows]);
 
   // ── Aging summary ────────────────────────────────────────────────────────────
 
@@ -658,7 +562,7 @@ export default function Finance() {
 
       {gl.error && (
         <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-          Profit figures could not load: {gl.error.message}. If this mentions fn_profit_and_loss, apply database migration 20261117100000_finance_single_source.
+          Profit figures could not load: {gl.error.message}. If this mentions fn_profit_and_loss, apply database migrations 20261117100000_finance_single_source and 20261123100000_fix_list_nov23.
         </div>
       )}
 
@@ -745,8 +649,8 @@ export default function Finance() {
           </TabsTrigger>
           <TabsTrigger value="payments">
             <Banknote className="h-3.5 w-3.5 mr-1.5" />Payments
-            {periodPayments.length > 0 && (
-              <Badge className="ml-1.5 text-[10px] px-1.5 py-0 bg-blue-500">{periodPayments.length}</Badge>
+            {received.rows.length > 0 && (
+              <Badge className="ml-1.5 text-[10px] px-1.5 py-0 bg-blue-500">{received.rows.length}</Badge>
             )}
           </TabsTrigger>
           <TabsTrigger value="expenses">
@@ -812,6 +716,12 @@ export default function Finance() {
                   </span>
                   <span className="font-semibold">{formatNairaCompact(kpi.invoiceRevenue)}</span>
                 </div>
+                {Math.abs(kpi.otherRevenue) >= 0.005 && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Other income (journals)</span>
+                    <span className="font-semibold">{formatNairaCompact(kpi.otherRevenue)}</span>
+                  </div>
+                )}
                 <div className="border-t pt-2 flex justify-between font-bold">
                   <span>Total</span>
                   <span className="text-green-700">{formatNairaCompact(kpi.totalRevenue)}</span>
@@ -829,7 +739,7 @@ export default function Finance() {
               <CardContent className="space-y-2 text-sm">
                 <div className="flex justify-between">
                   <span className="text-muted-foreground flex items-center gap-1.5">
-                    <ShoppingCart className="h-3.5 w-3.5" />From Sales ({periodPayments.length} payments)
+                    <ShoppingCart className="h-3.5 w-3.5" />From Sales ({kpi.salesReceiptCount} payment{kpi.salesReceiptCount === 1 ? "" : "s"})
                   </span>
                   <span className="font-semibold">{formatNairaCompact(kpi.cashFromSales)}</span>
                 </div>
@@ -874,7 +784,12 @@ export default function Finance() {
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-sm">Top Expense Categories — {periodLabel}</CardTitle>
-              <CardDescription>Breakdown of {periodExpenses.length} expense records totalling {formatNairaCompact(kpi.totalExpenses)}</CardDescription>
+              <CardDescription>
+                {periodExpenses.length} approved expense record{periodExpenses.length === 1 ? "" : "s"}, plus payroll and commission, totalling {formatNairaCompact(expenseBreakdownTotal)}
+                {Math.abs(expenseBreakdownTotal - kpi.totalExpenses) >= 1 && (
+                  <> · the ledger shows {formatNairaCompact(kpi.totalExpenses)} for the period (see Accounting → Books Check for the difference)</>
+                )}
+              </CardDescription>
             </CardHeader>
             <CardContent>
               {expenseByCategory.length === 0 ? (
@@ -882,7 +797,7 @@ export default function Finance() {
               ) : (
                 <div className="space-y-3">
                   {expenseByCategory.map(([cat, amt]) => {
-                    const pct = kpi.totalExpenses > 0 ? (amt / kpi.totalExpenses) * 100 : 0;
+                    const pct = expenseBreakdownTotal > 0 ? (amt / expenseBreakdownTotal) * 100 : 0;
                     return (
                       <div key={cat} className="space-y-1">
                         <div className="flex justify-between text-sm">
@@ -913,7 +828,7 @@ export default function Finance() {
                     </Badge>
                     <p className="text-lg font-bold">{formatNairaCompact(total)}</p>
                     <p className="text-xs text-muted-foreground">
-                      {periodPayments.filter(p => (p.payment_method?.toLowerCase() ?? "other") === method).length} payments
+                      {received.rows.filter(p => (p.method || "other").replace(/_/g, " ") === method).length} payments
                     </p>
                   </CardContent>
                 </Card>
@@ -925,11 +840,16 @@ export default function Finance() {
             <CardHeader>
               <CardTitle className="text-base">All Payments — {periodLabel}</CardTitle>
               <CardDescription>
-                {periodPayments.length} payment{periodPayments.length !== 1 ? "s" : ""} · Total: {formatNairaCompact(kpi.cashFromSales)}
+                {received.rows.length} payment{received.rows.length !== 1 ? "s" : ""} · Total: {formatNairaCompact(kpi.totalCash)} ·
+                sale payments, invoice payments and takings paid on the spot
               </CardDescription>
             </CardHeader>
             <CardContent>
-              {periodPayments.length === 0 ? (
+              {received.error ? (
+                <p role="alert" className="text-sm text-destructive text-center py-10">
+                  Payments could not load: {received.error.message}. If this mentions fn_money_received, apply database migration 20261123100000_fix_list_nov23.
+                </p>
+              ) : received.rows.length === 0 ? (
                 <p className="text-sm text-muted-foreground text-center py-10">No payments recorded this period.</p>
               ) : (
                 <div className="rounded-lg border overflow-hidden">
@@ -938,7 +858,7 @@ export default function Finance() {
                       <TableRow>
                         <TableHead>Date</TableHead>
                         <TableHead>Customer</TableHead>
-                        <TableHead>Sale #</TableHead>
+                        <TableHead>Sale / invoice</TableHead>
                         <TableHead>Type</TableHead>
                         <TableHead>Method</TableHead>
                         <TableHead>Reference</TableHead>
@@ -946,31 +866,25 @@ export default function Finance() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {periodPayments.map(p => (
-                        <TableRow key={p.id}>
+                      {received.rows.map(p => (
+                        <TableRow key={`${p.kind}-${p.id}`}>
                           <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
-                            {p.payment_date ? format(parseISO(p.payment_date), "dd MMM yyyy") : "—"}
+                            {p.received_on ? format(parseISO(p.received_on), "dd MMM yyyy") : "—"}
                           </TableCell>
-                          <TableCell className="font-medium max-w-24 truncate">
-                            {p.sales?.customer_name ?? "—"}
-                          </TableCell>
-                          <TableCell className="font-mono text-xs">{p.sales?.sale_number ?? "—"}</TableCell>
+                          <TableCell className="font-medium max-w-24 truncate">{p.customer ?? "—"}</TableCell>
+                          <TableCell className="font-mono text-xs">{p.document ?? "—"}</TableCell>
                           <TableCell>
-                            <span className="text-xs capitalize text-muted-foreground">
-                              {p.sales?.sale_type ?? "—"}
+                            <span className="text-xs text-muted-foreground">
+                              {p.kind === "invoice_payment" ? "Invoice payment" : p.kind === "takings" ? "Takings" : "Sale payment"}
                             </span>
                           </TableCell>
                           <TableCell>
-                            <Badge className={`text-xs capitalize ${payMethodColor[p.payment_method?.toLowerCase() ?? ""] ?? "bg-muted text-muted-foreground"}`}>
-                              {p.payment_method}
+                            <Badge className={`text-xs capitalize ${payMethodColor[p.method] ?? "bg-muted text-muted-foreground"}`}>
+                              {p.method.replace(/_/g, " ")}
                             </Badge>
                           </TableCell>
-                          <TableCell className="font-mono text-xs text-muted-foreground">
-                            {p.bank_reference ?? "—"}
-                          </TableCell>
-                          <TableCell className="text-right font-semibold">
-                            {formatNairaCompact(Number(p.amount))}
-                          </TableCell>
+                          <TableCell className="font-mono text-xs text-muted-foreground">{p.reference ?? "—"}</TableCell>
+                          <TableCell className="text-right font-semibold">{formatNairaCompact(p.amount)}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>

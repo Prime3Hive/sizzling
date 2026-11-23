@@ -68,6 +68,8 @@ export function FormSheet({
           onEscapeKeyDown={(e) => {
             // Escape prompts when the form is dirty (§5.3).
             e.preventDefault();
+            // An open option list takes the Escape; the form stays as it is.
+            if (document.querySelector('[data-searchable-select-list], [role="listbox"][data-state="open"]')) return;
             requestClose();
           }}
           className={cn(

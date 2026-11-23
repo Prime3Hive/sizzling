@@ -281,6 +281,18 @@ export default function InvoiceFormDialog({ open, onOpenChange, editingInvoice, 
       toast({ title: "Customer name is required", variant: "destructive" });
       return;
     }
+    // An event is always for someone we must be able to reach (the database
+    // enforces the same on quotations and invoices).
+    if (form.invoice_type === "event") {
+      if (/^\s*walk[\s-]*in/i.test(form.customer_name)) {
+        toast({ title: "Name the customer", description: "An event quotation or invoice needs the customer's name, not Walk-in.", variant: "destructive" });
+        return;
+      }
+      if (form.customer_phone.replace(/\D/g, "").length < 7) {
+        toast({ title: "Add the customer's phone number", description: "It is needed on event quotations and invoices.", variant: "destructive" });
+        return;
+      }
+    }
     if (items.every((it) => !it.description.trim())) {
       toast({ title: "Add at least one line item", variant: "destructive" });
       return;
@@ -335,6 +347,8 @@ export default function InvoiceFormDialog({ open, onOpenChange, editingInvoice, 
         waiter_total: waiterTotal,
         total_amount: total,
         issue_date: form.issue_date,
+        // Left blank on a new quotation, the database gives it the standard
+        // validity (14 days from the issue date).
         valid_until: form.valid_until || null,
         notes: form.notes.trim() || null,
         terms: form.terms.trim() || null,

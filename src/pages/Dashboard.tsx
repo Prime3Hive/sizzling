@@ -31,7 +31,7 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useRoles } from '@/hooks/useRoles';
-import { useProfitAndLoss, useCashCollected } from '@/hooks/useProfitAndLoss';
+import { useProfitAndLoss, useCashCollected, totalCost } from '@/hooks/useProfitAndLoss';
 import { fetchAll } from '@/lib/fetchAll';
 import { countStock } from '@/lib/stockStatus';
 import { formatNairaCompact, formatNairaShort } from '@/lib/currency';
@@ -373,7 +373,7 @@ const Dashboard = () => {
     return {
       name: label,
       Revenue: row?.revenue ?? 0,
-      Expenses: row ? row.cogs + row.opex + row.payroll + row.commission : 0,
+      Expenses: row ? totalCost(row) : 0,
     };
   });
 
@@ -598,7 +598,7 @@ const Dashboard = () => {
 
       {pl.error && (
         <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-          Profit figures could not load: {pl.error.message}. If this mentions fn_profit_and_loss, apply database migration 20261117100000_finance_single_source.
+          Profit figures could not load: {pl.error.message}. If this mentions fn_profit_and_loss, apply database migrations 20261117100000_finance_single_source and 20261123100000_fix_list_nov23.
         </div>
       )}
 

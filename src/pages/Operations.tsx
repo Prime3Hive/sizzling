@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState, PageHeader } from '@/components/shell/ui';
 import { cn } from '@/lib/utils';
+import { needsReorder } from '@/lib/stockStatus';
 
 const db = supabase as any;
 
@@ -42,11 +43,13 @@ export default function Operations() {
       const { data } = await db
         .from('skus')
         .select('id, name, stock_quantity, reorder_level, unit_of_measure, category')
-        .gt('reorder_level', 0)
         .eq('is_archived', false);
+      // One rule for every screen (src/lib/stockStatus): the dashboard, the
+      // inventory page and this list count the same items.
+      const short = (s: any) => Number(s.stock_quantity) - Number(s.reorder_level ?? 0);
       return (data ?? [])
-        .filter((s: any) => Number(s.stock_quantity) <= Number(s.reorder_level))
-        .sort((a: any, b: any) => Number(a.stock_quantity) / Number(a.reorder_level) - Number(b.stock_quantity) / Number(b.reorder_level));
+        .filter((s: any) => needsReorder(s))
+        .sort((a: any, b: any) => short(a) - short(b));
     },
     enabled: canInventory,
   });

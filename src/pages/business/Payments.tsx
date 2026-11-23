@@ -16,6 +16,13 @@ import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import { formatNairaCompact } from "@/lib/currency";
+import { useMoneyReceived, type MoneyReceived } from "@/hooks/useProfitAndLoss";
+
+const KIND_LABEL: Record<MoneyReceived["kind"], string> = {
+  sale_payment: "Sale payment",
+  invoice_payment: "Invoice payment",
+  takings: "Takings",
+};
 
 interface Payment {
   id: string;
@@ -53,6 +60,13 @@ const Payments = () => {
   const [savingPayment, setSavingPayment] = useState(false);
   const qc = useQueryClient();
 
+  // Everything received, whatever it was paid against. Finance and the
+  // dashboard add up these same rows for "cash collected".
+  const [from, setFrom] = useState(() => `${new Date().getFullYear()}-01-01`);
+  const [to, setTo] = useState(() => format(new Date(), 'yyyy-MM-dd'));
+  const [kindFilter, setKindFilter] = useState<"all" | MoneyReceived["kind"]>("all");
+  const received = useMoneyReceived(from, to, !!user);
+
   // Cached, so coming back to this page shows the last list at once and
   // refreshes behind it instead of starting from a spinner.
   const { data, isPending: loading, error: loadError } = useQuery({
@@ -82,7 +96,11 @@ const Payments = () => {
   });
   const payments = data?.payments ?? [];
   const sales = data?.sales ?? [];
-  const fetchData = () => qc.invalidateQueries({ queryKey: ['payments-page'] });
+  const fetchData = () => {
+    qc.invalidateQueries({ queryKey: ['payments-page'] });
+    qc.invalidateQueries({ queryKey: ['money-received'] });
+    qc.invalidateQueries({ queryKey: ['cash-collected'] });
+  };
 
   useEffect(() => {
     if (!loadError) return;
@@ -185,6 +203,22 @@ const Payments = () => {
     return <div className="flex items-center justify-center h-64">Loading...</div>;
   }
 
+  const q = searchTerm.trim().toLowerCase();
+  const receivedRows = received.rows.filter((r) =>
+    (kindFilter === "all" || r.kind === kindFilter) &&
+    (!q || [r.document, r.customer, r.reference, r.method].some((v) => (v ?? '').toLowerCase().includes(q))));
+  const receivedTotal = receivedRows.reduce((t, r) => t + Math.round(r.amount * 100), 0) / 100;
+
+  const receivedColumns: ResponsiveColumn<MoneyReceived>[] = [
+    { key: "date", header: "Date", cell: (r) => format(new Date(r.received_on), 'dd MMM yyyy') },
+    { key: "doc", header: "Sale / invoice", primary: true, cell: (r) => <span className="font-medium">{r.document ?? '—'}</span> },
+    { key: "kind", header: "Type", cell: (r) => <Badge variant="outline">{KIND_LABEL[r.kind]}</Badge> },
+    { key: "customer", header: "Customer", cell: (r) => r.customer || '—' },
+    { key: "method", header: "Method", cell: (r) => <span className="capitalize">{r.method.replace(/_/g, ' ')}</span> },
+    { key: "ref", header: "Reference", hideOnMobile: true, cell: (r) => r.reference || '—' },
+    { key: "amount", header: "Amount", align: "right", cell: (r) => <span className="font-semibold tabular-nums">{formatNairaCompact(r.amount)}</span> },
+  ];
+
   const paymentColumns: ResponsiveColumn<Payment>[] = [
     { key: "sale", header: "Sale Number", primary: true, cell: (p) => <span className="font-medium">{p.sale.sale_number}</span> },
     { key: "customer", header: "Customer", cell: (p) => p.sale.customer_name || 'N/A' },
@@ -221,9 +255,9 @@ const Payments = () => {
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-foreground">Payment Reconciliation</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold text-foreground">Payments</h1>
           <p className="text-muted-foreground mt-1">
-            Track payments, bank transactions, and reconcile accounts
+            All money received: sale payments, invoice payments and takings paid on the spot
           </p>
         </div>
         <Dialog open={showAddPayment} onOpenChange={setShowAddPayment}>
@@ -333,16 +367,17 @@ const Payments = () => {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Payments</CardTitle>
+            <CardTitle className="text-sm font-medium">Received in period</CardTitle>
             <CreditCard className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{formatNairaCompact(totalPayments)}</div>
+            <div className="text-2xl font-bold">{formatNairaCompact(received.error ? totalPayments : received.total)}</div>
+            <p className="text-xs text-muted-foreground mt-1">{received.rows.length} payment record{received.rows.length === 1 ? '' : 's'}</p>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Completed</CardTitle>
+            <CardTitle className="text-sm font-medium">Sale payments completed</CardTitle>
             <CheckCircle className="h-4 w-4 text-green-500" />
           </CardHeader>
           <CardContent>
@@ -393,12 +428,60 @@ const Payments = () => {
         </Select>
       </div>
 
-      {/* Payments Table */}
+      {/* Everything received */}
       <Card>
         <CardHeader>
-          <CardTitle>Payment Transactions</CardTitle>
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <CardTitle>Money received</CardTitle>
+              <CardDescription>
+                {receivedRows.length} record{receivedRows.length === 1 ? '' : 's'} · {formatNairaCompact(receivedTotal)}
+              </CardDescription>
+            </div>
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="grid gap-1">
+                <Label htmlFor="recv-from" className="text-xs">From</Label>
+                <Input id="recv-from" type="date" value={from} max={to} onChange={(e) => setFrom(e.target.value)} className="h-9 w-40" />
+              </div>
+              <div className="grid gap-1">
+                <Label htmlFor="recv-to" className="text-xs">To</Label>
+                <Input id="recv-to" type="date" value={to} min={from} onChange={(e) => setTo(e.target.value)} className="h-9 w-40" />
+              </div>
+              <Select value={kindFilter} onValueChange={(v) => setKindFilter(v as typeof kindFilter)}>
+                <SelectTrigger className="h-9 w-44" aria-label="Type of payment"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All types</SelectItem>
+                  <SelectItem value="invoice_payment">Invoice payments</SelectItem>
+                  <SelectItem value="sale_payment">Sale payments</SelectItem>
+                  <SelectItem value="takings">Takings</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {received.error ? (
+            <p role="alert" className="text-sm text-destructive py-6 text-center">
+              The full list could not load: {received.error.message}. If this mentions fn_money_received, apply database migration 20261123100000_fix_list_nov23. Sale payments are still listed below.
+            </p>
+          ) : (
+            <ResponsiveTable
+              columns={receivedColumns}
+              data={receivedRows}
+              rowKey={(r) => `${r.kind}-${r.id}`}
+              mobileSubtitle={(r) => `${KIND_LABEL[r.kind]} · ${r.customer || '—'}`}
+              emptyState={<p className="text-center text-muted-foreground py-8 text-sm">{received.isLoading ? 'Loading…' : 'Nothing received in this period.'}</p>}
+            />
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Sale payments: status and reconciliation */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Sale payments to reconcile</CardTitle>
           <CardDescription>
-            Monitor payment status and reconcile bank transactions
+            Payments recorded against a sale. Mark pending ones completed once the money is confirmed.
           </CardDescription>
         </CardHeader>
         <CardContent>

@@ -226,6 +226,9 @@ export default function StaffReportsAdmin() {
           user_id: user!.id, created_by: user!.id,
           sale_number: ref, sale_date: r.report_date, sale_type: saleType,
           total_amount: r.amount ?? 0,
+          // Carries how the takings came in, so they post to Cash or Bank and
+          // show under Payments as money received.
+          payment_method: (r.payment_method ?? '').trim().toLowerCase() || 'cash',
           customer_name: r.title ?? `Sales report — ${nameOf(r.user_id)}`,
           notes: [`Staff sales report by ${nameOf(r.user_id)}`, r.payment_method, r.summary].filter(Boolean).join(' · '),
           status: 'completed',

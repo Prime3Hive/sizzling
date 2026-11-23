@@ -32,6 +32,8 @@ export interface ExpenseRow {
   date: string;
   budget_id: string | null;
   receipt_path: string | null;
+  /** Typed reason for having no receipt (needed at the receipt threshold). */
+  no_receipt_reason?: string | null;
   created_at: string;
   cost_center: string | null;
   payment_method: string | null;
@@ -236,7 +238,11 @@ export default function ExpenseTable({
                 <TriangleAlert className="h-4 w-4" aria-hidden />
               </span>
             </TooltipTrigger>
-            <TooltipContent>Receipt required above {formatMinor(RECEIPT_THRESHOLD_MINOR)}, none attached</TooltipContent>
+            <TooltipContent className="max-w-xs">
+              {e.no_receipt_reason
+                ? <>No receipt. Reason given: {e.no_receipt_reason}</>
+                : <>Receipt required at {formatMinor(RECEIPT_THRESHOLD_MINOR)} and above, none attached and no reason given</>}
+            </TooltipContent>
           </Tooltip>
         </TooltipProvider>
       );

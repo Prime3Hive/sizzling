@@ -143,6 +143,8 @@ export interface ExpenseLineInput {
   reference?: string | null;
   receipt_id?: string | null;
   receipt_path?: string | null;
+  /** Typed explanation when there is no receipt. The only way past the rule. */
+  no_receipt_reason?: string | null;
   date?: string | null;
   payment_method?: string | null;
   bank_account_id?: string | null;
@@ -161,10 +163,14 @@ export interface ValidatedExpenseLine {
   wht_minor: bigint;
   reference: string | null;
   receipt_path: string | null;
+  no_receipt_reason: string | null;
   date: string | null;
   payment_method: string | null;
   bank_account_id: string | null;
 }
+
+/** Shortest explanation accepted for a missing receipt (the database agrees). */
+export const NO_RECEIPT_REASON_MIN = 10;
 
 export interface ValidateOptions {
   /** Books are closed on or before this date (from fn_books_locked). */
@@ -259,11 +265,19 @@ export function validateExpenseLine(
 
   // ── Receipt above the threshold ──
   const receiptPath = input.receipt_path ?? null;
+  const noReceiptReason = normaliseText(input.no_receipt_reason);
   if (amountMinor >= RECEIPT_THRESHOLD_MINOR && !receiptPath && !input.receipt_id) {
-    errors.push({
-      field: 'receipt',
-      message: `A receipt is required at ${formatMinor(RECEIPT_THRESHOLD_MINOR)} and above.`,
-    });
+    if (noReceiptReason === '') {
+      errors.push({
+        field: 'receipt',
+        message: `A receipt is required at ${formatMinor(RECEIPT_THRESHOLD_MINOR)} and above. Attach it, or say why there is none.`,
+      });
+    } else if (noReceiptReason.length < NO_RECEIPT_REASON_MIN) {
+      errors.push({
+        field: 'no_receipt_reason',
+        message: `Say why there is no receipt, in at least ${NO_RECEIPT_REASON_MIN} characters.`,
+      });
+    }
   }
 
   // ── Claim-level fields ──
@@ -315,6 +329,10 @@ export function validateExpenseLine(
       wht_minor: whtMinor,
       reference: normaliseText(input.reference) || null,
       receipt_path: receiptPath,
+      // Kept only where it is doing a job: no receipt on an expense that needs one.
+      no_receipt_reason: !receiptPath && !input.receipt_id && amountMinor >= RECEIPT_THRESHOLD_MINOR
+        ? noReceiptReason
+        : null,
       date,
       payment_method: paymentMethod || null,
       bank_account_id: input.bank_account_id || null,

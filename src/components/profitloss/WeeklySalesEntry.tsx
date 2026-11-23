@@ -24,6 +24,7 @@ interface Sale {
   sale_type: string | null;
   total_amount: number;
   vat_amount?: number;
+  payment_method?: string | null;
   customer_name: string | null;
   notes: string | null;
   status: string;
@@ -113,6 +114,8 @@ const WeeklySalesEntry = ({ sales, selectedYear, onSaleAdded }: WeeklySalesEntry
         sale_type: formData.get('sale_type') as string,
         total_amount: total,
         vat_amount: vatInclusive ? vatFromInclusive(total) : 0,
+        // How the money came in. "credit" means it is still owed.
+        payment_method: (formData.get('payment_method') as string) || 'cash',
         customer_name: (formData.get('customer_name') as string) || null,
         notes: (formData.get('notes') as string) || null,
         status: 'completed',
@@ -141,6 +144,7 @@ const WeeklySalesEntry = ({ sales, selectedYear, onSaleAdded }: WeeklySalesEntry
         sale_type: formData.get('sale_type') as string,
         total_amount: total,
         vat_amount: vatInclusive ? vatFromInclusive(total) : 0,
+        payment_method: (formData.get('payment_method') as string) || 'cash',
         customer_name: (formData.get('customer_name') as string) || null,
         notes: (formData.get('notes') as string) || null,
       }).eq('id', editSale.id);
@@ -209,6 +213,21 @@ const WeeklySalesEntry = ({ sales, selectedYear, onSaleAdded }: WeeklySalesEntry
               </SelectContent>
             </Select>
           </div>
+        </div>
+        <div className="grid gap-2">
+          <Label>How was it paid?</Label>
+          <Select name="payment_method" defaultValue={(defaults?.payment_method || 'cash').toLowerCase()}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="cash">Cash</SelectItem>
+              <SelectItem value="transfer">Bank transfer</SelectItem>
+              <SelectItem value="pos">POS / card</SelectItem>
+              <SelectItem value="credit">On credit (not paid yet)</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            Cash, transfer and POS show under Payments as money received. On credit shows as owed.
+          </p>
         </div>
         <div className="grid gap-2">
           <Label>Total Amount (₦)</Label>

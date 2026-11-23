@@ -47,6 +47,8 @@ interface MonthlyPL {
   dailyInvoiceRevenue: number;
   eventInvoiceRevenue: number;
   invoiceRevenue: number;
+  /** Income not from a sale or an invoice (manual journals). Usually nil. */
+  otherRevenue: number;
   dailyRevenue: number;
   eventRevenue: number;
   totalSales: number;
@@ -133,12 +135,13 @@ const ProfitLoss = () => {
   const yearEnd = `${selectedYear}-12-31`;
 
   // ── Queries ────────────────────────────────────────────────────────────────
-  const { data: sales = [], isLoading: salesLoading, refetch: refetchSales } = useQuery({
+  const { data: sales = [], isLoading: salesLoading, refetch: refetchSales } = useQuery<any[]>({
     queryKey: ['pl-sales', selectedYear],
     queryFn: async () => {
-      const { data, error } = await supabase
+      // `as any`: the generated types predate sales.payment_method.
+      const { data, error } = await (supabase as any)
         .from('sales')
-        .select('id, sale_date, sale_number, total_amount, vat_amount, sale_type, status, customer_name, notes')
+        .select('id, sale_date, sale_number, total_amount, vat_amount, sale_type, status, customer_name, notes, payment_method')
         .is('cancelled_at', null)
         .gte('sale_date', yearStart)
         .lte('sale_date', yearEnd)
@@ -163,23 +166,6 @@ const ProfitLoss = () => {
     },
   });
 
-  // Invoice revenue — read from the invoices table (single source of truth),
-  // counting all formally issued invoices in the year. This reconciles with the
-  // Finance module, which also derives invoice revenue from the invoices table.
-  const { data: invoiceRevenueRows = [], isLoading: invoiceLedgerLoading } = useQuery({
-    queryKey: ['pl-invoice-revenue', selectedYear],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('invoices')
-        .select('issue_date, total_amount, tax_amount, invoice_type, status')
-        .eq('status', 'invoice')
-        .gte('issue_date', yearStart)
-        .lte('issue_date', yearEnd);
-      if (error) throw error;
-      return data || [];
-    },
-  });
-
   // Only for the "N paid" count; the money comes from the ledger.
   const { data: payrollRecords = [], isLoading: payrollLoading } = useQuery({
     queryKey: ['pl-payroll', selectedYear],
@@ -195,41 +181,27 @@ const ProfitLoss = () => {
 
   // THE P&L: one database function over the general ledger. Finance overview,
   // /business/finance and Reports call the same function, so they agree to the
-  // kobo. The raw-table queries above only split revenue and expenses by cost
-  // centre for the Daily / Event segment views.
+  // kobo. Revenue, its Daily / Event / Invoice split and every company cost
+  // come from it. The expenses query above only splits costs by cost centre
+  // for the Daily / Event segment views.
   const gl = useProfitAndLoss(yearStart, yearEnd);
 
-  const isLoading = salesLoading || expensesLoading || payrollLoading || invoiceLedgerLoading || gl.isLoading;
+  const isLoading = salesLoading || expensesLoading || payrollLoading || gl.isLoading;
 
   // ── Monthly P&L Computation ────────────────────────────────────────────────
   const monthlyData: MonthlyPL[] = useMemo(() => {
     return MONTHS.map((month, index) => {
-      // Exclude cancelled sales from revenue recognition
-      const monthSales    = sales.filter(s => new Date(s.sale_date).getMonth() === index && s.status !== 'cancelled');
       const monthExpenses = expenses.filter(e => new Date(e.date).getMonth() === index);
-      const monthInvoices = invoiceRevenueRows.filter(l => new Date(l.issue_date).getMonth() === index);
 
-      // Sales revenue net of VAT (vat_amount is 0 for exempt/legacy takings)
-      const saleNet = (s: { total_amount: number; vat_amount?: number | null }) =>
-        Number(s.total_amount) - Number((s as any).vat_amount ?? 0);
-      const dailySales = monthSales
-        .filter(s => (s.sale_type || 'daily') === 'daily')
-        .reduce((sum, s) => sum + saleNet(s), 0);
-      const eventSales = monthSales
-        .filter(s => s.sale_type === 'event')
-        .reduce((sum, s) => sum + saleNet(s), 0);
-      // Invoice revenue split by invoice_type so it lands in the same Daily/Event
-      // bucket as the COGS/OpEx tied to that cost centre — otherwise the segment
-      // filter counts a segment's costs without its matching invoice revenue.
-      // Recognised NET of VAT: the tax portion is a FIRS liability, not income.
-      const invNet = (l: { total_amount: number; tax_amount?: number | null }) =>
-        Number(l.total_amount) - Number(l.tax_amount ?? 0);
-      const dailyInvoiceRevenue = monthInvoices
-        .filter(l => (l.invoice_type || 'daily_sales') !== 'event')
-        .reduce((sum, l) => sum + invNet(l), 0);
-      const eventInvoiceRevenue = monthInvoices
-        .filter(l => l.invoice_type === 'event')
-        .reduce((sum, l) => sum + invNet(l), 0);
+      // Revenue and its split come from THE P&L function, the same rows that
+      // make the total. Nothing here is summed from the sales or invoices
+      // tables, so Daily + Event + Invoice (+ Other) = Total on every row.
+      const g = gl.forMonth(index);
+      const dailySales = g?.salesDaily ?? 0;
+      const eventSales = g?.salesEvent ?? 0;
+      const dailyInvoiceRevenue = g?.invoiceDaily ?? 0;
+      const eventInvoiceRevenue = g?.invoiceEvent ?? 0;
+      const otherRevenue = g?.otherRevenue ?? 0;
       const invoiceRevenue = dailyInvoiceRevenue + eventInvoiceRevenue;
       const dailyRevenue = dailySales + dailyInvoiceRevenue;
       const eventRevenue = eventSales + eventInvoiceRevenue;
@@ -254,7 +226,6 @@ const ProfitLoss = () => {
       const eventNetProfit = eventGrossProfit - eventOpEX;
 
       // Company figures: the ledger P&L, nothing recomputed here.
-      const g = gl.forMonth(index);
       const totalSales = g?.revenue ?? 0;
       const totalCOGS = g?.cogs ?? 0;
       const otherCOGS = totalCOGS - dailyCOGS - eventCOGS;
@@ -269,7 +240,7 @@ const ProfitLoss = () => {
       return {
         month, monthIndex: index,
         dailySales, eventSales, dailyInvoiceRevenue, eventInvoiceRevenue,
-        invoiceRevenue, dailyRevenue, eventRevenue, totalSales,
+        invoiceRevenue, otherRevenue, dailyRevenue, eventRevenue, totalSales,
         dailyCOGS, eventCOGS, otherCOGS, totalCOGS,
         dailyGrossProfit, eventGrossProfit, totalGrossProfit,
         dailyOpEX, eventOpEX, payrollOpEX, commission, ledgerOpEX, totalOpEX,
@@ -277,7 +248,7 @@ const ProfitLoss = () => {
         profitMargin,
       };
     });
-  }, [sales, expenses, invoiceRevenueRows, gl.rows]);
+  }, [expenses, gl.rows]);
 
   const totals = useMemo(() => monthlyData.reduce((acc, m) => ({
     dailySales: acc.dailySales + m.dailySales,
@@ -285,6 +256,7 @@ const ProfitLoss = () => {
     dailyInvoiceRevenue: acc.dailyInvoiceRevenue + m.dailyInvoiceRevenue,
     eventInvoiceRevenue: acc.eventInvoiceRevenue + m.eventInvoiceRevenue,
     invoiceRevenue: acc.invoiceRevenue + m.invoiceRevenue,
+    otherRevenue: acc.otherRevenue + m.otherRevenue,
     dailyRevenue: acc.dailyRevenue + m.dailyRevenue,
     eventRevenue: acc.eventRevenue + m.eventRevenue,
     totalSales: acc.totalSales + m.totalSales,
@@ -306,12 +278,15 @@ const ProfitLoss = () => {
     totalNetProfit: acc.totalNetProfit + m.totalNetProfit,
   }), {
     dailySales: 0, eventSales: 0, dailyInvoiceRevenue: 0, eventInvoiceRevenue: 0,
-    invoiceRevenue: 0, dailyRevenue: 0, eventRevenue: 0, totalSales: 0,
+    invoiceRevenue: 0, otherRevenue: 0, dailyRevenue: 0, eventRevenue: 0, totalSales: 0,
     dailyCOGS: 0, eventCOGS: 0, otherCOGS: 0, totalCOGS: 0,
     dailyGrossProfit: 0, eventGrossProfit: 0, totalGrossProfit: 0,
     dailyOpEX: 0, eventOpEX: 0, payrollOpEX: 0, commission: 0, ledgerOpEX: 0, totalOpEX: 0,
     dailyNetProfit: 0, eventNetProfit: 0, totalNetProfit: 0,
   }), [monthlyData]);
+
+  // Shown only when something other than a sale or an invoice posted income.
+  const showOther = Math.abs(totals.otherRevenue) >= 0.005;
 
   const totalProfitMargin = totals.totalSales > 0
     ? (totals.totalNetProfit / totals.totalSales) * 100
@@ -369,19 +344,19 @@ const ProfitLoss = () => {
   const exportToExcel = async () => {
     const [XLSX, { saveAs }] = await Promise.all([import('xlsx'), import('file-saver')]);
     const headers = [
-      'MONTH', 'DAILY SALES', 'EVENT SALES', 'INVOICE REVENUE', 'TOTAL SALES',
+      'MONTH', 'DAILY SALES', 'EVENT SALES', 'INVOICE REVENUE', 'OTHER REVENUE', 'TOTAL SALES',
       'DAILY COGS', 'EVENT COGS', 'TOTAL COGS',
       'GROSS PROFIT', 'OPEX', 'PAYROLL', 'COMMISSION', 'OPEX + PAYROLL + COMMISSION',
       'NET PROFIT/LOSS', 'MARGIN',
     ];
     const rows = monthlyData.map(m => [
-      m.month, m.dailySales, m.eventSales, m.invoiceRevenue, m.totalSales,
+      m.month, m.dailySales, m.eventSales, m.invoiceRevenue, m.otherRevenue, m.totalSales,
       m.dailyCOGS, m.eventCOGS, m.totalCOGS,
       m.totalGrossProfit, m.ledgerOpEX, m.payrollOpEX, m.commission, m.totalOpEX,
       m.totalNetProfit, m.profitMargin > 0 ? `${m.profitMargin.toFixed(1)}%` : '',
     ]);
     rows.push([
-      'TOTAL', totals.dailySales, totals.eventSales, totals.invoiceRevenue, totals.totalSales,
+      'TOTAL', totals.dailySales, totals.eventSales, totals.invoiceRevenue, totals.otherRevenue, totals.totalSales,
       totals.dailyCOGS, totals.eventCOGS, totals.totalCOGS,
       totals.totalGrossProfit, totals.ledgerOpEX, totals.payrollOpEX, totals.commission, totals.totalOpEX,
       totals.totalNetProfit, `${totalProfitMargin.toFixed(1)}%`,
@@ -588,7 +563,7 @@ const ProfitLoss = () => {
 
       {gl.error && (
         <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-          Profit figures could not load: {gl.error.message}. If this mentions fn_profit_and_loss, apply database migration 20261117100000_finance_single_source.
+          Profit figures could not load: {gl.error.message}. If this mentions fn_profit_and_loss, apply database migrations 20261117100000_finance_single_source and 20261123100000_fix_list_nov23.
         </div>
       )}
 
@@ -870,6 +845,7 @@ const ProfitLoss = () => {
                       <TableHead className="text-right min-w-[100px]">Daily Sales</TableHead>
                       <TableHead className="text-right min-w-[100px]">Event Sales</TableHead>
                       <TableHead className="text-right min-w-[90px]">Invoice</TableHead>
+                      {showOther && <TableHead className="text-right min-w-[90px]">Other</TableHead>}
                       <TableHead className="text-right min-w-[110px] font-semibold">Total Revenue</TableHead>
                       <TableHead className="text-right min-w-[95px]">COGS</TableHead>
                       <TableHead className="text-right min-w-[110px] font-semibold">Gross Profit</TableHead>
@@ -883,7 +859,7 @@ const ProfitLoss = () => {
                   </TableHeader>
                   <TableBody>
                     {filteredMonths.map(m => {
-                      const hasData = m.totalSales > 0 || m.totalCOGS > 0 || m.totalOpEX > 0;
+                      const hasData = m.totalSales !== 0 || m.totalCOGS !== 0 || m.totalOpEX !== 0;
                       return (
                         <TableRow
                           key={m.month}
@@ -908,6 +884,7 @@ const ProfitLoss = () => {
                               ? formatNairaCompact(m.invoiceRevenue)
                               : <span className="text-muted-foreground">—</span>}
                           </TableCell>
+                          {showOther && <TableCell className="text-right text-sm">{formatNairaCompact(m.otherRevenue)}</TableCell>}
                           <TableCell className="text-right font-semibold text-sm">{formatNairaCompact(m.totalSales)}</TableCell>
                           <TableCell className="text-right text-sm">{formatNairaCompact(m.totalCOGS)}</TableCell>
                           <TableCell className="text-right"><ValueCell value={m.totalGrossProfit} /></TableCell>
@@ -944,6 +921,7 @@ const ProfitLoss = () => {
                       <TableCell className="text-right">{formatNairaCompact(totals.dailySales)}</TableCell>
                       <TableCell className="text-right">{formatNairaCompact(totals.eventSales)}</TableCell>
                       <TableCell className="text-right">{formatNairaCompact(totals.invoiceRevenue)}</TableCell>
+                      {showOther && <TableCell className="text-right">{formatNairaCompact(totals.otherRevenue)}</TableCell>}
                       <TableCell className="text-right">{formatNairaCompact(totals.totalSales)}</TableCell>
                       <TableCell className="text-right">{formatNairaCompact(totals.totalCOGS)}</TableCell>
                       <TableCell className="text-right"><ValueCell value={totals.totalGrossProfit} /></TableCell>

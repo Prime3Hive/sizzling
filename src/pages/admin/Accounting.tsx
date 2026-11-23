@@ -93,7 +93,7 @@ export default function Accounting() {
       for (let from = 0; ; from += PAGE) {
         const { data, error } = await (supabase as any)
           .from("journal_lines")
-          .select("id, entry_id, account_id, debit, credit, description, reconciled_at, journal_entries!inner(entry_date, memo, source_type), chart_of_accounts(code, name, type, normal_balance)")
+          .select("id, entry_id, account_id, debit, credit, description, reconciled_at, journal_entries!inner(entry_date, memo, source_type, is_reversed, reversal_of_id), chart_of_accounts(code, name, type, normal_balance)")
           .order("id", { ascending: true })
           .range(from, from + PAGE - 1);
         if (error) throw error;
@@ -101,7 +101,9 @@ export default function Accounting() {
         out.push(...page);
         if (page.length < PAGE) break;
       }
-      return out.map((r: any) => ({ ...r, entry_date: r.journal_entries?.entry_date, memo: r.journal_entries?.memo, source_type: r.journal_entries?.source_type }));
+      return out.map((r: any) => ({ ...r, entry_date: r.journal_entries?.entry_date, memo: r.journal_entries?.memo, source_type: r.journal_entries?.source_type,
+        // An entry and its reversal are a cancelled pair (nil together).
+        cancelled: !!(r.journal_entries?.is_reversed || r.journal_entries?.reversal_of_id) }));
     },
   });
 
@@ -146,6 +148,12 @@ export default function Accounting() {
       // A period statement shows the year's activity, not the closing entry
       // that zeroes it into Retained Earnings.
       if (from && (l as any).source_type === "year_close") continue;
+      // A period statement counts the documents live in that period, exactly
+      // as fn_profit_and_loss does. A cancelled pair nets to nil, but an old
+      // reversal can be dated in a different month from its entry, which
+      // would move revenue or cost between months. Balances "as at" a date
+      // (from = null) keep every line: there the pair cancels itself.
+      if (from && (l as any).cancelled) continue;
 
       const debit = Number(l.debit) || 0;
       const credit = Number(l.credit) || 0;
