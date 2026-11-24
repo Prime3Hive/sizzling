@@ -20,7 +20,7 @@ export const ROUTE_META: Record<StockRoute, { label: string; cls: string }> = {
   count_difference: { label: 'Count difference',  cls: 'bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-900/30 dark:text-purple-300 dark:border-purple-800' },
   correction:       { label: 'Correction',        cls: 'bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-900/30 dark:text-orange-300 dark:border-orange-800' },
   opening:          { label: 'Opening stock',     cls: 'bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800/50 dark:text-slate-300 dark:border-slate-700' },
-  sale:             { label: 'Sale',              cls: 'bg-indigo-100 text-indigo-700 border-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-300 dark:border-indigo-800' },
+  sale:             { label: 'Sold',              cls: 'bg-indigo-100 text-indigo-700 border-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-300 dark:border-indigo-800' },
   return:           { label: 'Return',            cls: 'bg-teal-100 text-teal-700 border-teal-200 dark:bg-teal-900/30 dark:text-teal-300 dark:border-teal-800' },
   transfer:         { label: 'Transfer',          cls: 'bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800/50 dark:text-slate-300 dark:border-slate-700' },
   reversal:         { label: 'Reversal',          cls: 'bg-zinc-100 text-zinc-700 border-zinc-200 dark:bg-zinc-800/50 dark:text-zinc-300 dark:border-zinc-700' },
@@ -156,4 +156,41 @@ export function countSummary(lines: CountLine[], rule: CountRule = DEFAULT_COUNT
     if (needsReason(e, c, cost, rule) && !why) unexplained++;
   }
   return { counted: lines.length, differ, shortValue, overValue, netValue: overValue - shortValue, unexplained };
+}
+
+// ── Finished-good lots ───────────────────────────────────────────────────────
+
+export interface LotLike { expires_on: string | null; produced_on?: string | null; qty_remaining: number; lot_number: string }
+
+/** A lot that has passed its expiry date is not sold; it is recorded as waste. */
+export const lotExpired = (lot: { expires_on: string | null }, on: string) => !!lot.expires_on && lot.expires_on < on;
+
+/** Whole days until a lot expires (negative once it has); null when it has no expiry. */
+export function daysToExpiry(lot: { expires_on: string | null }, on: string): number | null {
+  if (!lot.expires_on) return null;
+  return Math.round((Date.parse(lot.expires_on) - Date.parse(on)) / 86_400_000);
+}
+
+/**
+ * Which lots a sale of `qty` comes from: the oldest in-date lot first. Mirrors
+ * fn_record_goods_sold, so the form can show it before saving.
+ */
+export function drawFromLots<T extends LotLike>(lots: T[], qty: number, on: string): { draws: { lot: T; qty: number }[]; short: number; expired: number } {
+  const inDate = lots.filter((l) => l.qty_remaining > 0 && !lotExpired(l, on)).sort((a, b) =>
+    (a.expires_on ?? '9999').localeCompare(b.expires_on ?? '9999')
+    || (a.produced_on ?? '').localeCompare(b.produced_on ?? '')
+    || a.lot_number.localeCompare(b.lot_number));
+  let need = qty;
+  const draws: { lot: T; qty: number }[] = [];
+  for (const lot of inDate) {
+    if (need <= 0) break;
+    const take = Math.min(need, lot.qty_remaining);
+    draws.push({ lot, qty: round4(take) });
+    need -= take;
+  }
+  return {
+    draws,
+    short: round4(Math.max(need, 0)),
+    expired: round4(lots.filter((l) => l.qty_remaining > 0 && lotExpired(l, on)).reduce((t, l) => t + l.qty_remaining, 0)),
+  };
 }

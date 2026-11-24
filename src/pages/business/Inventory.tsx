@@ -47,7 +47,7 @@ import ReceiptsList from "@/components/inventory/ReceiptsList";
 import { useReceiveReady } from "@/hooks/useStockReceipts";
 import StockOutSheet, { type StockOutPrefill } from "@/components/inventory/StockOutSheet";
 import StockCount from "@/components/inventory/StockCount";
-import { useStockOutReady } from "@/hooks/useStockOut";
+import { useGoodsSoldReady, useStockOutReady } from "@/hooks/useStockOut";
 import StockReports from "@/components/inventory/StockReports";
 import { useStockReportsReady } from "@/hooks/useStockReports";
 import ToBuyList from "@/components/inventory/ToBuyList";
@@ -208,6 +208,8 @@ export default function Inventory() {
   // Reports worked out from the movements (migration 20261124400000). Until
   // they exist the older Analytics tab stays.
   const reportsReady = useStockReportsReady();
+  // Finished goods recorded as sold, oldest lot first (migration 20261124600000).
+  const goodsSoldReady = useGoodsSoldReady();
   const [showUnits, setShowUnits] = useState(false);
   const [showPlaces, setShowPlaces] = useState(false);
   const [showDaily, setShowDaily] = useState(false);
@@ -878,6 +880,7 @@ export default function Inventory() {
         skus={skus} allowNegative={invSettings.allow_negative_stock} prefill={stockOut} onDone={fetchData}
         onReceive={receiveReady ? (skuId) => setReceive({ skuId }) : undefined}
         onCount={() => setActiveTab("reconciliation")}
+        canSellGoods={goodsSoldReady}
       />
       <ReceiveSheet open={!!receive} onOpenChange={(o) => { if (!o) setReceive(null); }} prefill={receive} onDone={fetchData} />
       <InventoryDailyReport open={showDaily} onOpenChange={setShowDaily} />

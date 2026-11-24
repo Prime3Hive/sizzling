@@ -14,7 +14,8 @@ import { formatNaira, formatNairaCompact } from '@/lib/currency';
 import { cn } from '@/lib/utils';
 import { getCategoryLabel } from '@/lib/inventoryConstants';
 import { itemKindLabel } from '@/lib/itemMaster';
-import { ROUTE_META, type StockRoute } from '@/lib/stockRoutes';
+import { ROUTE_META, daysToExpiry, type StockRoute } from '@/lib/stockRoutes';
+import { useStockLots } from '@/hooks/useStockOut';
 import {
   COGS_LABEL, OTHER_LABEL, costStatement, foodCostPct, monthRange, pivotUsage, recentMonths, toCsv,
 } from '@/lib/stockReports';
@@ -24,7 +25,7 @@ import { fmtQty, withPurchaseEquivalent } from '@/lib/units';
 // the cost each one carried, so they agree with the item histories. Nothing
 // here changes the books.
 
-type ReportKey = 'food' | 'on-hand' | 'usage' | 'counts' | 'waste' | 'suppliers' | 'prices';
+type ReportKey = 'food' | 'on-hand' | 'usage' | 'counts' | 'waste' | 'suppliers' | 'prices' | 'lots';
 
 interface StockItem {
   id: string; name: string; category: string; unit_of_measure: string;
@@ -106,6 +107,7 @@ export default function StockReports({ skus, unitsBySku, canSeeSuppliers }: {
   const waste = useWasteReport(from, to, report === 'waste');
   const suppliers = useSupplierReport(from, to, report === 'suppliers' && canSeeSuppliers);
   const prices = usePriceChanges(from.slice(0, 7) + '-01', report === 'prices');
+  const lots = useStockLots(report === 'lots');
 
   const chips: { value: ReportKey; label: string }[] = [
     { value: 'food', label: 'Food cost' },
@@ -115,13 +117,14 @@ export default function StockReports({ skus, unitsBySku, canSeeSuppliers }: {
     { value: 'waste', label: 'Waste' },
     ...(canSeeSuppliers ? [{ value: 'suppliers' as const, label: 'Purchases by supplier' }] : []),
     { value: 'prices', label: 'Price changes' },
+    { value: 'lots', label: 'Finished goods' },
   ];
 
   return (
     <div className="space-y-5">
       <FilterChips<ReportKey> label="Report" value={report} onChange={setReport} options={chips} />
 
-      {report !== 'on-hand' && (
+      {report !== 'on-hand' && report !== 'lots' && (
         <div className="flex flex-wrap items-end gap-3">
           <div className="space-y-1.5">
             <Label htmlFor="rep-month" className="text-xs">Month</Label>
@@ -400,6 +403,45 @@ export default function StockReports({ skus, unitsBySku, canSeeSuppliers }: {
             <p className="text-xs text-muted-foreground">
               Includes purchases received, goods received notes, and expenses typed straight into a stock category. “Still owed” is every unpaid amount, whenever it was bought.
             </p>
+          </Shell>
+        );
+      })()}
+
+      {/* ── Finished goods by lot ── */}
+      {report === 'lots' && (() => {
+        const today = new Date().toISOString().slice(0, 10);
+        const rows = lots.data ?? [];
+        const value = (l: typeof rows[number]) => l.qty_remaining * (l.unit_cost ?? 0);
+        const expired = rows.filter((l) => (daysToExpiry(l, today) ?? 1) < 0);
+        return (
+          <Shell title="Finished goods" answers="Every lot made in production with stock left, the first to expire at the top. Sales take from the oldest in-date lot first."
+            loading={lots.isLoading} error={lots.error as Error | null} empty={!rows.length && 'No finished-good lots in stock.'}
+            onExport={() => download(`finished-goods-lots-${today}.csv`, toCsv(['Item', 'Lot', 'Made on', 'Expires on', 'Days left', 'Remaining', 'Unit', 'Value'],
+              rows.map((l) => [l.products?.name, l.lot_number, l.produced_on, l.expires_on, daysToExpiry(l, today), l.qty_remaining, l.products?.uom, Math.round(value(l) * 100) / 100])))}>
+            {expired.length > 0 && (
+              <p className="flex gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" aria-hidden />
+                <span>{expired.length} lot{expired.length === 1 ? ' has' : 's have'} expired with stock still on it, worth {money(expired.reduce((t, l) => t + value(l), 0))}. Expired stock cannot be sold: record it under Use stock → Waste.</span>
+              </p>
+            )}
+            <Table head={[{ label: 'Item' }, { label: 'Lot' }, { label: 'Expires' }, { label: 'Remaining', right: true }, { label: 'Value', right: true }]}
+              foot={<tr><td className={td} colSpan={4}>{rows.length} lot{rows.length === 1 ? '' : 's'}</td><td className={cn(td, numCls)}>{money(rows.reduce((t, l) => t + value(l), 0))}</td></tr>}>
+              {rows.map((l) => {
+                const d = daysToExpiry(l, today);
+                return (
+                  <tr key={l.id}>
+                    <td className={cn(td, 'font-medium')}>{l.products?.name ?? 'Item'}</td>
+                    <td className={td}><span className="font-mono text-xs">{l.lot_number}</span><span className="block text-xs text-muted-foreground">made {day(l.produced_on)}</span></td>
+                    <td className={cn(td, d != null && d < 0 ? 'font-semibold text-destructive' : d != null && d <= 3 ? 'font-semibold text-amber-700 dark:text-amber-400' : '')}>
+                      {l.expires_on ? day(l.expires_on) : 'No expiry'}
+                      {d != null && <span className="block text-xs font-normal text-muted-foreground">{d < 0 ? `expired ${-d} day${d === -1 ? '' : 's'} ago` : d === 0 ? 'expires today' : `${d} day${d === 1 ? '' : 's'} left`}</span>}
+                    </td>
+                    <td className={cn(td, numCls)}>{fmtQty(l.qty_remaining)} {l.products?.uom}</td>
+                    <td className={cn(td, numCls)}>{money(value(l))}</td>
+                  </tr>
+                );
+              })}
+            </Table>
           </Shell>
         );
       })()}

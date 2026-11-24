@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, CalendarHeart, ChefHat, Loader2, Plus, Trash2, Undo2, X } from 'lucide-react';
+import { AlertTriangle, CalendarHeart, ChefHat, Loader2, Plus, ShoppingBag, Trash2, Undo2, X } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { FormSheet, Field } from '@/components/ui/form-sheet';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,11 +13,11 @@ import { useAuth } from '@/hooks/useAuth';
 import { toast } from '@/hooks/use-toast';
 import { useItemUnits } from '@/hooks/useItemUnits';
 import { useInventorySettings } from '@/hooks/useInventorySettings';
-import { useEventInvoices } from '@/hooks/useStockOut';
+import { useEventInvoices, useStockLots } from '@/hooks/useStockOut';
 import { formatNairaCompact } from '@/lib/currency';
 import { cn } from '@/lib/utils';
 import { factorOf, fmtQty, normaliseUnit, toStock, unusualUsage } from '@/lib/units';
-import { DEFAULT_WASTE_REASONS, orderDailySheet } from '@/lib/stockRoutes';
+import { DEFAULT_WASTE_REASONS, drawFromLots, orderDailySheet } from '@/lib/stockRoutes';
 
 // Stock out, by route. Stock leaves as an issue to the kitchen, an issue to a
 // named event, or waste; unused event stock comes back as a return. (The
@@ -25,7 +26,7 @@ import { DEFAULT_WASTE_REASONS, orderDailySheet } from '@/lib/stockRoutes';
 
 const db = supabase as any;
 
-export type OutRoute = 'kitchen' | 'event' | 'waste' | 'event_return';
+export type OutRoute = 'kitchen' | 'event' | 'waste' | 'event_return' | 'sale';
 
 export interface StockOutPrefill {
   route?: OutRoute;
@@ -48,6 +49,7 @@ const ROUTES: { value: OutRoute; label: string; hint: string; icon: React.Elemen
   { value: 'event', label: 'Event', hint: 'Taken for a named event', icon: CalendarHeart },
   { value: 'waste', label: 'Waste', hint: 'Spoiled, spilled, burnt or expired', icon: Trash2 },
   { value: 'event_return', label: 'Return', hint: 'Unused stock back from an event', icon: Undo2 },
+  { value: 'sale', label: 'Sold', hint: 'Finished goods sold in the day’s sales', icon: ShoppingBag },
 ];
 
 const TYPE_NAME = '__type_name__';
@@ -57,7 +59,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 const num = (s: string) => parseFloat(s) || 0;
 const selectCls = 'h-11 w-full min-w-0 rounded-md border border-input bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60';
 
-export default function StockOutSheet({ open, onOpenChange, skus, allowNegative, prefill, onDone, onReceive, onCount }: {
+export default function StockOutSheet({ open, onOpenChange, skus, allowNegative, prefill, onDone, onReceive, onCount, canSellGoods }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   skus: OutItem[];
@@ -68,12 +70,15 @@ export default function StockOutSheet({ open, onOpenChange, skus, allowNegative,
   onReceive?: (skuId: string) => void;
   /** Go to the count, when the records and the shelf disagree. */
   onCount?: () => void;
+  /** Finished goods can be recorded as sold (migration 20261124600000). */
+  canSellGoods?: boolean;
 }) {
   const { user } = useAuth();
   const qc = useQueryClient();
   const { bySku: unitsBySku } = useItemUnits();
   const { settings } = useInventorySettings();
   const { data: events = [] } = useEventInvoices(open);
+  const { data: allLots = [] } = useStockLots(open && !!canSellGoods);
 
   const [route, setRoute] = useState<OutRoute>('kitchen');
   const [lines, setLines] = useState<Line[]>([]);
@@ -150,9 +155,12 @@ export default function StockOutSheet({ open, onOpenChange, skus, allowNegative,
   const unusual = route === 'kitchen' || route === 'event' ? filled.filter((c) => c.s && unusualUsage(c.stockQty, c.u?.largestReceipt)) : [];
   const totalValue = filled.reduce((t, c) => t + c.value, 0);
 
+  // Only finished goods are sold from here; ingredients leave by the other routes.
+  const sellable = (id: string) => !!unitsBySku.get(id)?.produced;
+  const lotsOf = (id: string) => { const pid = unitsBySku.get(id)?.productId; return pid ? allLots.filter((l) => l.product_id === pid) : []; };
   const optionsFor = (key: number): SelectOption[] => {
     const taken = new Set(lines.filter((l) => l.key !== key).map((l) => l.sku_id).filter(Boolean));
-    return active.filter((s) => !taken.has(s.id)).map((s) => ({
+    return active.filter((s) => !taken.has(s.id) && (route !== 'sale' || sellable(s.id))).map((s) => ({
       value: s.id, label: s.name, hint: `${fmtQty(Number(s.stock_quantity))} ${stockUnitOf(s.id)} on hand`,
     }));
   };
@@ -181,6 +189,13 @@ export default function StockOutSheet({ open, onOpenChange, skus, allowNegative,
   if (needsEvent && (typedEvent ? !eventName.trim() : !eventId)) problems.push('Say which event it is for.');
   if (route === 'waste' && !reason) problems.push('Choose why it was thrown away.');
   if (route === 'waste' && reason.toLowerCase() === 'other' && !note.trim()) problems.push('Say what happened in the note.');
+  // Sold: nothing from an expired lot, and no more than is in date.
+  const soldShort = route === 'sale'
+    ? filled.map((c) => ({ c, lots: lotsOf(c.s!.id) })).filter((x) => x.lots.length > 0)
+        .map((x) => ({ c: x.c, d: drawFromLots(x.lots, x.c.stockQty, date) })).filter((x) => x.d.short > 0 && x.d.expired > 0)
+    : [];
+  if (soldShort.length) problems.push(`${soldShort[0].c.s!.name}: part of the stock has expired and cannot be sold. Record it as waste.`);
+  if (route === 'sale' && filled.some((c) => !sellable(c.s!.id))) problems.push('Only finished goods can be recorded as sold.');
 
   const submit = async () => {
     setTried(true);
@@ -208,7 +223,13 @@ export default function StockOutSheet({ open, onOpenChange, skus, allowNegative,
         const up = await supabase.storage.from('receipts').upload(photoPath, photo);
         if (up.error) throw up.error;
       }
-      const { data, error } = await db.rpc('fn_issue_stock', {
+      const { data, error } = route === 'sale' ? await db.rpc('fn_record_goods_sold', {
+        p_lines: filled.map((c) => (c.converted
+          ? { sku_id: c.s!.id, quantity: c.qty, unit: c.unit }
+          : { sku_id: c.s!.id, quantity: c.qty })),
+        p_occurred_on: date,
+        p_note: note.trim() || null,
+      }) : await db.rpc('fn_issue_stock', {
         p_route: route,
         p_lines: filled.map((c) => (c.converted
           ? { sku_id: c.s!.id, quantity: c.qty, unit: c.unit }
@@ -232,12 +253,15 @@ export default function StockOutSheet({ open, onOpenChange, skus, allowNegative,
         title: route === 'kitchen' ? `Issued to kitchen: ${items}`
           : route === 'event' ? `Issued to the event: ${items}`
           : route === 'waste' ? `Waste recorded: ${items}`
+          : route === 'sale' ? `Recorded as sold: ${items}`
           : `Returned from the event: ${items}`,
         description: needsEvent && data?.event_food_cost != null
           ? `This event’s food cost is now ${formatNairaCompact(Number(data.event_food_cost))}.`
-          : `${formatNairaCompact(Math.abs(Number(data?.value ?? 0)))} at average cost.`,
+          : route === 'sale' && Array.isArray(data?.lots) && data.lots.some((l: any) => l.lot_number)
+            ? `Taken from ${data.lots.filter((l: any) => l.lot_number).map((l: any) => `${l.lot_number} (${fmtQty(Number(l.quantity))})`).join(', ')}.`
+            : `${formatNairaCompact(Math.abs(Number(data?.value ?? 0)))} at average cost.`,
       });
-      for (const key of [['inventory-data'], ['inventory-item'], ['item-units'], ['stock-out-usage-30d'], ['ops-low-stock'], ['skus-for-stock-in']]) {
+      for (const key of [['inventory-data'], ['inventory-item'], ['item-units'], ['stock-out-usage-30d'], ['ops-low-stock'], ['skus-for-stock-in'], ['stock-lots-in-stock'], ['production'], ['stock-reports']]) {
         qc.invalidateQueries({ queryKey: key });
       }
       onDone();
@@ -249,7 +273,8 @@ export default function StockOutSheet({ open, onOpenChange, skus, allowNegative,
     }
   };
 
-  const cta = route === 'kitchen' ? 'Issue to kitchen' : route === 'event' ? 'Issue to event' : route === 'waste' ? 'Record waste' : 'Record return';
+  const cta = route === 'kitchen' ? 'Issue to kitchen' : route === 'event' ? 'Issue to event' : route === 'waste' ? 'Record waste' : route === 'sale' ? 'Record as sold' : 'Record return';
+  const shownRoutes = ROUTES.filter((r) => r.value !== 'sale' || canSellGoods);
   let lastPlace: string | null = null;
 
   return (
@@ -274,12 +299,18 @@ export default function StockOutSheet({ open, onOpenChange, skus, allowNegative,
       }
     >
       <div className="space-y-6">
-        <div role="radiogroup" aria-label="Where the stock went" className="grid grid-cols-4 gap-2">
-          {ROUTES.map((r) => {
+        <div role="radiogroup" aria-label="Where the stock went" className={cn('grid gap-2', shownRoutes.length > 4 ? 'grid-cols-3 sm:grid-cols-5' : 'grid-cols-4')}>
+          {shownRoutes.map((r) => {
             const Icon = r.icon;
             const on = route === r.value;
             return (
-              <button key={r.value} type="button" role="radio" aria-checked={on} onClick={() => { setRoute(r.value); touch(); }}
+              <button key={r.value} type="button" role="radio" aria-checked={on}
+                onClick={() => {
+                  setRoute(r.value);
+                  // Ingredients cannot be sold from here: drop any that were listed.
+                  if (r.value === 'sale') setLines((p) => { const keep = p.filter((l) => !l.sku_id || sellable(l.sku_id)); return keep.length ? keep : [{ key: nextKey(), sku_id: '', quantity: '', unit: '' }]; });
+                  touch();
+                }}
                 className={cn('flex flex-col items-center gap-1 rounded-xl border p-2.5 text-center transition-colors',
                   on ? 'border-primary bg-primary/5 text-foreground' : 'text-muted-foreground hover:border-foreground/30')}>
                 <Icon className={cn('h-5 w-5', on && 'text-primary')} aria-hidden />
@@ -289,7 +320,10 @@ export default function StockOutSheet({ open, onOpenChange, skus, allowNegative,
             );
           })}
         </div>
-        <p className="-mt-3 text-xs text-muted-foreground">A batch made from a recipe is recorded under Production.</p>
+        <p className="-mt-3 text-xs text-muted-foreground">
+          A batch made from a recipe is recorded under <Link to="/business/production" className="underline underline-offset-2">Production</Link>.
+          {route === 'sale' && ' Sold here is for finished goods sold in the day’s takings; anything on an invoice with an item line is taken off by the invoice.'}
+        </p>
 
         {needsEvent && (
           <div className="grid gap-4 sm:grid-cols-2">
@@ -364,6 +398,17 @@ export default function StockOutSheet({ open, onOpenChange, skus, allowNegative,
                     {c.qty > 0 && <> → {fmtQty(c.onHand + (incoming ? c.stockQty : -c.stockQty))} {c.stockUnit} after</>}
                   </p>
                 )}
+                {route === 'sale' && c.s && c.qty > 0 && (() => {
+                  const lots = lotsOf(c.s.id);
+                  if (lots.length === 0) return null;
+                  const d = drawFromLots(lots, c.stockQty, date);
+                  return (
+                    <p className={cn('text-xs', d.short > 0 && d.expired > 0 ? 'font-medium text-destructive' : 'text-muted-foreground')}>
+                      {d.draws.length > 0 && <>Oldest lot first: {d.draws.map((x) => `${x.lot.lot_number} ${fmtQty(x.qty)}${x.lot.expires_on ? ` (expires ${x.lot.expires_on})` : ''}`).join(', ')}. </>}
+                      {d.expired > 0 && <>{fmtQty(d.expired)} {c.stockUnit} has expired and cannot be sold: record it as waste.</>}
+                    </p>
+                  );
+                })()}
                 {isShort && (
                   <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs">
                     <p>More than is in stock. Stock cannot go below zero, so either a delivery was not recorded or the count is wrong.</p>

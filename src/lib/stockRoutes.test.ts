@@ -91,3 +91,32 @@ describe('count', () => {
     expect(countSummary(lines, undefined, { a: 'Freezer left open' }, (l) => (l as unknown as { id: string }).id).unexplained).toBe(0);
   });
 });
+
+describe('finished-good lots', () => {
+  const lots = [
+    { lot_number: 'CC-B', expires_on: '2026-12-24', produced_on: '2026-11-21', qty_remaining: 20 },
+    { lot_number: 'CC-A', expires_on: '2026-11-26', produced_on: '2026-11-16', qty_remaining: 10 },
+    { lot_number: 'CC-X', expires_on: '2026-11-23', produced_on: '2026-11-04', qty_remaining: 5 },
+  ];
+
+  it('sells from the oldest in-date lot first', async () => {
+    const { drawFromLots } = await import('./stockRoutes');
+    const d = drawFromLots(lots, 15, '2026-11-24');
+    expect(d.draws.map((x) => [x.lot.lot_number, x.qty])).toEqual([['CC-A', 10], ['CC-B', 5]]);
+    expect(d.short).toBe(0);
+    expect(d.expired).toBe(5);
+  });
+
+  it('does not sell an expired lot: what is short stays short', async () => {
+    const { drawFromLots, lotExpired, daysToExpiry } = await import('./stockRoutes');
+    const d = drawFromLots(lots, 32, '2026-11-24');
+    expect(d.draws.reduce((t, x) => t + x.qty, 0)).toBe(30);
+    expect(d.short).toBe(2);
+    expect(lotExpired(lots[2], '2026-11-24')).toBe(true);
+    // A lot is still good on the day it expires.
+    expect(lotExpired(lots[1], '2026-11-26')).toBe(false);
+    expect(daysToExpiry(lots[1], '2026-11-24')).toBe(2);
+    expect(daysToExpiry(lots[2], '2026-11-24')).toBe(-1);
+    expect(daysToExpiry({ expires_on: null }, '2026-11-24')).toBeNull();
+  });
+});

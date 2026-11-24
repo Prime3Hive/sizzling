@@ -44,7 +44,7 @@ export const COGS_LABEL: Record<keyof CostReport['cogs'], string> = {
   waste: 'Waste',
   count_difference: 'Count differences',
   usage: 'Used, route not said',
-  sale: 'Sold from stock on an invoice',
+  sale: 'Finished goods and stock sold',
 };
 
 export const OTHER_LABEL: Record<keyof CostReport['other'], string> = {

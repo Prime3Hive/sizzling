@@ -100,3 +100,51 @@ export function useEventInvoices(enabled = true) {
     },
   });
 }
+
+/** true once finished goods can be recorded as sold (migration 20261124600000). */
+export function useGoodsSoldReady() {
+  const { user } = useAuth();
+  const q = useQuery<boolean>({
+    queryKey: ['goods-sold', 'ready'],
+    enabled: !!user,
+    staleTime: 10 * 60_000,
+    queryFn: async () => {
+      // An empty list is refused by the function itself; "function not found"
+      // means the migration is not applied.
+      const { error } = await db.rpc('fn_record_goods_sold', { p_lines: [] });
+      if (!error) return true;
+      return error.code !== 'PGRST202' && !/could not find the function/i.test(error.message ?? '');
+    },
+  });
+  return q.data ?? false;
+}
+
+export interface StockLot {
+  id: string;
+  product_id: string;
+  lot_number: string;
+  produced_on: string;
+  expires_on: string | null;
+  qty_remaining: number;
+  unit_cost: number | null;
+  products?: { name: string; uom: string | null; sku_id: string | null } | null;
+}
+
+/** Lots of finished goods with something left, oldest expiry first. */
+export function useStockLots(enabled = true) {
+  const { user } = useAuth();
+  return useQuery<StockLot[]>({
+    queryKey: ['stock-lots-in-stock'],
+    enabled: !!user && enabled,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const { data, error } = await db.from('stock_lots')
+        .select('id, product_id, lot_number, produced_on, expires_on, qty_remaining, unit_cost, products(name, uom, sku_id)')
+        .eq('status', 'active').gt('qty_remaining', 0)
+        .order('expires_on', { ascending: true, nullsFirst: false }).order('produced_on').limit(1000);
+      // Before the production migration there are no lots.
+      if (error) return [];
+      return (data ?? []).map((r: any) => ({ ...r, qty_remaining: Number(r.qty_remaining), unit_cost: r.unit_cost == null ? null : Number(r.unit_cost) }));
+    },
+  });
+}
