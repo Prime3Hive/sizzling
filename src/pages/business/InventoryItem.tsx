@@ -109,18 +109,35 @@ export default function InventoryItem() {
       // (.maybeSingle()), which fails without a word when an item has two
       // linked products, and the page then said "no stock movements" for an
       // item that had plenty.
+      //
+      // Stock rows and warehouse names are fetched on their own, not embedded:
+      // `inventory` has two foreign keys to `products` (and two to
+      // `warehouses`), so an embed is ambiguous and the API answers HTTP 300.
       const db = supabase as any;
       let prodRes = await db.from("products")
-        .select("id, uom, purchase_unit, product_units(unit_name, factor), inventory(quantity, reorder_level, warehouses(name))")
+        .select("id, uom, purchase_unit, product_units(unit_name, factor)")
         .eq("sku_id", skuId);
       if (prodRes.error) {
-        prodRes = await db.from("products")
-          .select("id, uom, inventory(quantity, reorder_level, warehouses(name))")
-          .eq("sku_id", skuId);
+        // Before the units migration (20261123200000).
+        prodRes = await db.from("products").select("id, uom").eq("sku_id", skuId);
       }
       if (prodRes.error) throw prodRes.error;
       const products: any[] = prodRes.data ?? [];
       const ids = products.map(p => p.id);
+
+      let stock: StockRow[] = [];
+      if (ids.length) {
+        const [invRes, whRes] = await Promise.all([
+          db.from("inventory").select("quantity, reorder_level, warehouse_id").in("product_id", ids),
+          db.from("warehouses").select("id, name"),
+        ]);
+        if (invRes.error) throw invRes.error;
+        const whName = new Map<string, string>((whRes.data ?? []).map((w: any) => [w.id, w.name]));
+        stock = (invRes.data ?? []).map((r: any) => ({
+          quantity: r.quantity, reorder_level: r.reorder_level,
+          warehouses: whName.has(r.warehouse_id) ? { name: whName.get(r.warehouse_id)! } : null,
+        }));
+      }
 
       let movements: MovementRow[] = [];
       let totalMovements = 0;
@@ -148,7 +165,7 @@ export default function InventoryItem() {
       const main = products[0];
       return {
         sku: sku as unknown as ItemSku,
-        stock: (products.flatMap(p => p.inventory ?? []) as StockRow[]),
+        stock,
         movements,
         totalMovements,
         changes,

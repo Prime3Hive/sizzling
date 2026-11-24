@@ -88,10 +88,13 @@ export function useProductionData(enabled = true) {
     queryKey: ['production'],
     enabled,
     queryFn: async () => {
-      const [prodRes, unitRes, recipeRes, runRes, lotRes, whRes, nameRes] = await Promise.all([
+      const [prodRes, invRes, unitRes, recipeRes, runRes, lotRes, whRes, nameRes] = await Promise.all([
         db.from('products')
-          .select('id, sku_id, name, uom, category, item_class, lot_code, shelf_life_days, cost_price, inventory(quantity)')
+          .select('id, sku_id, name, uom, category, item_class, lot_code, shelf_life_days, cost_price')
           .order('name'),
+        // Not embedded in the products query: `inventory` has two foreign keys
+        // to `products`, so the embed is ambiguous (HTTP 300).
+        db.from('inventory').select('product_id, quantity').limit(10000),
         db.from('product_units').select('product_id, unit_name, factor'),
         db.from('recipes')
           .select('*, recipe_lines(id, product_id, quantity, unit_name, factor, sort_order), recipe_costs(id, description, amount, sort_order)')
@@ -106,7 +109,10 @@ export function useProductionData(enabled = true) {
         db.from('warehouses').select('id, name').order('created_at'),
         supabase.from('profiles').select('user_id, full_name'),
       ]);
-      for (const r of [prodRes, unitRes, recipeRes, runRes, lotRes]) if (r.error) throw r.error;
+      for (const r of [prodRes, invRes, unitRes, recipeRes, runRes, lotRes]) if (r.error) throw r.error;
+
+      const onHand = new Map<string, number>();
+      for (const r of invRes.data ?? []) onHand.set(r.product_id, (onHand.get(r.product_id) ?? 0) + num(r.quantity));
 
       const packs = new Map<string, PackUnit[]>();
       for (const u of unitRes.data ?? []) {
@@ -120,7 +126,7 @@ export function useProductionData(enabled = true) {
         item_class: (p.item_class ?? 'raw_material') as ItemClass,
         lot_code: p.lot_code, shelf_life_days: p.shelf_life_days,
         cost: num(p.cost_price),
-        stock: (p.inventory ?? []).reduce((s: number, r: any) => s + num(r.quantity), 0),
+        stock: onHand.get(p.id) ?? 0,
         units: unitsFor(p.uom, packs.get(p.id) ?? []),
       }));
 
