@@ -12,6 +12,13 @@ export interface InventorySettings {
   storage_places: string[];
   /** A receipt above this total (in kobo) needs a photo or a reason. null = never. */
   receipt_photo_above_minor: number | null;
+  /** A count difference above this share of expected (%) needs a reason. */
+  count_reason_pct: number;
+  /** … or one worth more than this, in kobo. */
+  count_reason_value_minor: number;
+  /** A correction outside a count worth more than this (kobo) is the owner's to make. null = no limit. */
+  correction_owner_above_minor: number | null;
+  waste_reasons: string[];
 }
 
 // Until migration 20261016100000 is applied there is no settings row; the
@@ -20,6 +27,10 @@ const DEFAULTS: InventorySettings = {
   id: null, allow_negative_stock: false, notify_on_negative: true, custom_units: [],
   storage_places: ['Freezer', 'Cold room', 'Dry store', 'Gas store'],
   receipt_photo_above_minor: null,
+  count_reason_pct: 10,
+  count_reason_value_minor: 2_000_000,
+  correction_owner_above_minor: null,
+  waste_reasons: ['Spoiled', 'Spilled', 'Burnt', 'Expired', 'Damaged', 'Other'],
 };
 
 export function useInventorySettings() {
@@ -41,6 +52,10 @@ export function useInventorySettings() {
         custom_units: data.custom_units ?? [],
         storage_places: data.storage_places ?? DEFAULTS.storage_places,
         receipt_photo_above_minor: data.receipt_photo_above_minor != null ? Number(data.receipt_photo_above_minor) : null,
+        count_reason_pct: data.count_reason_pct != null ? Number(data.count_reason_pct) : DEFAULTS.count_reason_pct,
+        count_reason_value_minor: data.count_reason_value_minor != null ? Number(data.count_reason_value_minor) : DEFAULTS.count_reason_value_minor,
+        correction_owner_above_minor: data.correction_owner_above_minor != null ? Number(data.correction_owner_above_minor) : null,
+        waste_reasons: data.waste_reasons ?? DEFAULTS.waste_reasons,
       } as InventorySettings;
     },
   });

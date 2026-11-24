@@ -63,7 +63,7 @@ const num = (s: string) => parseFloat(s) || 0;
 
 const selectCls = 'h-11 w-full min-w-0 rounded-md border border-input bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
-export default function RecordStockSheet({ open, onOpenChange, skus, allowNegative, prefill, onDone, onReceive }: {
+export default function RecordStockSheet({ open, onOpenChange, skus, allowNegative, prefill, onDone, onReceive, lockMode }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   skus: StockItem[];
@@ -76,6 +76,12 @@ export default function RecordStockSheet({ open, onOpenChange, skus, allowNegati
    * stock-in linked to an existing expense (prefill.reference) still is.
    */
   onReceive?: (skuId?: string) => void;
+  /**
+   * Show this one mode only. Once stock leaves by route (Use stock) and counts
+   * are approved, this form is kept for the correction a manager or the owner
+   * makes outside a count.
+   */
+  lockMode?: StockMode;
 }) {
   const manualIn = !onReceive || !!prefill?.reference;
   const { bySku: allUnitsBySku, ready: unitsReady, refetch: refetchUnits } = useItemUnits();
@@ -113,7 +119,7 @@ export default function RecordStockSheet({ open, onOpenChange, skus, allowNegati
     if (!open) { wasOpen.current = false; return; }
     if (wasOpen.current) return;
     wasOpen.current = true;
-    const m = prefill?.mode ?? 'usage';
+    const m = lockMode ?? prefill?.mode ?? 'usage';
     setMode(m);
     setLines([{
       key: nextKey(), sku_id: prefill?.sku_id ?? '',
@@ -308,8 +314,10 @@ export default function RecordStockSheet({ open, onOpenChange, skus, allowNegati
       open={open}
       onOpenChange={onOpenChange}
       dirty={dirty}
-      title="Record stock"
-      description="Updates stock and the item’s history in one step. Every quantity is saved in the item’s stock unit."
+      title={lockMode === 'adjust' ? 'Correct stock' : 'Record stock'}
+      description={lockMode === 'adjust'
+        ? 'A correction outside a count, by a manager or the owner. The reason is kept on the item’s history.'
+        : 'Updates stock and the item’s history in one step. Every quantity is saved in the item’s stock unit.'}
       footer={
         <div className="flex gap-2.5 sm:justify-end">
           <Button variant="outline" className="flex-1 sm:flex-none" onClick={() => onOpenChange(false)}>Cancel</Button>
@@ -320,7 +328,7 @@ export default function RecordStockSheet({ open, onOpenChange, skus, allowNegati
       }
     >
       <div className="space-y-6">
-        <div role="radiogroup" aria-label="What happened" className={cn('grid gap-2', manualIn ? 'grid-cols-3' : 'grid-cols-2')}>
+        {!lockMode && <div role="radiogroup" aria-label="What happened" className={cn('grid gap-2', manualIn ? 'grid-cols-3' : 'grid-cols-2')}>
           {MODES.filter((m) => manualIn || m.value !== 'in').map((m) => {
             const Icon = m.icon;
             const on = mode === m.value;
@@ -337,7 +345,7 @@ export default function RecordStockSheet({ open, onOpenChange, skus, allowNegati
               </button>
             );
           })}
-        </div>
+        </div>}
 
         <section className="space-y-2">
           {multi && (

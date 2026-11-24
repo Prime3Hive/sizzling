@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import {
   Plus, Package, Search, Edit2, Archive, ArchiveRestore, ShoppingCart, ArrowRightLeft, ClipboardCheck,
-  History, LineChart, MoreHorizontal, ClipboardList, Settings2, AlertTriangle, CalendarDays, Download, Ruler, MapPin, PackagePlus, Receipt,
+  History, LineChart, MoreHorizontal, ClipboardList, Settings2, AlertTriangle, CalendarDays, Download, Ruler, MapPin, PackagePlus, Receipt, PackageMinus, SlidersHorizontal,
 } from "lucide-react";
 import { format } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
@@ -23,7 +23,7 @@ import { toast } from "@/hooks/use-toast";
 import { usePagination } from "@/hooks/usePagination";
 import { formatNairaCompact } from "@/lib/currency";
 import { cn } from "@/lib/utils";
-import { INVENTORY_CATEGORIES, getCategoryLabel, MOVEMENT_META, movementMeta } from "@/lib/inventoryConstants";
+import { INVENTORY_CATEGORIES, getCategoryLabel } from "@/lib/inventoryConstants";
 import { ResponsiveTable, type ResponsiveColumn } from "@/components/ui/responsive-table";
 import { TablePagination } from "@/components/ui/table-pagination";
 import { EmptyState, FilterChips, PageHeader, StatusPill } from "@/components/shell/ui";
@@ -45,6 +45,10 @@ import ItemFormSheet, { ArchiveItemDialog, StoragePlacesDialog } from "@/compone
 import ReceiveSheet, { type ReceivePrefill } from "@/components/inventory/ReceiveSheet";
 import ReceiptsList from "@/components/inventory/ReceiptsList";
 import { useReceiveReady } from "@/hooks/useStockReceipts";
+import StockOutSheet, { type StockOutPrefill } from "@/components/inventory/StockOutSheet";
+import StockCount from "@/components/inventory/StockCount";
+import { useStockOutReady } from "@/hooks/useStockOut";
+import { ROUTE_FILTERS, ROUTE_META, routeMeta, routeOf } from "@/lib/stockRoutes";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -96,6 +100,9 @@ interface Movement {
   entered_qty?: number | null;
   entered_unit?: string | null;
   stock_unit?: string | null;
+  route?: string | null;
+  reason?: string | null;
+  event_name?: string | null;
   products: { name: string; uom: string | null; category: string | null; sku_id: string | null } | null;
 }
 
@@ -144,6 +151,30 @@ function Tile({ label, value, sub, tone = "neutral", onClick }: {
     : <div className={cls}>{body}</div>;
 }
 
+/** A number in Inventory setup that saves when the field is left. */
+function SettingNumber({ id, label, hint, value, allowBlank, disabled, onSave }: {
+  id: string; label: string; hint?: string; value: number | null; allowBlank?: boolean; disabled?: boolean;
+  onSave: (value: number | null) => Promise<unknown>;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor={id} className="text-xs">{label}</Label>
+      <Input id={id} type="number" inputMode="decimal" min="0" step="any" className="w-40"
+        key={String(value)} defaultValue={value ?? ""} disabled={disabled}
+        onBlur={(e) => {
+          const raw = e.target.value.trim();
+          if (raw === "" && !allowBlank) { e.target.value = String(value ?? ""); return; }
+          const next = raw === "" ? null : Math.max(Number(raw) || 0, 0);
+          if (next === value) return;
+          onSave(next)
+            .then(() => toast({ title: "Saved" }))
+            .catch((err) => toast({ title: "Could not save", description: (err as Error).message, variant: "destructive" }));
+        }} />
+      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+    </div>
+  );
+}
+
 export default function Inventory() {
   const { user } = useAuth();
   const { isAdmin, isManager, hasPermission } = useRoles();
@@ -163,6 +194,13 @@ export default function Inventory() {
   const receiveReady = useReceiveReady();
   const [receive, setReceive] = useState<ReceivePrefill | null>(null);
   const canReverse = isAdmin || isManager;
+  // Stock out by route and approved counts: live once migration 20261124300000
+  // is applied. Until then Record stock and the old stock take stay.
+  const stockOutReady = useStockOutReady();
+  const [stockOut, setStockOut] = useState<StockOutPrefill | null>(null);
+  // From then a correction outside a count is a manager's or the owner's.
+  const canCorrect = stockOutReady ? isAdmin || isManager : canRecord;
+  const [movementUser, setMovementUser] = useState("");
   const [showUnits, setShowUnits] = useState(false);
   const [showPlaces, setShowPlaces] = useState(false);
   const [showDaily, setShowDaily] = useState(false);
@@ -335,12 +373,17 @@ export default function Inventory() {
   const negativeSkus = useMemo(() => activeSkus.filter(s => Number(s.stock_quantity) < 0), [activeSkus]);
 
   const filteredMovements = useMemo(() => movements.filter(m =>
-    (movementFilter === "all" || m.movement_type === movementFilter)
+    (movementFilter === "all" || routeOf(m) === movementFilter)
+    && (!movementUser || m.created_by === movementUser)
     && (!movementItem || m.products?.sku_id === movementItem)
     && (!movementFrom || m.occurred_on >= movementFrom)
     && (!movementTo || m.occurred_on <= movementTo)),
-    [movements, movementFilter, movementItem, movementFrom, movementTo]);
-  const movementFiltersOn = movementFilter !== "all" || !!movementItem || !!movementFrom || !!movementTo;
+    [movements, movementFilter, movementUser, movementItem, movementFrom, movementTo]);
+  const movementFiltersOn = movementFilter !== "all" || !!movementUser || !!movementItem || !!movementFrom || !!movementTo;
+  const userOptions = useMemo(() => {
+    const ids = [...new Set(movements.map(m => m.created_by).filter(Boolean) as string[])];
+    return ids.map(id => ({ value: id, label: nameByUserId[id] || "Unknown" })).sort((a, b) => a.label.localeCompare(b.label));
+  }, [movements, nameByUserId]);
   const itemOptions = useMemo(() => skus.map(s => ({ value: s.id, label: s.name })), [skus]);
 
   const itemPages = usePagination(filteredSKUs, 25);
@@ -460,11 +503,15 @@ export default function Inventory() {
                 <DropdownMenuItem onClick={() => navigate(`/business/inventory/item/${sku.id}`)}>
                   <History className="mr-2 h-3.5 w-3.5" />Stock history
                 </DropdownMenuItem>
-                {!sku.is_archived && canRecord && (
+                {!sku.is_archived && canRecord && (stockOutReady ? (
+                  <DropdownMenuItem onClick={() => setStockOut({ skuId: sku.id })}>
+                    <PackageMinus className="mr-2 h-3.5 w-3.5" />Use stock
+                  </DropdownMenuItem>
+                ) : (
                   <DropdownMenuItem onClick={() => setRecord({ mode: "usage", sku_id: sku.id })}>
                     <ArrowRightLeft className="mr-2 h-3.5 w-3.5" />Record stock
                   </DropdownMenuItem>
-                )}
+                ))}
                 {!sku.is_archived && canOrder && (
                   <DropdownMenuItem onClick={() => handleOrderViaLPO(sku)}>
                     <ClipboardList className="mr-2 h-3.5 w-3.5" />Order via LPO
@@ -516,10 +563,10 @@ export default function Inventory() {
       ),
     },
     {
-      key: "type", header: "Type",
+      key: "type", header: "Route",
       cell: (m) => {
-        const meta = movementMeta(m.movement_type);
-        return <span className={cn("inline-flex h-6 items-center rounded-md border px-2 text-xs font-semibold", meta.cls)}>{meta.label}</span>;
+        const meta = routeMeta(m);
+        return <span className={cn("inline-flex h-6 items-center whitespace-nowrap rounded-md border px-2 text-xs font-semibold", meta.cls)}>{meta.label}</span>;
       },
     },
     {
@@ -528,7 +575,11 @@ export default function Inventory() {
     },
     {
       key: "note", header: "Note", hideOnMobile: true,
-      cell: (m) => <span className="block max-w-xs truncate text-sm text-muted-foreground">{m.note || "—"}</span>,
+      cell: (m) => (
+        <span className="block max-w-xs truncate text-sm text-muted-foreground">
+          {[m.event_name, m.reason && m.reason !== m.note ? m.reason : null, m.note].filter(Boolean).join(" · ") || "—"}
+        </span>
+      ),
     },
     {
       key: "by", header: "Recorded by", hideOnMobile: true,
@@ -560,7 +611,12 @@ export default function Inventory() {
               <PackagePlus className="mr-2 h-4 w-4" />Receive
             </Button>
           )}
-          {canRecord && (
+          {canRecord && stockOutReady && (
+            <Button variant={receiveReady ? "outline" : "default"} className="flex-1 sm:flex-none" onClick={() => setStockOut({})}>
+              <PackageMinus className="mr-2 h-4 w-4" />Use stock
+            </Button>
+          )}
+          {canRecord && !stockOutReady && (
             <Button variant={receiveReady ? "outline" : "default"} className="flex-1 sm:flex-none" onClick={() => setRecord({ mode: "usage" })}>
               <ArrowRightLeft className="mr-2 h-4 w-4" />Record stock
             </Button>
@@ -581,6 +637,11 @@ export default function Inventory() {
                 <ClipboardList className="mr-2 h-4 w-4" />Stock requests
                 {pendingRequests > 0 && <span className="ml-auto rounded-full bg-primary px-1.5 text-xs font-bold text-primary-foreground">{pendingRequests}</span>}
               </DropdownMenuItem>
+              {stockOutReady && canCorrect && (
+                <DropdownMenuItem onClick={() => setRecord({ mode: "adjust" })}>
+                  <SlidersHorizontal className="mr-2 h-4 w-4" />Correct stock
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem onClick={() => setShowDaily(true)}>
                 <CalendarDays className="mr-2 h-4 w-4" />Daily report
               </DropdownMenuItem>
@@ -635,7 +696,9 @@ export default function Inventory() {
           <TabsTrigger value="items" className="gap-1.5"><Package className="h-4 w-4" />Items</TabsTrigger>
           {receiveReady && <TabsTrigger value="receipts" className="gap-1.5"><Receipt className="h-4 w-4" />Receipts</TabsTrigger>}
           <TabsTrigger value="movements" className="gap-1.5"><History className="h-4 w-4" />Movements</TabsTrigger>
-          {canManage && <TabsTrigger value="reconciliation" className="gap-1.5"><ClipboardCheck className="h-4 w-4" />Stock take</TabsTrigger>}
+          {(stockOutReady ? canRecord || canManage : canManage) && (
+            <TabsTrigger value="reconciliation" className="gap-1.5"><ClipboardCheck className="h-4 w-4" />{stockOutReady ? "Count" : "Stock take"}</TabsTrigger>
+          )}
           <TabsTrigger value="analytics" className="gap-1.5"><LineChart className="h-4 w-4" />Analytics</TabsTrigger>
         </TabsList>
 
@@ -692,17 +755,17 @@ export default function Inventory() {
         {/* ── Movements ── */}
         <TabsContent value="movements" className="space-y-4">
           <p className="text-sm text-muted-foreground">
-            Every stock-in, use, sale and correction, newest first, in the unit it was typed in. Tap one to open the item.
+            Every movement, newest first, with the route it took and the unit it was typed in. Tap one to open the item.
             {movements.length >= 1000 && " Showing the latest 1,000; open an item for its full history."}
           </p>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[13rem_minmax(0,1fr)_auto_auto_auto] xl:items-end">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[12rem_minmax(0,1fr)_12rem_auto_auto_auto] xl:items-end">
             <div className="space-y-1.5">
-              <Label className="text-xs">Type</Label>
+              <Label className="text-xs">Route</Label>
               <Select value={movementFilter} onValueChange={setMovementFilter}>
-                <SelectTrigger aria-label="Movement type"><SelectValue /></SelectTrigger>
+                <SelectTrigger aria-label="Route"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All movements</SelectItem>
-                  {Object.entries(MOVEMENT_META).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}
+                  <SelectItem value="all">All routes</SelectItem>
+                  {ROUTE_FILTERS.map((r) => <SelectItem key={r} value={r}>{ROUTE_META[r].label}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -710,6 +773,11 @@ export default function Inventory() {
               <Label className="text-xs">Item</Label>
               <SearchableSelect options={itemOptions} value={movementItem} onChange={setMovementItem}
                 title="Choose an item" placeholder="All items" emptyOptionLabel="All items" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Recorded by</Label>
+              <SearchableSelect options={userOptions} value={movementUser} onChange={setMovementUser}
+                title="Recorded by" placeholder="Anyone" emptyOptionLabel="Anyone" />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="mv-from" className="text-xs">From</Label>
@@ -721,7 +789,7 @@ export default function Inventory() {
             </div>
             {movementFiltersOn && (
               <Button variant="ghost" size="sm" className="justify-self-start"
-                onClick={() => { setMovementFilter("all"); setMovementItem(""); setMovementFrom(""); setMovementTo(""); }}>
+                onClick={() => { setMovementFilter("all"); setMovementUser(""); setMovementItem(""); setMovementFrom(""); setMovementTo(""); }}>
                 Clear filters
               </Button>
             )}
@@ -739,7 +807,12 @@ export default function Inventory() {
         </TabsContent>
 
         {/* ── Stock take ── */}
-        {canManage && (
+        {stockOutReady ? (canRecord || canManage) && (
+          <TabsContent value="reconciliation">
+            <StockCount skus={skus} unitsBySku={unitsBySku} storagePlaces={invSettings.storage_places}
+              canCount={canRecord} canApprove={isAdmin || isManager} isAdmin={isAdmin} onChanged={fetchData} />
+          </TabsContent>
+        ) : canManage && (
           <TabsContent value="reconciliation">
             <StockReconciliation skus={skus} stockTakes={stockTakes} onComplete={fetchData}
               unitsBySku={unitsBySku} storagePlaces={invSettings.storage_places} />
@@ -764,6 +837,13 @@ export default function Inventory() {
         open={!!record} onOpenChange={(o) => { if (!o) setRecord(null); }}
         skus={skus} allowNegative={invSettings.allow_negative_stock} prefill={record} onDone={fetchData}
         onReceive={receiveReady ? (skuId) => setReceive(skuId ? { skuId } : {}) : undefined}
+        lockMode={stockOutReady ? "adjust" : undefined}
+      />
+      <StockOutSheet
+        open={!!stockOut} onOpenChange={(o) => { if (!o) setStockOut(null); }}
+        skus={skus} allowNegative={invSettings.allow_negative_stock} prefill={stockOut} onDone={fetchData}
+        onReceive={receiveReady ? (skuId) => setReceive({ skuId }) : undefined}
+        onCount={() => setActiveTab("reconciliation")}
       />
       <ReceiveSheet open={!!receive} onOpenChange={(o) => { if (!o) setReceive(null); }} prefill={receive} onDone={fetchData} />
       <InventoryDailyReport open={showDaily} onOpenChange={setShowDaily} />
@@ -775,7 +855,7 @@ export default function Inventory() {
         item={itemForm?.item ?? null}
         skus={skus} unitsBySku={unitsBySku} masterReady={masterReady}
         unitChoices={unitChoices} storagePlaces={invSettings.storage_places}
-        isAdmin={isAdmin} canRecord={canRecord}
+        isAdmin={isAdmin} canRecord={canCorrect}
         onSaved={fetchData}
         onChangeUnit={(it) => setChangeUnitFor(it as SKU)}
         onCorrectCount={(it) => setRecord({ mode: "adjust", sku_id: it.id })}
@@ -857,6 +937,25 @@ export default function Inventory() {
                       onError: (err) => toast({ title: "Could not save", description: (err as Error).message, variant: "destructive" }),
                     });
                   }} />
+              </div>
+            )}
+            {stockOutReady && (
+              <div className="space-y-3 border-t pt-4">
+                <div>
+                  <div className="text-sm font-medium">Count differences that need a reason</div>
+                  <p className="text-xs text-muted-foreground">Before a count is approved, a difference above either figure has to be explained.</p>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <SettingNumber id="count-pct" label="Above this % of expected" value={invSettings.count_reason_pct} disabled={updateInvSettings.isPending}
+                    onSave={(v) => updateInvSettings.mutateAsync({ count_reason_pct: v ?? 10 })} />
+                  <SettingNumber id="count-value" label="Or worth more than (₦)" value={invSettings.count_reason_value_minor / 100} disabled={updateInvSettings.isPending}
+                    onSave={(v) => updateInvSettings.mutateAsync({ count_reason_value_minor: Math.round((v ?? 20000) * 100) })} />
+                </div>
+                <SettingNumber id="correction-owner" label="A correction outside a count above this (₦) is the owner’s to make"
+                  hint="Blank: a manager can correct any amount." allowBlank
+                  value={invSettings.correction_owner_above_minor != null ? invSettings.correction_owner_above_minor / 100 : null}
+                  disabled={updateInvSettings.isPending}
+                  onSave={(v) => updateInvSettings.mutateAsync({ correction_owner_above_minor: v == null ? null : Math.round(v * 100) })} />
               </div>
             )}
             {negativeSkus.length > 0 && (
