@@ -48,6 +48,8 @@ import { useReceiveReady } from "@/hooks/useStockReceipts";
 import StockOutSheet, { type StockOutPrefill } from "@/components/inventory/StockOutSheet";
 import StockCount from "@/components/inventory/StockCount";
 import { useStockOutReady } from "@/hooks/useStockOut";
+import StockReports from "@/components/inventory/StockReports";
+import { useStockReportsReady } from "@/hooks/useStockReports";
 import { ROUTE_FILTERS, ROUTE_META, routeMeta, routeOf } from "@/lib/stockRoutes";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 
@@ -201,6 +203,9 @@ export default function Inventory() {
   // From then a correction outside a count is a manager's or the owner's.
   const canCorrect = stockOutReady ? isAdmin || isManager : canRecord;
   const [movementUser, setMovementUser] = useState("");
+  // Reports worked out from the movements (migration 20261124400000). Until
+  // they exist the older Analytics tab stays.
+  const reportsReady = useStockReportsReady();
   const [showUnits, setShowUnits] = useState(false);
   const [showPlaces, setShowPlaces] = useState(false);
   const [showDaily, setShowDaily] = useState(false);
@@ -699,7 +704,7 @@ export default function Inventory() {
           {(stockOutReady ? canRecord || canManage : canManage) && (
             <TabsTrigger value="reconciliation" className="gap-1.5"><ClipboardCheck className="h-4 w-4" />{stockOutReady ? "Count" : "Stock take"}</TabsTrigger>
           )}
-          <TabsTrigger value="analytics" className="gap-1.5"><LineChart className="h-4 w-4" />Analytics</TabsTrigger>
+          <TabsTrigger value="analytics" className="gap-1.5"><LineChart className="h-4 w-4" />{reportsReady ? "Reports" : "Analytics"}</TabsTrigger>
         </TabsList>
 
         {/* ── Items ── */}
@@ -820,6 +825,11 @@ export default function Inventory() {
         )}
 
         {/* ── Analytics ── */}
+        {reportsReady ? (
+          <TabsContent value="analytics">
+            <StockReports skus={skus} unitsBySku={unitsBySku} canSeeSuppliers={isAdmin || isManager} />
+          </TabsContent>
+        ) : (
         <TabsContent value="analytics" className="space-y-6">
           <InventoryKPICards skus={activeSkus} transactions={transactions} movements30d={inventoryData?.movements30d} />
           <div className="grid gap-6 lg:grid-cols-3">
@@ -831,6 +841,7 @@ export default function Inventory() {
             <CategoryBreakdown skus={activeSkus} />
           </div>
         </TabsContent>
+        )}
       </Tabs>
 
       <RecordStockSheet
