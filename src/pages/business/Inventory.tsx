@@ -321,6 +321,8 @@ export default function Inventory() {
   };
 
   const openEdit = (sku: SKU) => {
+    // The unit dialog belongs to the item edited last; it must not outlive it.
+    setChangeUnitFor(null);
     const u = unitsBySku.get(sku.id);
     setEditPacks((u?.units ?? []).slice(1).map(x => ({ name: x.name, factor: String(x.factor) })));
     setEditPurchaseUnit(u?.purchaseUnit ?? normaliseUnit(sku.unit_of_measure));
@@ -941,7 +943,9 @@ export default function Inventory() {
 
       {/* ── Edit Item Dialog ── */}
       {editingSKU && (
-        <Dialog open={!!editingSKU} onOpenChange={() => setEditingSKU(null)}>
+        // Keyed by item, so the form is built again for each item and cannot
+        // show the one edited before it.
+        <Dialog key={editingSKU.id} open={!!editingSKU} onOpenChange={(o) => { if (!o) setEditingSKU(null); }}>
           <DialogContent className="max-h-[90svh] max-w-lg overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Edit item</DialogTitle>

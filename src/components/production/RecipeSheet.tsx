@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2, Plus, Trash2 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
@@ -44,6 +44,7 @@ export default function RecipeSheet({ recipe, items, open, onOpenChange, onSaved
   const [notes, setNotes] = useState('');
   const [active, setActive] = useState(true);
   const [saving, setSaving] = useState(false);
+  const submitting = useRef(false);
   const [dirty, setDirty] = useState(false);
   const touch = () => setDirty(true);
 
@@ -96,7 +97,13 @@ export default function RecipeSheet({ recipe, items, open, onOpenChange, onSaved
       toast({ title: 'Each ingredient should appear once', variant: 'destructive' }); return;
     }
 
+    // One save per click, however fast the second click comes.
+    if (submitting.current) return;
+    submitting.current = true;
     setSaving(true);
+    // A new recipe is written in three steps. If a later step fails the header
+    // is taken back out, so trying again cannot leave two recipes behind.
+    let createdId: string | null = null;
     try {
       const header = {
         name: name.trim(), output_product_id: output.id, batch_yield: yieldBase,
@@ -116,6 +123,7 @@ export default function RecipeSheet({ recipe, items, open, onOpenChange, onSaved
         const { data, error } = await db.from('recipes').insert({ ...header, created_by: user?.id }).select('id').single();
         if (error) throw error;
         id = data.id;
+        createdId = data.id;
       }
       const { error: lErr } = await db.from('recipe_lines').insert(goodLines.map((l, i) => ({
         recipe_id: id, product_id: l.product_id, quantity: Number(l.quantity),
@@ -129,12 +137,17 @@ export default function RecipeSheet({ recipe, items, open, onOpenChange, onSaved
         })));
         if (cErr) throw cErr;
       }
-      toast({ title: recipe ? 'Recipe updated' : 'Recipe created' });
-      onSaved();
+      // It is saved: close first, so it cannot be saved a second time.
+      createdId = null;
+      setDirty(false);
       onOpenChange(false);
+      toast({ title: recipe ? 'Recipe updated' : 'Recipe created', description: `${header.name} is saved.` });
+      onSaved();
     } catch (e) {
+      if (createdId) await db.from('recipes').delete().eq('id', createdId);
       toast({ title: 'Could not save the recipe', description: (e as Error).message, variant: 'destructive' });
     } finally {
+      submitting.current = false;
       setSaving(false);
     }
   };

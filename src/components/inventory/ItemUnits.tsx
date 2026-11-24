@@ -144,9 +144,9 @@ export function ChangeStockUnitDialog({ open, onOpenChange, item, unitChoices, o
         p_sku_id: item.id, p_new_unit: unit, p_factor: f, p_note: note.trim() || null,
       });
       if (error) throw error;
+      onOpenChange(false);
       toast({ title: `${item.name} is now stocked in ${unit}` });
       onDone();
-      onOpenChange(false);
     } catch (e) {
       toast({ title: 'Could not change the unit', description: (e as Error).message, variant: 'destructive' });
     } finally {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Loader2, Plus, Trash2 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
@@ -31,6 +31,7 @@ export default function ItemSetupSheet({ item, open, onOpenChange, onSaved }: {
   const [shelf, setShelf] = useState('');
   const [packs, setPacks] = useState<PackRow[]>([]);
   const [saving, setSaving] = useState(false);
+  const submitting = useRef(false);
   const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
@@ -62,6 +63,9 @@ export default function ItemSetupSheet({ item, open, onOpenChange, onSaved }: {
     const days = shelf.trim() ? Math.round(Number(shelf)) : null;
     if (days !== null && !(days > 0)) { toast({ title: 'Shelf life must be a whole number of days', variant: 'destructive' }); return; }
 
+    // One save per click, however fast the second click comes.
+    if (submitting.current) return;
+    submitting.current = true;
     setSaving(true);
     try {
       await setProductionItem(item.id, cls, lotCode.trim() || null, days);
@@ -75,12 +79,15 @@ export default function ItemSetupSheet({ item, open, onOpenChange, onSaved }: {
         );
         if (error) throw error;
       }
-      toast({ title: 'Item updated', description: movesAccount ? 'Stock on hand was moved to the matching inventory account.' : undefined });
-      onSaved();
+      // It is saved: close first, so it cannot be saved a second time.
+      setDirty(false);
       onOpenChange(false);
+      toast({ title: `${item.name} saved`, description: movesAccount ? 'Stock on hand was moved to the matching inventory account.' : undefined });
+      onSaved();
     } catch (e) {
       toast({ title: 'Could not save', description: (e as Error).message, variant: 'destructive' });
     } finally {
+      submitting.current = false;
       setSaving(false);
     }
   };

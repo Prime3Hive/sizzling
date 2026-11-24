@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Loader2, Plus, Trash2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { FormSheet, Field } from '@/components/ui/form-sheet';
@@ -59,6 +59,7 @@ export default function RecordProductionSheet({ open, onOpenChange, items, recip
   const [costs, setCosts] = useState<CostRow[]>([]);
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
+  const submitting = useRef(false);
   const [dirty, setDirty] = useState(false);
   const touch = () => setDirty(true);
 
@@ -146,6 +147,9 @@ export default function RecordProductionSheet({ open, onOpenChange, items, recip
     if (used.length === 0) { toast({ title: 'Enter the raw materials used', variant: 'destructive' }); return; }
     if (date > today()) { toast({ title: 'Production can’t be dated in the future', variant: 'destructive' }); return; }
 
+    // One save per click, however fast the second click comes.
+    if (submitting.current) return;
+    submitting.current = true;
     setSaving(true);
     try {
       const id = await submitProductionRun({
@@ -169,12 +173,15 @@ export default function RecordProductionSheet({ open, onOpenChange, items, recip
           .filter((c) => Number(c.amount) > 0)
           .map((c) => ({ description: c.description.trim() || 'Production expense', amount: Number(c.amount) })),
       });
+      // It is saved: close first, so it cannot be sent a second time.
+      setDirty(false);
+      onOpenChange(false);
       toast({ title: 'Production recorded', description: 'It has gone for approval. Stock moves once it is approved.' });
       onSaved(id);
-      onOpenChange(false);
     } catch (e) {
       toast({ title: 'Could not record production', description: (e as Error).message, variant: 'destructive' });
     } finally {
+      submitting.current = false;
       setSaving(false);
     }
   };

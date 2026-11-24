@@ -6,57 +6,67 @@ import { isBirthdayToday } from '@/lib/birthday';
 const BIRTHDAY_MESSAGE = (name: string) =>
   `🎂 Happy Birthday, ${name}! Today is your special day and the whole Sizzling Spices team celebrates you. Your dedication and energy make such a difference to us all. Wishing you a wonderful day filled with joy, laughter, and everything you love. Many happy returns! 🎉🥳`;
 
+const localDay = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+// Each person gets their own birthday message, created the first time THEY
+// open the portal that day.
+//
+// It used to be created by whoever opened the portal, for every staff member
+// with a birthday. The "already sent today?" check read the birthday person's
+// notifications, which nobody else is allowed to see, so the answer was always
+// "no" and a new notification was written on every page load.
 export const useBirthdayNotifications = () => {
   const { user } = useAuth();
+  const userId = user?.id;
 
   useEffect(() => {
-    if (!user) return;
-    checkAndSendBirthdayNotifications();
-  }, [user]);
+    if (!userId) return;
+    let cancelled = false;
 
-  const checkAndSendBirthdayNotifications = async () => {
-    try {
-      const now = new Date();
+    (async () => {
+      try {
+        const now = new Date();
+        const flag = `birthday-notified:${userId}:${localDay(now)}`;
+        try { if (localStorage.getItem(flag)) return; } catch { /* storage blocked: the database check below still applies */ }
 
-      // Fetch all staff with a date_of_birth and a linked_user_id
-      const { data: profiles, error } = await supabase
-        .from('staff_profiles')
-        .select('id, full_name, date_of_birth, linked_user_id')
-        .eq('employment_status', 'active')
-        .not('date_of_birth', 'is', null)
-        .not('linked_user_id', 'is', null);
+        const { data: me } = await supabase
+          .from('staff_profiles')
+          .select('full_name, date_of_birth')
+          .eq('linked_user_id', userId)
+          .eq('employment_status', 'active')
+          .not('date_of_birth', 'is', null)
+          .limit(1);
+        const person = me?.[0];
+        if (cancelled || !person || !isBirthdayToday(person.date_of_birth!, now)) return;
 
-      if (error || !profiles?.length) return;
-
-      // Filter to today's birthdays (29 Feb celebrates on 28 Feb in common years)
-      const todayBirthdays = profiles.filter((p) => isBirthdayToday(p.date_of_birth!, now));
-
-      if (!todayBirthdays.length) return;
-
-      // For each birthday person, check if we already sent a notification today
-      const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-
-      for (const person of todayBirthdays) {
-        const { data: existing } = await supabase
+        // The signed-in person can read their own notifications. limit(1), not
+        // maybeSingle(): with two rows maybeSingle() errors and reads as "none".
+        const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+        const { data: existing, error } = await supabase
           .from('notifications')
           .select('id')
-          .eq('user_id', person.linked_user_id!)
+          .eq('user_id', userId)
           .eq('type', 'birthday')
           .gte('created_at', startOfDay)
-          .maybeSingle();
+          .limit(1);
+        if (cancelled || error) return;
 
-        if (existing) continue; // already sent today
-
-        // Send birthday notification to the staff member
-        await supabase.from('notifications').insert({
-          user_id: person.linked_user_id!,
-          title: `🎂 Happy Birthday, ${person.full_name}!`,
-          message: BIRTHDAY_MESSAGE(person.full_name),
-          type: 'birthday',
-        });
+        if (!existing?.length) {
+          const { error: insErr } = await supabase.from('notifications').insert({
+            user_id: userId,
+            title: `🎂 Happy Birthday, ${person.full_name}!`,
+            message: BIRTHDAY_MESSAGE(person.full_name),
+            type: 'birthday',
+          });
+          if (insErr) return;
+        }
+        try { localStorage.setItem(flag, '1'); } catch { /* ignore */ }
+      } catch {
+        // Birthday notifications are non-critical.
       }
-    } catch {
-      // Silent fail — birthday notifications are non-critical
-    }
-  };
+    })();
+
+    return () => { cancelled = true; };
+  }, [userId]);
 };
