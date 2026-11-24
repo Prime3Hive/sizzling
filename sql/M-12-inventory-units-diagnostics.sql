@@ -11,7 +11,7 @@
 -- 1. The work sheet for migration step 3: every item with its stock unit, pack
 --    sizes and purchase unit. Fill these in under Inventory → Edit item.
 SELECT s.name, s.category, pr.uom AS stock_unit, pr.purchase_unit,
-       (SELECT string_agg('1 ' || u.unit_name || ' = ' || trim(to_char(u.factor, 'FM999999990.####')) || ' ' || pr.uom, ' · ' ORDER BY u.factor DESC)
+       (SELECT string_agg('1 ' || u.unit_name || ' = ' || rtrim(rtrim(to_char(u.factor, 'FM999999990.0000'), '0'), '.') || ' ' || pr.uom, ' · ' ORDER BY u.factor DESC)
           FROM public.product_units u WHERE u.product_id = pr.id) AS pack_sizes,
        s.stock_quantity AS on_hand, s.reorder_level, s.cost_per_unit,
        (SELECT count(*) FROM public.inventory_movements m WHERE m.product_id = pr.id) AS movements

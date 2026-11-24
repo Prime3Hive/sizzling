@@ -63,14 +63,21 @@ const num = (s: string) => parseFloat(s) || 0;
 
 const selectCls = 'h-11 w-full min-w-0 rounded-md border border-input bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
-export default function RecordStockSheet({ open, onOpenChange, skus, allowNegative, prefill, onDone }: {
+export default function RecordStockSheet({ open, onOpenChange, skus, allowNegative, prefill, onDone, onReceive }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   skus: StockItem[];
   allowNegative: boolean;
   prefill?: StockPrefill | null;
   onDone: () => void;
+  /**
+   * Given once Receive is live: a purchase is then recorded there, with its
+   * expense, and the manual "Received" entry is no longer offered here. A
+   * stock-in linked to an existing expense (prefill.reference) still is.
+   */
+  onReceive?: (skuId?: string) => void;
 }) {
+  const manualIn = !onReceive || !!prefill?.reference;
   const { bySku: allUnitsBySku, ready: unitsReady, refetch: refetchUnits } = useItemUnits();
   // Before the units migration the database takes every number as stock units,
   // so pack sizes are not offered until it can convert them.
@@ -313,8 +320,8 @@ export default function RecordStockSheet({ open, onOpenChange, skus, allowNegati
       }
     >
       <div className="space-y-6">
-        <div role="radiogroup" aria-label="What happened" className="grid grid-cols-3 gap-2">
-          {MODES.map((m) => {
+        <div role="radiogroup" aria-label="What happened" className={cn('grid gap-2', manualIn ? 'grid-cols-3' : 'grid-cols-2')}>
+          {MODES.filter((m) => manualIn || m.value !== 'in').map((m) => {
             const Icon = m.icon;
             const on = mode === m.value;
             return (
@@ -383,7 +390,15 @@ export default function RecordStockSheet({ open, onOpenChange, skus, allowNegati
                       More than is in stock. Stock cannot go below zero, so either a delivery was not recorded or the count is wrong.
                     </p>
                     <div className="mt-2 flex flex-wrap gap-2">
-                      <Button type="button" size="sm" variant="outline" onClick={() => switchMode('in', c.s!.id)}>Record the missing delivery</Button>
+                      <Button type="button" size="sm" variant="outline"
+                        onClick={() => {
+                          if (manualIn) { switchMode('in', c.s!.id); return; }
+                          if (dirty && !window.confirm('Leave this form to record the delivery? What you have typed here will be lost.')) return;
+                          onOpenChange(false);
+                          onReceive?.(c.s!.id);
+                        }}>
+                        Record the missing delivery
+                      </Button>
                       <Button type="button" size="sm" variant="outline" onClick={() => switchMode('adjust', c.s!.id)}>Correct the count</Button>
                     </div>
                   </div>

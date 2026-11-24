@@ -10,6 +10,8 @@ export interface InventorySettings {
   custom_units: string[];
   /** Where stock is kept, in the order the count sheet follows. */
   storage_places: string[];
+  /** A receipt above this total (in kobo) needs a photo or a reason. null = never. */
+  receipt_photo_above_minor: number | null;
 }
 
 // Until migration 20261016100000 is applied there is no settings row; the
@@ -17,6 +19,7 @@ export interface InventorySettings {
 const DEFAULTS: InventorySettings = {
   id: null, allow_negative_stock: false, notify_on_negative: true, custom_units: [],
   storage_places: ['Freezer', 'Cold room', 'Dry store', 'Gas store'],
+  receipt_photo_above_minor: null,
 };
 
 export function useInventorySettings() {
@@ -37,6 +40,7 @@ export function useInventorySettings() {
         ...DEFAULTS, ...data,
         custom_units: data.custom_units ?? [],
         storage_places: data.storage_places ?? DEFAULTS.storage_places,
+        receipt_photo_above_minor: data.receipt_photo_above_minor != null ? Number(data.receipt_photo_above_minor) : null,
       } as InventorySettings;
     },
   });

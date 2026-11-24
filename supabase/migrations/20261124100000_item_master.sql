@@ -141,7 +141,7 @@ BEGIN
   IF COALESCE(NEW.is_archived, false) AND NOT COALESCE(OLD.is_archived, false)
      AND COALESCE(NEW.stock_quantity, 0) <> 0 THEN
     RAISE EXCEPTION '% still has % % on hand. Record a correction to zero, with the reason, before archiving it.',
-      NEW.name, trim(to_char(NEW.stock_quantity, 'FM999999990.####')), COALESCE(NEW.unit_of_measure, '')
+      NEW.name, rtrim(rtrim(to_char(NEW.stock_quantity, 'FM999999990.0000'), '0'), '.'), COALESCE(NEW.unit_of_measure, '')
       USING ERRCODE = 'check_violation';
   END IF;
   RETURN NEW;

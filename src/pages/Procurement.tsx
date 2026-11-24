@@ -24,6 +24,8 @@ import {
 } from 'lucide-react';
 import LPOSheet, { type LPO, type SourceRequest } from '@/components/procurement/LPOSheet';
 import ReceiveGoodsDialog from '@/components/procurement/ReceiveGoodsDialog';
+import ReceiveSheet from '@/components/inventory/ReceiveSheet';
+import { useReceiveReady } from '@/hooks/useStockReceipts';
 import { generateLPOPDF, generateBlankLPOPDF, getStoredCompany, saveCompanyDetails, CompanyDetails } from '@/lib/lpo-pdf';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
@@ -119,6 +121,9 @@ export default function Procurement() {
 
   const [receiveOpen, setReceiveOpen] = useState(false);
   const [receiveLPO, setReceiveLPO] = useState<LPO | null>(null);
+  // Once Receive is live (migration 20261124200000) an order is received
+  // there, like every other purchase. Until then the older dialog stays.
+  const receiveReady = useReceiveReady();
 
   const [templateLPO, setTemplateLPO] = useState<LPO | undefined>(undefined);
   const [sourceRequest, setSourceRequest] = useState<SourceRequest | undefined>(undefined);
@@ -548,15 +553,23 @@ export default function Procurement() {
       />
 
       {/* ── Receive Goods Dialog ── */}
-      <ReceiveGoodsDialog
-        lpo={receiveLPO}
-        open={receiveOpen}
-        onOpenChange={setReceiveOpen}
-        onSuccess={() => {
-          qc.invalidateQueries({ queryKey: ['lpos'] });
-          qc.invalidateQueries({ queryKey: ['lpo-receipts-all'] });
-        }}
-      />
+      {receiveReady ? (
+        <ReceiveSheet
+          open={receiveOpen && !!receiveLPO}
+          onOpenChange={setReceiveOpen}
+          prefill={receiveLPO ? { lpo: receiveLPO as any } : null}
+        />
+      ) : (
+        <ReceiveGoodsDialog
+          lpo={receiveLPO}
+          open={receiveOpen}
+          onOpenChange={setReceiveOpen}
+          onSuccess={() => {
+            qc.invalidateQueries({ queryKey: ['lpos'] });
+            qc.invalidateQueries({ queryKey: ['lpo-receipts-all'] });
+          }}
+        />
+      )}
 
       {/* ── Company / PDF Export Dialog ── */}
       <CompanyDialog

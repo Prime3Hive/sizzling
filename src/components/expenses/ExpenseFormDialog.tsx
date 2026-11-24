@@ -27,6 +27,9 @@ import {
   type ValidatedExpenseLine,
 } from '@/lib/expenseValidation';
 import { PAYMENT_METHODS } from '@/lib/expenseConstants';
+import ReceiveSheet from '@/components/inventory/ReceiveSheet';
+import { isStockCategory } from '@/components/expenses/ReceiveExpenseStock';
+import { useReceiveReady } from '@/hooks/useStockReceipts';
 import {
   useExpenseCategories, useCostCentres, useExpenseAccounts,
   useBankAccounts, useLockedThrough, useBudgetsWithSpend,
@@ -197,6 +200,18 @@ export default function ExpenseFormDialog({
 
   // ── The account follows the category (the database enforces the same) ─────
   const chosenCategory = categories.find((c) => c.id === form.categoryId);
+
+  // A purchase of something kept in stock is recorded under Receive, where the
+  // stock and the expense are created together. Typed here it would be an
+  // expense with no stock behind it. (Existing expenses can still be edited.)
+  const receiveReady = useReceiveReady();
+  const [receiveOpen, setReceiveOpen] = useState(false);
+  const goesToReceive = receiveReady && !isEditMode && isStockCategory(chosenCategory?.name);
+  const openReceive = () => {
+    setDirty(false);
+    setOpen(false);
+    setReceiveOpen(true);
+  };
   const lastCategory = useRef<string>('');
   useEffect(() => {
     if (!chosenCategory?.account_code) return;
@@ -304,6 +319,11 @@ export default function ExpenseFormDialog({
   };
 
   const submit = async (e: React.FormEvent) => {
+    if (goesToReceive) {
+      e.preventDefault();
+      toast({ title: `${chosenCategory?.name} is recorded under Receive`, description: 'That adds the stock and the expense together.', variant: 'destructive' });
+      return;
+    }
     e.preventDefault();
 
     // The same validator every other route calls. Nothing bypasses it.
@@ -545,6 +565,15 @@ export default function ExpenseFormDialog({
             required
             invalid={!!errorFor('category_id')}
           />
+          {goesToReceive && (
+            <div className="mt-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
+              <p>
+                {chosenCategory?.name} is kept in stock, so it is recorded under Receive. One step adds the stock and
+                records the expense, so the two always agree.
+              </p>
+              <Button type="button" size="sm" className="mt-2" onClick={openReceive}>Open Receive</Button>
+            </div>
+          )}
         </Field>
 
         <Field
@@ -756,7 +785,7 @@ export default function ExpenseFormDialog({
       >
         Cancel
       </Button>
-      <Button type="submit" form="expense-form" disabled={saving} className="h-11 sm:flex-1">
+      <Button type="submit" form="expense-form" disabled={saving || goesToReceive} className="h-11 sm:flex-1">
         {saving ? 'Saving…' : dupes && dupes.length > 0 ? 'Save anyway' : isEditMode ? 'Save changes' : 'Add expense'}
       </Button>
     </div>
@@ -781,6 +810,19 @@ export default function ExpenseFormDialog({
       >
         {body}
       </FormSheet>
+
+      {receiveReady && (
+        <ReceiveSheet
+          open={receiveOpen}
+          onOpenChange={setReceiveOpen}
+          prefill={{
+            date: form.date,
+            payeeId: form.payeeId && form.payeeId !== ONE_OFF ? form.payeeId : undefined,
+            supplierName: form.payeeId === ONE_OFF ? form.payeeName : undefined,
+          }}
+          onDone={() => { reset(); onExpenseAdded(); }}
+        />
+      )}
 
       <SplitLinesDialog
         open={splitOpen}

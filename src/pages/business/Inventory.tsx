@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import {
   Plus, Package, Search, Edit2, Archive, ArchiveRestore, ShoppingCart, ArrowRightLeft, ClipboardCheck,
-  History, LineChart, MoreHorizontal, ClipboardList, Settings2, AlertTriangle, CalendarDays, Download, Ruler, MapPin,
+  History, LineChart, MoreHorizontal, ClipboardList, Settings2, AlertTriangle, CalendarDays, Download, Ruler, MapPin, PackagePlus, Receipt,
 } from "lucide-react";
 import { format } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
@@ -42,6 +42,9 @@ import { allUnits, beforeUnitChange, movementQuantity, normaliseUnit, withPurcha
 import { itemKindLabel, nameKey } from "@/lib/itemMaster";
 import { ChangeStockUnitDialog, UnitListDialog } from "@/components/inventory/ItemUnits";
 import ItemFormSheet, { ArchiveItemDialog, StoragePlacesDialog } from "@/components/inventory/ItemForm";
+import ReceiveSheet, { type ReceivePrefill } from "@/components/inventory/ReceiveSheet";
+import ReceiptsList from "@/components/inventory/ReceiptsList";
+import { useReceiveReady } from "@/hooks/useStockReceipts";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -154,6 +157,12 @@ export default function Inventory() {
   // state and a key per item, so it cannot show the item that was open before.
   const [itemForm, setItemForm] = useState<{ item: SKU | null } | null>(null);
   const [archiving, setArchiving] = useState<SKU | null>(null);
+  // Receive: one step for a purchase (stock and expense together). Live once
+  // migration 20261124200000 is applied; until then the older "Received"
+  // entry under Record stock stays.
+  const receiveReady = useReceiveReady();
+  const [receive, setReceive] = useState<ReceivePrefill | null>(null);
+  const canReverse = isAdmin || isManager;
   const [showUnits, setShowUnits] = useState(false);
   const [showPlaces, setShowPlaces] = useState(false);
   const [showDaily, setShowDaily] = useState(false);
@@ -269,13 +278,11 @@ export default function Inventory() {
 
   // Restock: open Record stock on "Received", prefilled to bring the item back
   // comfortably above its reorder level.
-  const handleReorder = (sku: SKU) => setRecord({
-    mode: "in",
-    sku_id: sku.id,
-    quantity: Math.max(sku.reorder_level * 2 - sku.stock_quantity, sku.reorder_level, 1),
-    unit_price: sku.cost_per_unit,
-    note: `Restock of ${sku.name}`,
-  });
+  const handleReorder = (sku: SKU) => {
+    const quantity = Math.max(sku.reorder_level * 2 - sku.stock_quantity, sku.reorder_level, 1);
+    if (receiveReady) { setReceive({ skuId: sku.id, quantity }); return; }
+    setRecord({ mode: "in", sku_id: sku.id, quantity, unit_price: sku.cost_per_unit, note: `Restock of ${sku.name}` });
+  };
 
   // Reorder via formal procurement (LPO) — hands off to the Procurement module.
   const handleOrderViaLPO = (sku: SKU) => {
@@ -548,8 +555,13 @@ export default function Inventory() {
         title="Inventory"
         description="What’s in stock, what’s running low, and every movement in and out."
         actions={<>
+          {canRecord && receiveReady && (
+            <Button className="flex-1 sm:flex-none" onClick={() => setReceive({})}>
+              <PackagePlus className="mr-2 h-4 w-4" />Receive
+            </Button>
+          )}
           {canRecord && (
-            <Button className="flex-1 sm:flex-none" onClick={() => setRecord({ mode: "usage" })}>
+            <Button variant={receiveReady ? "outline" : "default"} className="flex-1 sm:flex-none" onClick={() => setRecord({ mode: "usage" })}>
               <ArrowRightLeft className="mr-2 h-4 w-4" />Record stock
             </Button>
           )}
@@ -621,6 +633,7 @@ export default function Inventory() {
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-5">
         <TabsList>
           <TabsTrigger value="items" className="gap-1.5"><Package className="h-4 w-4" />Items</TabsTrigger>
+          {receiveReady && <TabsTrigger value="receipts" className="gap-1.5"><Receipt className="h-4 w-4" />Receipts</TabsTrigger>}
           <TabsTrigger value="movements" className="gap-1.5"><History className="h-4 w-4" />Movements</TabsTrigger>
           {canManage && <TabsTrigger value="reconciliation" className="gap-1.5"><ClipboardCheck className="h-4 w-4" />Stock take</TabsTrigger>}
           <TabsTrigger value="analytics" className="gap-1.5"><LineChart className="h-4 w-4" />Analytics</TabsTrigger>
@@ -668,6 +681,13 @@ export default function Inventory() {
           <TablePagination page={itemPages.page} pageCount={itemPages.pageCount} total={itemPages.total}
             pageSize={itemPages.pageSize} onPageChange={itemPages.setPage} />
         </TabsContent>
+
+        {/* ── Receipts ── */}
+        {receiveReady && (
+          <TabsContent value="receipts">
+            <ReceiptsList canReceive={canRecord} canReverse={canReverse} onReceive={() => setReceive({})} />
+          </TabsContent>
+        )}
 
         {/* ── Movements ── */}
         <TabsContent value="movements" className="space-y-4">
@@ -743,7 +763,9 @@ export default function Inventory() {
       <RecordStockSheet
         open={!!record} onOpenChange={(o) => { if (!o) setRecord(null); }}
         skus={skus} allowNegative={invSettings.allow_negative_stock} prefill={record} onDone={fetchData}
+        onReceive={receiveReady ? (skuId) => setReceive(skuId ? { skuId } : {}) : undefined}
       />
+      <ReceiveSheet open={!!receive} onOpenChange={(o) => { if (!o) setReceive(null); }} prefill={receive} onDone={fetchData} />
       <InventoryDailyReport open={showDaily} onOpenChange={setShowDaily} />
 
       {/* ── Add or edit an item ── */}
@@ -815,6 +837,28 @@ export default function Inventory() {
                   onError: (e) => toast({ title: "Could not save", description: (e as Error).message, variant: "destructive" }),
                 })} />
             </div>
+            {receiveReady && (
+              <div className="space-y-1.5">
+                <Label htmlFor="photo-above" className="text-sm font-medium">Ask for a receipt photo above (₦)</Label>
+                <p className="text-xs text-muted-foreground">
+                  A purchase received above this total needs a photo of the supplier’s receipt, or a typed reason there is
+                  none. Leave blank to never ask.
+                </p>
+                <Input id="photo-above" type="number" inputMode="decimal" min="0" step="any" className="w-40"
+                  key={String(invSettings.receipt_photo_above_minor)}
+                  defaultValue={invSettings.receipt_photo_above_minor != null ? invSettings.receipt_photo_above_minor / 100 : ""}
+                  disabled={updateInvSettings.isPending}
+                  onBlur={(e) => {
+                    const raw = e.target.value.trim();
+                    const next = raw === "" ? null : Math.round(Math.max(Number(raw) || 0, 0) * 100);
+                    if (next === invSettings.receipt_photo_above_minor) return;
+                    updateInvSettings.mutate({ receipt_photo_above_minor: next }, {
+                      onSuccess: () => toast({ title: next == null ? "Receipt photos are not asked for" : "Receipt photo limit saved" }),
+                      onError: (err) => toast({ title: "Could not save", description: (err as Error).message, variant: "destructive" }),
+                    });
+                  }} />
+              </div>
+            )}
             {negativeSkus.length > 0 && (
               <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2.5 text-sm">
                 <p className="font-medium text-destructive flex items-center gap-1.5">
