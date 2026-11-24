@@ -26,6 +26,8 @@ export interface ItemUnitInfo extends ItemUnits {
   countedWeekly: boolean;
   /** Made in production (finished or semi-finished): its type is fixed. */
   produced: boolean;
+  /** The level a reorder brings the item back to, in stock units; null = not set (migration 20261124500000). */
+  targetLevel: number | null;
 }
 
 interface Raw {
@@ -36,6 +38,8 @@ interface Raw {
   ready: boolean;
   /** false until migration 20261124100000 is applied. */
   masterReady: boolean;
+  /** false until migration 20261124500000 is applied. */
+  targetReady: boolean;
 }
 
 export function useItemUnits() {
@@ -48,8 +52,15 @@ export function useItemUnits() {
     queryFn: async () => {
       let ready = true;
       let masterReady = true;
+      let targetReady = true;
       let res = await db.from('products')
-        .select('id, sku_id, uom, purchase_unit, item_class, item_kind, storage_place, default_payee_id, counted_weekly, product_units(unit_name, factor)');
+        .select('id, sku_id, uom, purchase_unit, item_class, item_kind, storage_place, default_payee_id, counted_weekly, target_level, product_units(unit_name, factor)');
+      if (res.error) {
+        // Before the reorder targets migration there is no target_level column.
+        targetReady = false;
+        res = await db.from('products')
+          .select('id, sku_id, uom, purchase_unit, item_class, item_kind, storage_place, default_payee_id, counted_weekly, product_units(unit_name, factor)');
+      }
       if (res.error) {
         // Before the item master migration there are no type or storage columns.
         masterReady = false;
@@ -72,6 +83,7 @@ export function useItemUnits() {
         receipts: (receipts as any).data ?? [],
         ready,
         masterReady,
+        targetReady,
       };
     },
   });
@@ -106,6 +118,7 @@ export function useItemUnits() {
         payeeId: p.default_payee_id ?? null,
         countedWeekly: p.counted_weekly !== false,
         produced: !!p.item_class && p.item_class !== 'raw_material',
+        targetLevel: p.target_level != null ? Number(p.target_level) : null,
       });
     }
     return out;
@@ -115,6 +128,7 @@ export function useItemUnits() {
     bySku,
     ready: query.data?.ready ?? false,
     masterReady: query.data?.masterReady ?? false,
+    targetReady: query.data?.targetReady ?? false,
     isLoading: query.isLoading,
     refetch: query.refetch,
   };

@@ -41,7 +41,7 @@ export interface ItemRow {
 }
 
 export default function ItemFormSheet({
-  open, onOpenChange, item, skus, unitsBySku, masterReady, unitChoices, storagePlaces,
+  open, onOpenChange, item, skus, unitsBySku, masterReady, targetReady, unitChoices, storagePlaces,
   isAdmin, canRecord, onSaved, onChangeUnit, onCorrectCount, onOpenItem,
 }: {
   open: boolean;
@@ -52,6 +52,8 @@ export default function ItemFormSheet({
   unitsBySku: Map<string, ItemUnitInfo>;
   /** false until migration 20261124100000 is applied: type, place and supplier are hidden. */
   masterReady: boolean;
+  /** false until migration 20261124500000 is applied: the target level is hidden. */
+  targetReady?: boolean;
   unitChoices: string[];
   storagePlaces: string[];
   isAdmin: boolean;
@@ -75,6 +77,7 @@ export default function ItemFormSheet({
   const [payeeId, setPayeeId] = useState('');
   const [place, setPlace] = useState('');
   const [minLevel, setMinLevel] = useState('');
+  const [target, setTarget] = useState('');
   const [opening, setOpening] = useState('');
   const [cost, setCost] = useState('');
   const [correctCost, setCorrectCost] = useState(false);
@@ -100,6 +103,7 @@ export default function ItemFormSheet({
     setPlace(info?.storagePlace ?? '');
     // A new item starts blank: the minimum level has to be typed, even if it is 0.
     setMinLevel(item ? String(Number(item.reorder_level ?? 0)) : '');
+    setTarget(info?.targetLevel != null ? String(info.targetLevel) : '');
     setOpening('');
     setCost(item ? String(Number(item.cost_per_unit ?? 0)) : '');
     setCorrectCost(false);
@@ -140,12 +144,18 @@ export default function ItemFormSheet({
     storage_place: place || null,
     default_payee_id: payeeId || null,
     counted_weekly: counted,
+    // Blank = not set: the To buy list then uses twice the minimum.
+    ...(targetReady ? { target_level: target.trim() === '' ? null : Math.max(Number(target) || 0, 0) } : {}),
   } : {});
 
   const save = async () => {
     setTried(true);
     if (hasProblems(problems)) {
       toast({ title: 'Some details are missing', description: Object.values(problems)[0], variant: 'destructive' });
+      return;
+    }
+    if (targetReady && target.trim() !== '' && (Number(target) || 0) < (Number(minLevel) || 0)) {
+      toast({ title: 'The target level is below the minimum', description: 'A reorder brings stock up to the target, so it has to be at or above the minimum.', variant: 'destructive' });
       return;
     }
     const packIssues = packProblems(unit, packs);
@@ -353,6 +363,14 @@ export default function ItemFormSheet({
             </Field>
           )}
         </div>
+
+        {masterReady && targetReady && (
+          <Field id="item-target" label={`Target level (${unit})`}
+            hint={`A reorder brings stock back up to this. Blank: twice the minimum${Number(minLevel) > 0 ? ` (${fmtQty(Number(minLevel) * 2)} ${unit})` : ''}.`}>
+            <Input id="item-target" type="number" inputMode="decimal" min="0" step="any" className="sm:w-1/2" value={target}
+              onChange={(e) => { setTarget(e.target.value); touch(); }} />
+          </Field>
+        )}
 
         {!item ? (
           <Field id="item-cost" label={`Cost per ${unit} (₦)`}

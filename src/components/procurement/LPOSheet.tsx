@@ -95,6 +95,10 @@ export interface SourceRequest {
   requester_name?: string;
   /** When a request has multiple items, all of them are pre-filled as LPO lines. */
   items?: SourceRequestItem[];
+  /** Raised from the To buy list, not from an inventory request: `id` is not a request. */
+  from_reorder?: boolean;
+  /** The supplier to pre-fill (the items' usual supplier). */
+  supplier_name?: string;
 }
 
 interface LineDraft {
@@ -487,9 +491,12 @@ export default function LPOSheet({ mode, lpo, templateLPO, sourceRequest, open, 
         // From approved inventory request — pre-fill all of its line items
         setForm({
           ...defaultForm(),
-          notes: sourceRequest.requester_name
-            ? `Generated from inventory request by ${sourceRequest.requester_name}`
-            : '',
+          supplier_name: sourceRequest.supplier_name ?? '',
+          notes: sourceRequest.from_reorder
+            ? 'Raised from the To buy list'
+            : sourceRequest.requester_name
+              ? `Generated from inventory request by ${sourceRequest.requester_name}`
+              : '',
         });
         const srcItems = sourceRequest.items?.length
           ? sourceRequest.items
@@ -571,7 +578,11 @@ export default function LPOSheet({ mode, lpo, templateLPO, sourceRequest, open, 
             lpo_number: lpoNumber,
             created_by: user?.id,
             status: 'draft',
-            inventory_request_id: sourceRequest?.id ?? null,
+            // Only a real inventory request is linked. An order raised from the
+            // To buy list (or the older single-item "Order via LPO") carries a
+            // made-up id, which the database would refuse as not a request.
+            inventory_request_id: sourceRequest && !sourceRequest.from_reorder
+              && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sourceRequest.id) ? sourceRequest.id : null,
           })
           .select()
           .single();

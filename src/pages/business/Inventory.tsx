@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import {
   Plus, Package, Search, Edit2, Archive, ArchiveRestore, ShoppingCart, ArrowRightLeft, ClipboardCheck,
-  History, LineChart, MoreHorizontal, ClipboardList, Settings2, AlertTriangle, CalendarDays, Download, Ruler, MapPin, PackagePlus, Receipt, PackageMinus, SlidersHorizontal,
+  History, LineChart, MoreHorizontal, ClipboardList, Settings2, AlertTriangle, CalendarDays, Download, Ruler, MapPin, PackagePlus, Receipt, PackageMinus, SlidersHorizontal, ShoppingBasket,
 } from "lucide-react";
 import { format } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
@@ -50,6 +50,8 @@ import StockCount from "@/components/inventory/StockCount";
 import { useStockOutReady } from "@/hooks/useStockOut";
 import StockReports from "@/components/inventory/StockReports";
 import { useStockReportsReady } from "@/hooks/useStockReports";
+import ToBuyList from "@/components/inventory/ToBuyList";
+import { toBuyList } from "@/lib/reorder";
 import { ROUTE_FILTERS, ROUTE_META, routeMeta, routeOf } from "@/lib/stockRoutes";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 
@@ -221,7 +223,7 @@ export default function Inventory() {
   const [movementTo, setMovementTo] = useState("");
 
   // Units and the item master (type, storage place, supplier) for every item.
-  const { bySku: unitsBySku, masterReady, refetch: refetchUnits } = useItemUnits();
+  const { bySku: unitsBySku, masterReady, targetReady, refetch: refetchUnits } = useItemUnits();
   const [changeUnitFor, setChangeUnitFor] = useState<SKU | null>(null);
 
   const { settings: invSettings, update: updateInvSettings } = useInventorySettings();
@@ -333,6 +335,7 @@ export default function Inventory() {
       state: {
         reorder: {
           id: `reorder-${sku.id}`,
+          from_reorder: true,
           item_name: sku.name,
           sku_id: sku.id,
           quantity: Math.max(sku.reorder_level * 2 - sku.stock_quantity, sku.reorder_level, 1),
@@ -374,6 +377,9 @@ export default function Inventory() {
         && (!q || sku.name.toLowerCase().includes(q) || getCategoryLabel(sku.category).toLowerCase().includes(q));
     });
   }, [skus, searchTerm, categoryFilter, status, unitsBySku]);
+
+  // The To buy list: items at or below their minimum level.
+  const toBuyCount = useMemo(() => toBuyList(skus, () => undefined).length, [skus]);
 
   const negativeSkus = useMemo(() => activeSkus.filter(s => Number(s.stock_quantity) < 0), [activeSkus]);
 
@@ -685,9 +691,9 @@ export default function Inventory() {
       {/* ── What needs attention ── */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Tile label="Stock value" value={formatNairaCompact(counts.value)} sub={`${activeSkus.length} items in stock list`} />
-        <Tile label="Running low" value={counts.low} tone={counts.low ? "warn" : "neutral"}
-          sub={counts.low ? "Tap to see them" : "Nothing at its reorder level"}
-          onClick={counts.low ? () => showList("low") : undefined} />
+        <Tile label="To buy" value={toBuyCount} tone={toBuyCount ? "warn" : "neutral"}
+          sub={toBuyCount ? `${counts.low} running low · tap for the list` : "Nothing at its minimum level"}
+          onClick={toBuyCount ? () => setActiveTab("to-buy") : undefined} />
         <Tile label="Out of stock" value={counts.out} tone={counts.out ? "bad" : "neutral"}
           sub={counts.negative ? `${counts.negative} below zero` : counts.out ? "Tap to see them" : "Everything has stock"}
           onClick={counts.out ? () => showList("out") : undefined} />
@@ -699,6 +705,10 @@ export default function Inventory() {
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-5">
         <TabsList>
           <TabsTrigger value="items" className="gap-1.5"><Package className="h-4 w-4" />Items</TabsTrigger>
+          <TabsTrigger value="to-buy" className="gap-1.5">
+            <ShoppingBasket className="h-4 w-4" />To buy
+            {toBuyCount > 0 && <span className="rounded-full bg-amber-500 px-1.5 text-[11px] font-bold leading-5 text-white">{toBuyCount}</span>}
+          </TabsTrigger>
           {receiveReady && <TabsTrigger value="receipts" className="gap-1.5"><Receipt className="h-4 w-4" />Receipts</TabsTrigger>}
           <TabsTrigger value="movements" className="gap-1.5"><History className="h-4 w-4" />Movements</TabsTrigger>
           {(stockOutReady ? canRecord || canManage : canManage) && (
@@ -748,6 +758,19 @@ export default function Inventory() {
           />
           <TablePagination page={itemPages.page} pageCount={itemPages.pageCount} total={itemPages.total}
             pageSize={itemPages.pageSize} onPageChange={itemPages.setPage} />
+        </TabsContent>
+
+        {/* ── To buy ── */}
+        <TabsContent value="to-buy">
+          <ToBuyList skus={skus} unitsBySku={unitsBySku} canOrder={canOrder} canReceive={receiveReady && canRecord}
+            onReceive={(p) => setReceive(p)}
+            onCreateOrder={(supplier, lines) => navigate("/procurement", {
+              state: { reorder: {
+                id: "to-buy", from_reorder: true, supplier_name: supplier.name,
+                item_name: lines[0].item_name, sku_id: lines[0].sku_id, quantity: lines[0].quantity,
+                unit_of_measure: lines[0].unit_of_measure, unit_price: lines[0].unit_price, items: lines,
+              } },
+            })} />
         </TabsContent>
 
         {/* ── Receipts ── */}
@@ -864,7 +887,7 @@ export default function Inventory() {
         key={itemForm?.item?.id ?? "new"}
         open={!!itemForm} onOpenChange={(o) => { if (!o) setItemForm(null); }}
         item={itemForm?.item ?? null}
-        skus={skus} unitsBySku={unitsBySku} masterReady={masterReady}
+        skus={skus} unitsBySku={unitsBySku} masterReady={masterReady} targetReady={targetReady}
         unitChoices={unitChoices} storagePlaces={invSettings.storage_places}
         isAdmin={isAdmin} canRecord={canCorrect}
         onSaved={fetchData}

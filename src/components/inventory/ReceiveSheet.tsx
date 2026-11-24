@@ -58,6 +58,8 @@ export interface ReceivePrefill {
   skuId?: string;
   /** A suggested quantity for that item, in stock units. */
   quantity?: number;
+  /** Start with these items (the To buy list or a market list); quantity is in `unit`. */
+  items?: { skuId: string; quantity: number; unit?: string }[];
   /** Start with a non-stock cost (from the expense form). */
   other?: { category?: string; description?: string; amount?: string };
   date?: string;
@@ -174,7 +176,9 @@ export default function ReceiveSheet({ open, onOpenChange, prefill, onDone }: {
       setPayeeName(prefill?.supplierName ?? '');
       setMethod('');
       setBudget('');
-      const first: LineDraft[] = [];
+      const first: LineDraft[] = (prefill?.items ?? []).map((it) => ({
+        ...blankStock(), sku_id: it.skuId, quantity: it.quantity ? String(it.quantity) : '', unit: normaliseUnit(it.unit),
+      }));
       if (prefill?.skuId) {
         first.push({ ...blankStock(), sku_id: prefill.skuId, quantity: prefill.quantity ? String(prefill.quantity) : '' });
       }
